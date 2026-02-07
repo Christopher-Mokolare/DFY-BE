@@ -1,0 +1,34 @@
+using System.ComponentModel.DataAnnotations;
+
+namespace DoForYou.API.Models;
+
+public class User
+{
+    public int Id { get; set; }
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    [Required]
+    public string PhoneNumber { get; set; } = string.Empty;
+    [Required]
+    public string UserType { get; set; } = string.Empty;
+    public string? IdNumber { get; set; }
+    public string? Address { get; set; }
+    public string PasswordHash { get; set; } = string.Empty;
+    public bool IsVerified { get; set; }
+    public bool ProfileCompleted { get; set; }
+    public decimal Rating { get; set; }
+    public int CompletedTasks { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastLoginAt { get; set; }
+    public string? Roles { get; set; }
+    public DateTime? EmailVerificationExpiry { get; set; }
+    public string? EmailVerificationToken { get; set; }
+    public bool EmailVerified { get; set; }
+    public string? PhoneVerificationCode { get; set; }
+    public DateTime? PhoneVerificationExpiry { get; set; }
+    public bool PhoneVerified { get; set; }
+    public DateTime? DateOfBirth { get; set; }
+    public string? Username { get; set; }
+    public decimal WalletBalance { get; set; }
+}
