@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="../build/DoForYou.API.props" />
-</Project>
