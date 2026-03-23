@@ -24,6 +24,27 @@ public class CreateTaskRequest
     public bool TermsAccepted { get; set; }
 }
 
+public class UpdateTaskRequest
+{
+    [Required]
+    public string TaskDescription { get; set; } = string.Empty;
+    
+    [Required]
+    public string Category { get; set; } = string.Empty;
+    
+    [Required]
+    public string Area { get; set; } = string.Empty;
+    
+    [Required]
+    public DateTime DateNeeded { get; set; }
+    
+    [Required, Range(1, 100000)]
+    public decimal Budget { get; set; }
+    
+    public string? Notes { get; set; }
+    public string Priority { get; set; } = "Standard";
+}
+
 public class TaskDto
 {
     public int Id { get; set; }

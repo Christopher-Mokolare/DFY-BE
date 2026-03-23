@@ -4,6 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
+using DoForYou.API.Hubs;
+using DoForYou.API.Services;
+using Microsoft.AspNetCore.SignalR;
 using System.Security.Claims;
 
 namespace DoForYou.API.Controllers;
@@ -14,10 +17,14 @@ namespace DoForYou.API.Controllers;
 public class MessagesController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IHubContext<ChatHub> _hubContext;
+    private readonly INotificationService _notificationService;
 
-    public MessagesController(AppDbContext context)
+    public MessagesController(AppDbContext context, IHubContext<ChatHub> hubContext, INotificationService notificationService)
     {
         _context = context;
+        _hubContext = hubContext;
+        _notificationService = notificationService;
     }
 
     [HttpPost("{taskId}/messages")]
@@ -26,7 +33,13 @@ public class MessagesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
+        // Try to find task by string TaskId first, then by numeric Id
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null && int.TryParse(taskId, out var numericId))
+        {
+            task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == numericId);
+        }
+        
         if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Access denied" });
 
@@ -42,6 +55,31 @@ public class MessagesController : ControllerBase
         _context.TaskMessages.Add(message);
         await _context.SaveChangesAsync();
 
+        // Get sender info for notification
+        var sender = await _context.Users.FindAsync(userId.Value);
+        var senderName = $"{sender?.FirstName} {sender?.LastName}";
+        
+        // Send notification to the other party
+        var recipientId = task.CreatedByUserId == userId ? task.AcceptedByUserId : task.CreatedByUserId;
+        if (recipientId.HasValue)
+        {
+            await _notificationService.NotifyNewMessageAsync(recipientId.Value, task.TaskDescription, senderName, task.Id);
+        }
+
+        // Broadcast message to all users in the task group
+        var messageDto = new
+        {
+            id = message.Id,
+            taskId = taskId,
+            senderId = message.SenderId,
+            senderName = senderName,
+            content = message.Content,
+            timestamp = message.CreatedAt,
+            isRead = message.IsRead
+        };
+        
+        await _hubContext.Clients.Group($"task-{taskId}").SendAsync("ReceiveMessage", messageDto);
+
         return Ok(new ApiResponse<bool>
         {
             Success = true,
@@ -56,7 +94,13 @@ public class MessagesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
+        // Try to find task by string TaskId first, then by numeric Id
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null && int.TryParse(taskId, out var numericId))
+        {
+            task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == numericId);
+        }
+        
         if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
             return Ok(new ApiResponse<List<object>> { Success = false, Message = "Access denied" });
 
@@ -67,7 +111,7 @@ public class MessagesController : ControllerBase
             .Select(m => new
             {
                 id = m.Id,
-                taskId = taskId,
+                taskId = task.TaskId,
                 senderId = m.SenderId,
                 senderName = $"{m.Sender.FirstName} {m.Sender.LastName}",
                 content = m.Content,
@@ -83,6 +127,28 @@ public class MessagesController : ControllerBase
             Success = true,
             Data = messages,
             Message = "Messages retrieved successfully"
+        });
+    }
+
+    [HttpPut("{taskId}/messages/read")]
+    public async Task<ActionResult<ApiResponse<bool>>> MarkMessagesAsRead(string taskId)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Access denied" });
+
+        await _context.TaskMessages
+            .Where(m => m.TaskId == task.Id && m.SenderId != userId && !m.IsRead)
+            .ExecuteUpdateAsync(m => m.SetProperty(p => p.IsRead, true));
+
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = "Messages marked as read"
         });
     }
 

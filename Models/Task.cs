@@ -26,6 +26,13 @@ public class Task
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
     public DateTime? PaidToRunnerAt { get; set; }
+    
+    // Escrow fields
+    public decimal CommissionPercentage { get; set; } = 15.00m;
+    public decimal CommissionAmount { get; set; }
+    public decimal PayoutAmount { get; set; }
+    public string EscrowStatus { get; set; } = "none";
+    public DateTime? EscrowHoldUntil { get; set; }
 
     // Navigation properties
     public User CreatedByUser { get; set; } = null!;

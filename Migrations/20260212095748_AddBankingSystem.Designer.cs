@@ -3,6 +3,7 @@ using System;
 using DoForYou.API.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DoForYou.API.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260212095748_AddBankingSystem")]
+    partial class AddBankingSystem
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,7 +68,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("AuditLogs", (string)null);
+                    b.ToTable("AuditLogs");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.BankAccount", b =>
@@ -115,7 +118,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("BankAccounts", (string)null);
+                    b.ToTable("BankAccounts");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.BusinessRule", b =>
@@ -163,7 +166,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("BusinessRules", (string)null);
+                    b.ToTable("BusinessRules");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Category", b =>
@@ -192,7 +195,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Categories", (string)null);
+                    b.ToTable("Categories");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Dispute", b =>
@@ -236,7 +239,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Disputes", (string)null);
+                    b.ToTable("Disputes");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Notification", b =>
@@ -277,7 +280,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Notifications", (string)null);
+                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Payment", b =>
@@ -322,7 +325,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Payments", (string)null);
+                    b.ToTable("Payments");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Rating", b =>
@@ -359,7 +362,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Ratings", (string)null);
+                    b.ToTable("Ratings");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Task", b =>
@@ -456,7 +459,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("CreatedByUserId");
 
-                    b.ToTable("Tasks", (string)null);
+                    b.ToTable("Tasks");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.TaskMessage", b =>
@@ -487,7 +490,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("SenderId");
 
-                    b.ToTable("TaskMessages", (string)null);
+                    b.ToTable("TaskMessages");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.TaskProgressUpdate", b =>
@@ -515,7 +518,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("TaskProgressUpdates", (string)null);
+                    b.ToTable("TaskProgressUpdates");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.User", b =>
@@ -606,7 +609,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.WalletTransaction", b =>
@@ -644,7 +647,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("WalletTransactions", (string)null);
+                    b.ToTable("WalletTransactions");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.WithdrawalRequest", b =>
@@ -701,7 +704,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("WithdrawalRequests", (string)null);
+                    b.ToTable("WithdrawalRequests");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.AuditLog", b =>

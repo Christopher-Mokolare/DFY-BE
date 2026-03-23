@@ -67,4 +67,34 @@ public class TestController : ControllerBase
             return BadRequest(new { error = ex.Message });
         }
     }
+
+    [HttpPost("simulate-payfast/{taskId}")]
+    public async Task<IActionResult> SimulatePayFastWebhook(string taskId)
+    {
+        try
+        {
+            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+            if (task == null)
+                return NotFound(new { error = "Task not found" });
+
+            // Simulate successful PayFast webhook
+            task.PaymentStatus = "EscrowHeld";
+            task.TaskStatus = "Posted";
+            task.EscrowStatus = "held";
+            task.UpdatedAt = DateTime.UtcNow;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { 
+                message = "PayFast webhook simulated successfully", 
+                taskId = task.TaskId,
+                paymentStatus = task.PaymentStatus,
+                taskStatus = task.TaskStatus
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 }

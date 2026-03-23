@@ -84,25 +84,44 @@ public class PaymentController : ControllerBase
         {
             var form = await Request.ReadFormAsync();
             var paymentId = form["m_payment_id"].ToString();
+            var paymentStatus = form["payment_status"].ToString();
+
+            Console.WriteLine($"PayFast Notify: PaymentId={paymentId}, Status={paymentStatus}");
 
             if (string.IsNullOrEmpty(paymentId))
+            {
+                Console.WriteLine("PayFast Notify: Missing payment ID");
                 return BadRequest();
+            }
 
             var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == paymentId);
             if (task == null)
+            {
+                Console.WriteLine($"PayFast Notify: Task not found for ID {paymentId}");
                 return NotFound();
+            }
 
             // Update task status after successful payment
-            task.PaymentStatus = "Completed";
-            task.TaskStatus = "Posted";
-            task.UpdatedAt = DateTime.UtcNow;
+            if (paymentStatus == "COMPLETE")
+            {
+                task.PaymentStatus = "EscrowHeld";
+                task.TaskStatus = "Posted";
+                task.EscrowStatus = "held";
+                task.UpdatedAt = DateTime.UtcNow;
 
-            await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync();
+                Console.WriteLine($"PayFast Notify: Task {paymentId} updated successfully");
+            }
+            else
+            {
+                Console.WriteLine($"PayFast Notify: Payment not complete, status: {paymentStatus}");
+            }
 
             return Ok();
         }
-        catch
+        catch (Exception ex)
         {
+            Console.WriteLine($"PayFast Notify Error: {ex.Message}");
             return StatusCode(500);
         }
     }
@@ -110,7 +129,8 @@ public class PaymentController : ControllerBase
     [HttpGet("return")]
     public IActionResult PayFastReturn()
     {
-        return Redirect("http://localhost:4200/tasks/payment-success");
+        // Add a success parameter to indicate payment was processed
+        return Redirect("http://localhost:4200/tasks/payment-success?status=success");
     }
 
     [HttpGet("cancel")]

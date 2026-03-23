@@ -16,11 +16,15 @@ public class TasksController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IRulesEngine _rulesEngine;
+    private readonly IEscrowService _escrowService;
+    private readonly INotificationService _notificationService;
 
-    public TasksController(AppDbContext context, IRulesEngine rulesEngine)
+    public TasksController(AppDbContext context, IRulesEngine rulesEngine, IEscrowService escrowService, INotificationService notificationService)
     {
         _context = context;
         _rulesEngine = rulesEngine;
+        _escrowService = escrowService;
+        _notificationService = notificationService;
     }
 
     [HttpPost]
@@ -31,6 +35,13 @@ public class TasksController : ControllerBase
 
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return Unauthorized();
+        
+        if (!user.ProfileCompleted)
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Please complete your profile before creating tasks"
+            });
 
         // Check if user can create tasks using rules engine
         var ruleContext = new RuleContext
@@ -52,6 +63,11 @@ public class TasksController : ControllerBase
         }
 
         var taskId = GenerateTaskId();
+        
+        // Calculate commission
+        var commission = _escrowService.CalculateCommission(request.Budget);
+        var payout = request.Budget - commission;
+        
         var task = new Models.Task
         {
             TaskId = taskId,
@@ -64,7 +80,10 @@ public class TasksController : ControllerBase
             Priority = request.Priority,
             CreatedByUserId = userId.Value,
             PaymentStatus = "Pending",
-            TaskStatus = "PendingPayment"
+            TaskStatus = "PendingPayment",
+            CommissionAmount = commission,
+            PayoutAmount = payout,
+            EscrowStatus = "pending"
         };
 
         // Validate task using rules engine
@@ -121,7 +140,7 @@ public class TasksController : ControllerBase
     {
         var query = _context.Tasks
             .Include(t => t.CreatedByUser)
-            .Where(t => t.PaymentStatus == "Completed" && t.TaskStatus == "Posted");
+            .Where(t => (t.PaymentStatus == "EscrowHeld" || t.PaymentStatus == "Completed") && t.TaskStatus == "Posted");
 
         if (!string.IsNullOrEmpty(search))
             query = query.Where(t => t.TaskDescription.Contains(search) || t.Area.Contains(search));
@@ -220,11 +239,44 @@ public class TasksController : ControllerBase
         });
     }
 
+    [HttpGet("pending-payment")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetPendingPaymentTasks()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var tasks = await _context.Tasks
+            .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "PendingPayment")
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => new
+            {
+                taskId = t.TaskId,
+                description = t.TaskDescription,
+                budget = t.Budget,
+                createdAt = t.CreatedAt,
+                category = t.Category,
+                area = t.Area
+            })
+            .Cast<object>()
+            .ToListAsync();
+
+        return Ok(new ApiResponse<List<object>>
+        {
+            Success = true,
+            Data = tasks,
+            Message = "Pending payment tasks retrieved successfully"
+        });
+    }
+
     [HttpPost("{taskId}/claim")]
     public async Task<ActionResult<ApiResponse<bool>>> ClaimTask(string taskId, [FromBody] ClaimTaskRequest request)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null || !user.ProfileCompleted)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Please complete your profile before claiming tasks" });
 
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null || task.CreatedByUserId == userId || task.TaskStatus != "Posted")
@@ -237,6 +289,9 @@ public class TasksController : ControllerBase
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        // Send notification to task creator
+        await _notificationService.NotifyTaskClaimedAsync(task.CreatedByUserId, task.TaskDescription, request.HelperName);
 
         return Ok(new ApiResponse<bool>
         {
@@ -284,6 +339,29 @@ public class TasksController : ControllerBase
         {
             Success = true,
             Data = new { categories, statuses }
+        });
+    }
+
+    [HttpGet("{taskId}/payment-url")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPaymentUrl(string taskId)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks
+            .Include(t => t.CreatedByUser)
+            .FirstOrDefaultAsync(t => t.TaskId == taskId && t.CreatedByUserId == userId);
+
+        if (task == null || task.TaskStatus != "PendingPayment")
+            return Ok(new ApiResponse<object> { Success = false, Message = "Task not found or payment not pending" });
+
+        var paymentUrl = GeneratePayFastUrl(task, task.CreatedByUser);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { paymentUrl },
+            Message = "Payment URL generated successfully"
         });
     }
 
@@ -359,15 +437,70 @@ public class TasksController : ControllerBase
 
         task.TaskStatus = "Completed";
         task.CompletedAt = DateTime.UtcNow;
+        task.EscrowHoldUntil = DateTime.UtcNow.AddHours(48); // 48-hour escrow hold
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+
+        // Send notification to task creator
+        var runner = await _context.Users.FindAsync(userId.Value);
+        var runnerName = $"{runner?.FirstName} {runner?.LastName}";
+        await _notificationService.NotifyTaskCompletedAsync(task.CreatedByUserId, task.TaskDescription, runnerName);
 
         return Ok(new ApiResponse<bool>
         {
             Success = true,
             Data = true,
-            Message = "Task marked as completed successfully!"
+            Message = "Task completed! Payment will be released after confirmation."
+        });
+    }
+
+    [HttpPost("{taskId}/confirm")]
+    public async Task<ActionResult<ApiResponse<bool>>> ConfirmTask(string taskId)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null || task.CreatedByUserId != userId || task.TaskStatus != "Completed")
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot confirm task" });
+
+        // Release payment to runner
+        task.TaskStatus = "RunnerPaid";
+        task.EscrowStatus = "none";
+        task.PaidToRunnerAt = DateTime.UtcNow;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        // Add wallet transaction for runner
+        var walletTransaction = new WalletTransaction
+        {
+            UserId = task.AcceptedByUserId.Value,
+            Amount = task.PayoutAmount,
+            TransactionType = "credit",
+            Status = "completed",
+            Description = $"Payment for task: {task.TaskDescription}",
+            Reference = task.TaskId,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Update runner's wallet balance
+        var runner = await _context.Users.FindAsync(task.AcceptedByUserId);
+        if (runner != null)
+        {
+            runner.WalletBalance += task.PayoutAmount;
+        }
+
+        _context.WalletTransactions.Add(walletTransaction);
+        await _context.SaveChangesAsync();
+
+        // Send notification to runner about payment
+        await _notificationService.NotifyPaymentReleasedAsync(task.AcceptedByUserId.Value, task.TaskDescription, task.PayoutAmount);
+
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = "Task confirmed and payment released!"
         });
     }
 
@@ -388,6 +521,7 @@ public class TasksController : ControllerBase
                 title = t.TaskDescription,
                 description = t.TaskDescription,
                 category = t.Category,
+                location = t.Area,
                 budget = t.Budget,
                 status = t.TaskStatus.ToLower(),
                 createdAt = t.CreatedAt,
@@ -459,11 +593,63 @@ public class TasksController : ControllerBase
         });
     }
 
-    [HttpPost("payment-success")]
-    public async Task<ActionResult<ApiResponse<bool>>> HandlePaymentSuccess()
+
+    [HttpPut("{taskId}")]
+    public async Task<ActionResult<ApiResponse<object>>> UpdateTask(string taskId, [FromBody] UpdateTaskRequest request)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId && t.CreatedByUserId == userId);
+        if (task == null)
+            return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
+
+        if (task.TaskStatus != "PendingPayment")
+            return Ok(new ApiResponse<object> { Success = false, Message = "Only pending payment tasks can be edited" });
+
+        // Update task fields
+        task.TaskDescription = request.TaskDescription;
+        task.Category = request.Category;
+        task.Area = request.Area;
+        task.Priority = request.Priority;
+        task.DateNeeded = request.DateNeeded;
+        task.Budget = request.Budget;
+        task.Notes = request.Notes;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        // Recalculate commission and payout with new budget
+        var commission = _escrowService.CalculateCommission(request.Budget);
+        task.CommissionAmount = commission;
+        task.PayoutAmount = request.Budget - commission;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { taskId = task.TaskId },
+            Message = "Task updated successfully"
+        });
+    }
+
+    [HttpPost("payment-success")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<bool>>> HandlePaymentSuccess()
+    {
+        var userId = GetCurrentUserId();
+        
+        // If no user ID from token, try to find the most recent pending payment task
+        if (userId == null)
+        {
+            // For anonymous access, we can't identify the specific user
+            // This should be handled by the PayFast notify webhook instead
+            return Ok(new ApiResponse<bool>
+            {
+                Success = true,
+                Data = true,
+                Message = "Payment confirmation received"
+            });
+        }
 
         // Find the most recent pending payment task for this user
         var task = await _context.Tasks
@@ -473,8 +659,9 @@ public class TasksController : ControllerBase
 
         if (task != null)
         {
-            task.PaymentStatus = "Completed";
+            task.PaymentStatus = "EscrowHeld";
             task.TaskStatus = "Posted";
+            task.EscrowStatus = "held";
             task.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
         }
@@ -493,32 +680,86 @@ public class TasksController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        // Get user info for wallet balance
         var user = await _context.Users.FindAsync(userId);
+        var currentMonth = DateTime.UtcNow.Month;
+        var currentYear = DateTime.UtcNow.Year;
         
-        // Tasks posted by this user
+        // Task Creator Stats
         var postedTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId);
+        var pendingPayment = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "PendingPayment");
+        var creatorActiveTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "Claimed");
+        var awaitingConfirmation = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "Completed");
+        var creatorCompletedTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid");
         
-        // Tasks currently being worked on by this user
-        var activeTasks = await _context.Tasks.CountAsync(t => t.AcceptedByUserId == userId && t.TaskStatus == "Claimed");
+        var totalSpent = await _context.Tasks
+            .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid")
+            .SumAsync(t => t.Budget);
+            
+        var thisMonthSpending = await _context.Tasks
+            .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid" && 
+                       t.UpdatedAt.Month == currentMonth && t.UpdatedAt.Year == currentYear)
+            .SumAsync(t => t.Budget);
+            
+        var averageTaskCost = creatorCompletedTasks > 0 ? totalSpent / creatorCompletedTasks : 0;
         
-        // Tasks completed by this user (as runner) - count RunnerPaid as completed
-        var completedTasks = await _context.Tasks.CountAsync(t => 
+        // Task Runner Stats
+        var availableTasks = await _context.Tasks.CountAsync(t => t.TaskStatus == "Posted" && t.PaymentStatus == "Completed");
+        var runnerActiveTasks = await _context.Tasks.CountAsync(t => t.AcceptedByUserId == userId && t.TaskStatus == "Claimed");
+        var runnerCompletedTasks = await _context.Tasks.CountAsync(t => 
             t.AcceptedByUserId == userId && 
             (t.TaskStatus == "Completed" || t.TaskStatus == "RunnerPaid"));
-        
-        // Total earnings from wallet balance
-        var totalEarnings = user?.WalletBalance ?? 0;
+            
+        var totalEarnings = await _context.WalletTransactions
+            .Where(wt => wt.UserId == userId && 
+                        wt.TransactionType == "credit" && 
+                        wt.Status == "completed")
+            .SumAsync(wt => wt.Amount);
+            
+        var pendingPayouts = await _context.Tasks
+            .Where(t => t.AcceptedByUserId == userId && 
+                       t.TaskStatus == "Completed" && 
+                       t.EscrowStatus == "held")
+            .SumAsync(t => t.PayoutAmount);
+            
+        var thisMonthEarnings = await _context.WalletTransactions
+            .Where(wt => wt.UserId == userId && 
+                        wt.TransactionType == "credit" && 
+                        wt.Status == "completed" &&
+                        wt.CreatedAt.Month == currentMonth && wt.CreatedAt.Year == currentYear)
+            .SumAsync(wt => wt.Amount);
+            
+        var totalAcceptedTasks = await _context.Tasks.CountAsync(t => t.AcceptedByUserId == userId);
+        var completionRate = totalAcceptedTasks > 0 ? (runnerCompletedTasks * 100) / totalAcceptedTasks : 0;
+        var averageEarning = runnerCompletedTasks > 0 ? totalEarnings / runnerCompletedTasks : 0;
 
         return Ok(new ApiResponse<object>
         {
             Success = true,
             Data = new
             {
+                // Task Creator Stats
                 postedTasks,
-                activeTasks,
-                completedTasks,
-                totalEarnings
+                pendingPayment,
+                activeTasks = creatorActiveTasks,
+                awaitingConfirmation,
+                completedTasks = creatorCompletedTasks,
+                totalSpent,
+                thisMonthSpending,
+                averageTaskCost,
+                
+                // Task Runner Stats
+                availableTasks,
+                myActiveTasks = runnerActiveTasks,
+                runnerCompletedTasks,
+                totalEarnings,
+                availableBalance = user?.WalletBalance ?? 0,
+                pendingPayouts,
+                thisMonthEarnings,
+                completionRate,
+                averageEarning,
+                
+                // Shared
+                myRating = user?.Rating ?? 0
             }
         });
     }
@@ -601,7 +842,7 @@ public class TasksController : ControllerBase
         var merchantKey = "46f0cd694581a";
         var returnUrl = "http://localhost:4200/tasks/payment-success";
         var cancelUrl = "http://localhost:4200/tasks/payment-cancel";
-        var notifyUrl = "http://localhost:5001/api/v1/payment/notify";
+        var notifyUrl = "https://furnacelike-adrienne-fourpenny.ngrok-free.dev/api/v1/payment/notify";
 
         var parameters = new Dictionary<string, string>
         {

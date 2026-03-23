@@ -44,7 +44,8 @@ public class UserController : ControllerBase
                 idNumber = user.IdNumber,
                 dateOfBirth = user.DateOfBirth,
                 username = user.Username,
-                profileCompleted = user.ProfileCompleted,
+                profileCompleted = CalculateProfileCompleted(user),
+                profileCompletion = CalculateProfileCompletion(user),
                 rating = user.Rating,
                 completedTasks = user.CompletedTasks,
                 walletBalance = user.WalletBalance,
@@ -69,10 +70,30 @@ public class UserController : ControllerBase
         user.PhoneNumber = request.PhoneNumber;
         user.Address = request.Address;
         user.DateOfBirth = request.DateOfBirth;
-        user.IdNumber = request.IdNumber;
-        user.Username = request.Username;
+        user.IdNumber = request.IdNumber ?? string.Empty;
+        user.Username = request.Username ?? string.Empty;
         if (!string.IsNullOrEmpty(request.UserType)) user.UserType = request.UserType;
-        user.ProfileCompleted = !string.IsNullOrEmpty(request.PhoneNumber) && !string.IsNullOrEmpty(request.Address);
+        
+        // Calculate profile completion percentage
+        var checks = new[]
+        {
+            !string.IsNullOrWhiteSpace(user.FirstName),
+            !string.IsNullOrWhiteSpace(user.LastName),
+            !string.IsNullOrWhiteSpace(user.PhoneNumber),
+            !string.IsNullOrWhiteSpace(user.Address),
+            user.DateOfBirth.HasValue,
+            !string.IsNullOrWhiteSpace(user.IdNumber),
+            user.EmailVerified,
+            user.PhoneVerified
+        };
+        
+        user.ProfileCompleted = checks.All(c => c); // Require all fields
+        
+        // Reset verification if ID number is removed
+        if (string.IsNullOrEmpty(request.IdNumber) && user.IsVerified)
+        {
+            user.IsVerified = false;
+        }
 
         await _context.SaveChangesAsync();
 
@@ -167,10 +188,99 @@ public class UserController : ControllerBase
         });
     }
 
+    [HttpPost("validate-id")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<object>> ValidateIdNumber([FromBody] ValidateIdRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.IdNumber) || request.IdNumber.Length != 13)
+        {
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = "Invalid ID number format"
+            });
+        }
+
+        try
+        {
+            var dateOfBirth = ExtractDateOfBirthFromId(request.IdNumber);
+            return Ok(new ApiResponse<object>
+            {
+                Success = true,
+                Data = new
+                {
+                    dateOfBirth = dateOfBirth?.ToString("yyyy-MM-dd"),
+                    isValid = dateOfBirth.HasValue
+                }
+            });
+        }
+        catch
+        {
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = "Invalid ID number"
+            });
+        }
+    }
+
     private int? GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return int.TryParse(userIdClaim, out var userId) ? userId : null;
+    }
+
+    private int CalculateProfileCompletion(Models.User user)
+    {
+        var checks = new[]
+        {
+            !string.IsNullOrWhiteSpace(user.FirstName),
+            !string.IsNullOrWhiteSpace(user.LastName),
+            !string.IsNullOrWhiteSpace(user.PhoneNumber),
+            !string.IsNullOrWhiteSpace(user.Address),
+            user.DateOfBirth.HasValue,
+            !string.IsNullOrWhiteSpace(user.IdNumber)
+        };
+        
+        int total = checks.Length;
+        int filled = checks.Count(c => c);
+        return (int)Math.Round((double)filled / total * 100);
+    }
+
+    private bool CalculateProfileCompleted(Models.User user)
+    {
+        return !string.IsNullOrWhiteSpace(user.FirstName) &&
+               !string.IsNullOrWhiteSpace(user.LastName) &&
+               !string.IsNullOrWhiteSpace(user.PhoneNumber) &&
+               !string.IsNullOrWhiteSpace(user.Address) &&
+               user.DateOfBirth.HasValue &&
+               !string.IsNullOrWhiteSpace(user.IdNumber);
+    }
+
+    private DateTime? ExtractDateOfBirthFromId(string idNumber)
+    {
+        if (string.IsNullOrWhiteSpace(idNumber) || idNumber.Length != 13)
+            return null;
+
+        try
+        {
+            var yearPart = idNumber.Substring(0, 2);
+            var monthPart = idNumber.Substring(2, 2);
+            var dayPart = idNumber.Substring(4, 2);
+
+            var year = int.Parse(yearPart);
+            var month = int.Parse(monthPart);
+            var day = int.Parse(dayPart);
+
+            // Determine century (assume 00-30 = 2000s, 31-99 = 1900s)
+            var fullYear = year <= 30 ? 2000 + year : 1900 + year;
+
+            return new DateTime(fullYear, month, day);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }
 
@@ -178,7 +288,7 @@ public class UpdateProfileRequest
 {
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
-    public string? PhoneNumber { get; set; }
+    public string PhoneNumber { get; set; } = string.Empty;
     public string? Address { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public string? IdNumber { get; set; }
@@ -190,4 +300,9 @@ public class UserPreferencesRequest
 {
     public bool CanCreateTasks { get; set; }
     public bool CanAcceptTasks { get; set; }
+}
+
+public class ValidateIdRequest
+{
+    public string IdNumber { get; set; } = string.Empty;
 }
