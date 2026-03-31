@@ -47,7 +47,8 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(
                 "http://localhost:3000",
                 "http://localhost:4200",
-                builder.Configuration["AllowedOrigin"] ?? "*"
+                "https://dfy-fe.onrender.com",
+                builder.Configuration["AllowedOrigin"] ?? "http://localhost:3000"
               )
               .AllowAnyHeader()
               .AllowAnyMethod()
