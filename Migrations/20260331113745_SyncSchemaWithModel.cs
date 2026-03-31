@@ -11,11 +11,39 @@ namespace DoForYou.API.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AddColumn<decimal>(
+                name: "CommissionAmount",
+                table: "Tasks",
+                type: "numeric(10,2)",
+                nullable: false,
+                defaultValue: 0m);
+
+            migrationBuilder.AddColumn<decimal>(
+                name: "CommissionPercentage",
+                table: "Tasks",
+                type: "numeric(5,2)",
+                nullable: false,
+                defaultValue: 15.00m);
+
             migrationBuilder.AddColumn<DateTime>(
                 name: "DeletedAt",
                 table: "Tasks",
                 type: "timestamp with time zone",
                 nullable: true);
+
+            migrationBuilder.AddColumn<DateTime>(
+                name: "EscrowHoldUntil",
+                table: "Tasks",
+                type: "timestamp without time zone",
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "EscrowStatus",
+                table: "Tasks",
+                type: "character varying(20)",
+                maxLength: 20,
+                nullable: false,
+                defaultValue: "none");
 
             migrationBuilder.AddColumn<bool>(
                 name: "IsDeleted",
@@ -23,6 +51,13 @@ namespace DoForYou.API.Migrations
                 type: "boolean",
                 nullable: false,
                 defaultValue: false);
+
+            migrationBuilder.AddColumn<decimal>(
+                name: "PayoutAmount",
+                table: "Tasks",
+                type: "numeric(10,2)",
+                nullable: false,
+                defaultValue: 0m);
 
             migrationBuilder.AddColumn<string>(
                 name: "TaskName",
