@@ -43,6 +43,13 @@ public class TasksController : ControllerBase
                 Message = "Please complete your profile before creating tasks"
             });
 
+        // Only creators and both can post tasks
+        if (user.UserType == "runner")
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Runners cannot post tasks. Change your user type to Creator or Both to post tasks."
+            });
         // Check if user can create tasks using rules engine
         var ruleContext = new RuleContext
         {
