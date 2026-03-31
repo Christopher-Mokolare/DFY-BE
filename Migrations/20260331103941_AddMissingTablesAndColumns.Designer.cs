@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DoForYou.API.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260331103321_AddMissingColumns")]
-    partial class AddMissingColumns
+    [Migration("20260331103941_AddMissingTablesAndColumns")]
+    partial class AddMissingTablesAndColumns
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

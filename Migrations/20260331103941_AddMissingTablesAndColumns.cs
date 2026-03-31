@@ -5,7 +5,7 @@
 namespace DoForYou.API.Migrations
 {
     /// <inheritdoc />
-    public partial class AddMissingColumns : Migration
+    public partial class AddMissingTablesAndColumns : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
