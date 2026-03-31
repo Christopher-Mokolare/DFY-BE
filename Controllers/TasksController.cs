@@ -840,9 +840,10 @@ public class TasksController : ControllerBase
         var baseUrl = "https://sandbox.payfast.co.za/eng/process";
         var merchantId = "10000100";
         var merchantKey = "46f0cd694581a";
-        var returnUrl = "http://localhost:4200/tasks/payment-success";
-        var cancelUrl = "http://localhost:4200/tasks/payment-cancel";
-        var notifyUrl = "https://furnacelike-adrienne-fourpenny.ngrok-free.dev/api/v1/payment/notify";
+        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL") ?? "http://localhost:5000";
+        var returnUrl = $"{backendUrl}/api/v1/payment/return";
+        var cancelUrl = $"{backendUrl}/api/v1/payment/cancel";
+        var notifyUrl = $"{backendUrl}/api/v1/payment/notify";
 
         var parameters = new Dictionary<string, string>
         {

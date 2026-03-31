@@ -129,14 +129,15 @@ public class PaymentController : ControllerBase
     [HttpGet("return")]
     public IActionResult PayFastReturn()
     {
-        // Add a success parameter to indicate payment was processed
-        return Redirect("http://localhost:4200/tasks/payment-success?status=success");
+        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL") ?? "http://localhost:5173";
+        return Redirect($"{frontendUrl}/payments/success?status=success");
     }
 
     [HttpGet("cancel")]
     public IActionResult PayFastCancel()
     {
-        return Redirect("http://localhost:4200/tasks/payment-cancel");
+        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL") ?? "http://localhost:5173";
+        return Redirect($"{frontendUrl}/payments/cancelled");
     }
 
     private int? GetCurrentUserId()
