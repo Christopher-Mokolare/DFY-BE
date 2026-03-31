@@ -53,8 +53,8 @@ public class RulesEngine : IRulesEngine
         if (results.Any(r => r.IsValid))
             return true;
             
-        // Default to false for security
-        return false;
+        // Default to true — allow unless explicitly denied
+        return true;
     }
 
     public async Task<RuleValidationResult> ValidateEntityAsync(object entity, RuleContext context)
