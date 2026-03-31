@@ -36,7 +36,8 @@ public class NotificationsController : ControllerBase
                 message = n.Message,
                 isRead = n.IsRead,
                 createdAt = n.CreatedAt,
-                relatedTaskId = n.RelatedTaskId
+                relatedTaskId = n.RelatedTaskId,
+                relatedTaskStringId = n.RelatedTask != null ? n.RelatedTask.TaskId : null
             })
             .Cast<object>()
             .ToListAsync();
