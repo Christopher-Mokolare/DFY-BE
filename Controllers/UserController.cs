@@ -66,13 +66,16 @@ public class UserController : ControllerBase
 
         user.FirstName = request.FirstName;
         user.LastName = request.LastName;
-        user.PhoneNumber = request.PhoneNumber;
-        user.Address = request.Address;
+        if (!string.IsNullOrEmpty(request.PhoneNumber)) user.PhoneNumber = request.PhoneNumber;
+        if (!string.IsNullOrEmpty(request.Address)) user.Address = request.Address;
         user.DateOfBirth = request.DateOfBirth;
-        user.IdNumber = request.IdNumber;
-        user.Username = request.Username;
+        if (!string.IsNullOrEmpty(request.IdNumber)) user.IdNumber = request.IdNumber;
+        if (!string.IsNullOrEmpty(request.Username)) user.Username = request.Username;
         if (!string.IsNullOrEmpty(request.UserType)) user.UserType = request.UserType;
-        user.ProfileCompleted = !string.IsNullOrEmpty(request.PhoneNumber) && !string.IsNullOrEmpty(request.Address);
+        user.ProfileCompleted = !string.IsNullOrEmpty(user.PhoneNumber)
+            && !string.IsNullOrEmpty(user.Address)
+            && !string.IsNullOrEmpty(user.IdNumber)
+            && !string.IsNullOrEmpty(user.UserType);
 
         await _context.SaveChangesAsync();
 
