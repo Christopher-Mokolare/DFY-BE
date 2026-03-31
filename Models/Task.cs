@@ -6,6 +6,7 @@ public class Task
 {
     public int Id { get; set; }
     public string TaskId { get; set; } = string.Empty;
+    public string TaskName { get; set; } = string.Empty;
     public string TaskDescription { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Area { get; set; } = string.Empty;
@@ -26,6 +27,8 @@ public class Task
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }
     public DateTime? PaidToRunnerAt { get; set; }
+    public bool IsDeleted { get; set; } = false;
+    public DateTime? DeletedAt { get; set; }
     
     // Escrow fields
     public decimal CommissionPercentage { get; set; } = 15.00m;
