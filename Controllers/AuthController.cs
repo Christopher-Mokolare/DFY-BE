@@ -73,6 +73,7 @@ public class AuthController : ControllerBase
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 ProfileCompleted = user.ProfileCompleted,
+                ProfileCompletion = CalculateProfileCompletion(user),
                 Rating = user.Rating,
                 CompletedTasks = user.CompletedTasks,
                 Roles = user.Roles,
@@ -148,6 +149,7 @@ public class AuthController : ControllerBase
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 ProfileCompleted = user.ProfileCompleted,
+                ProfileCompletion = CalculateProfileCompletion(user),
                 Rating = user.Rating,
                 CompletedTasks = user.CompletedTasks,
                 Roles = user.Roles,
@@ -159,6 +161,21 @@ public class AuthController : ControllerBase
             },
             Message = "Login successful"
         });
+    }
+
+    private static int CalculateProfileCompletion(User user)
+    {
+        var fields = new[]
+        {
+            !string.IsNullOrEmpty(user.FirstName),
+            !string.IsNullOrEmpty(user.LastName),
+            !string.IsNullOrEmpty(user.PhoneNumber),
+            !string.IsNullOrEmpty(user.Address),
+            !string.IsNullOrEmpty(user.IdNumber),
+            !string.IsNullOrEmpty(user.UserType),
+            user.DateOfBirth.HasValue
+        };
+        return (int)Math.Round((double)fields.Count(f => f) / fields.Length * 100);
     }
 
     private string GenerateJwtToken(User user)
