@@ -74,7 +74,7 @@ public class TasksController : ControllerBase
             TaskDescription = request.TaskDescription,
             Category = request.Category,
             Area = request.Area,
-            DateNeeded = request.DateNeeded,
+            DateNeeded = DateTime.SpecifyKind(request.DateNeeded, DateTimeKind.Utc),
             Budget = request.Budget,
             Notes = request.Notes,
             Priority = request.Priority,
@@ -612,7 +612,7 @@ public class TasksController : ControllerBase
         task.Category = request.Category;
         task.Area = request.Area;
         task.Priority = request.Priority;
-        task.DateNeeded = request.DateNeeded;
+        task.DateNeeded = DateTime.SpecifyKind(request.DateNeeded, DateTimeKind.Utc);
         task.Budget = request.Budget;
         task.Notes = request.Notes;
         task.UpdatedAt = DateTime.UtcNow;

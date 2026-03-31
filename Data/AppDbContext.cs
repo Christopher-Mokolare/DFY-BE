@@ -22,6 +22,30 @@ public class AppDbContext : DbContext
     public DbSet<WithdrawalRequest> WithdrawalRequests { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
 
+    public override int SaveChanges()
+    {
+        NormalizeUtcDates();
+        return base.SaveChanges();
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        NormalizeUtcDates();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    private void NormalizeUtcDates()
+    {
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            foreach (var prop in entry.Properties)
+            {
+                if (prop.CurrentValue is DateTime dt && dt.Kind == DateTimeKind.Unspecified)
+                    prop.CurrentValue = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+            }
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Models.Task>()
