@@ -93,3 +93,72 @@ public class WalletTransaction
 
     public User User { get; set; } = null!;
 }
+
+public class Notification
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string Type { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public bool IsRead { get; set; }
+    public int? RelatedTaskId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public User User { get; set; } = null!;
+    public Models.Task? RelatedTask { get; set; }
+}
+
+public class BankAccount
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public string BankName { get; set; } = string.Empty;
+    public string AccountNumber { get; set; } = string.Empty;
+    public string AccountHolderName { get; set; } = string.Empty;
+    public string BranchCode { get; set; } = string.Empty;
+    public string AccountType { get; set; } = string.Empty;
+    public bool IsVerified { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? VerifiedAt { get; set; }
+
+    public User User { get; set; } = null!;
+}
+
+public class WithdrawalRequest
+{
+    public int Id { get; set; }
+    public int UserId { get; set; }
+    public int BankAccountId { get; set; }
+    public decimal Amount { get; set; }
+    public decimal Fee { get; set; }
+    public string Status { get; set; } = "Pending"; // Pending, Processing, Completed, Failed, Cancelled
+    public string? Reference { get; set; }
+    public string? FailureReason { get; set; }
+    public string? OtpCode { get; set; }
+    public DateTime? OtpExpiresAt { get; set; }
+    public bool OtpVerified { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ProcessedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+
+    public User User { get; set; } = null!;
+    public BankAccount BankAccount { get; set; } = null!;
+}
+
+public class AuditLog
+{
+    public int Id { get; set; }
+    public int? UserId { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string EntityType { get; set; } = string.Empty;
+    public int? EntityId { get; set; }
+    public string? OldValues { get; set; }
+    public string? NewValues { get; set; }
+    public string IpAddress { get; set; } = string.Empty;
+    public string UserAgent { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public User? User { get; set; }
+}

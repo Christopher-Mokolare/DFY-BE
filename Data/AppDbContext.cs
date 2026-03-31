@@ -17,6 +17,10 @@ public class AppDbContext : DbContext
     public DbSet<Dispute> Disputes { get; set; }
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
     public DbSet<BusinessRule> BusinessRules { get; set; }
+    public DbSet<Notification> Notifications { get; set; }
+    public DbSet<BankAccount> BankAccounts { get; set; }
+    public DbSet<WithdrawalRequest> WithdrawalRequests { get; set; }
+    public DbSet<AuditLog> AuditLogs { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

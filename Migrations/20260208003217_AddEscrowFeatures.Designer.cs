@@ -3,6 +3,7 @@ using System;
 using DoForYou.API.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DoForYou.API.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260208003217_AddEscrowFeatures")]
+    partial class AddEscrowFeatures
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,102 +24,6 @@ namespace DoForYou.API.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
-
-            modelBuilder.Entity("DoForYou.API.Models.AuditLog", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("Action")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("EntityId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("EntityType")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("IpAddress")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("NewValues")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OldValues")
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserAgent")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int?>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("AuditLogs", (string)null);
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.BankAccount", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("AccountHolderName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("AccountNumber")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("AccountType")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("BankName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsActive")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsVerified")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("VerifiedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("BankAccounts", (string)null);
-                });
 
             modelBuilder.Entity("DoForYou.API.Models.BusinessRule", b =>
                 {
@@ -163,7 +70,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("BusinessRules", (string)null);
+                    b.ToTable("BusinessRules");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Category", b =>
@@ -192,7 +99,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Categories", (string)null);
+                    b.ToTable("Categories");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Dispute", b =>
@@ -236,48 +143,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Disputes", (string)null);
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.Notification", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("IsRead")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int?>("RelatedTaskId")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RelatedTaskId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("Notifications", (string)null);
+                    b.ToTable("Disputes");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Payment", b =>
@@ -322,7 +188,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Payments", (string)null);
+                    b.ToTable("Payments");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Rating", b =>
@@ -359,7 +225,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId");
 
-                    b.ToTable("Ratings", (string)null);
+                    b.ToTable("Ratings");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Task", b =>
@@ -456,7 +322,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("CreatedByUserId");
 
-                    b.ToTable("Tasks", (string)null);
+                    b.ToTable("Tasks");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.TaskMessage", b =>
@@ -487,7 +353,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("SenderId");
 
-                    b.ToTable("TaskMessages", (string)null);
+                    b.ToTable("TaskMessages");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.TaskProgressUpdate", b =>
@@ -515,7 +381,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("TaskProgressUpdates", (string)null);
+                    b.ToTable("TaskProgressUpdates");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.User", b =>
@@ -606,7 +472,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.WalletTransaction", b =>
@@ -644,84 +510,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("WalletTransactions", (string)null);
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.WithdrawalRequest", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("numeric");
-
-                    b.Property<int>("BankAccountId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("FailureReason")
-                        .HasColumnType("text");
-
-                    b.Property<decimal>("Fee")
-                        .HasColumnType("numeric");
-
-                    b.Property<string>("OtpCode")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("OtpExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<bool>("OtpVerified")
-                        .HasColumnType("boolean");
-
-                    b.Property<DateTime?>("ProcessedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Reference")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BankAccountId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("WithdrawalRequests", (string)null);
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.AuditLog", b =>
-                {
-                    b.HasOne("DoForYou.API.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.BankAccount", b =>
-                {
-                    b.HasOne("DoForYou.API.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
+                    b.ToTable("WalletTransactions");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Dispute", b =>
@@ -741,23 +530,6 @@ namespace DoForYou.API.Migrations
                     b.Navigation("ReportedByUser");
 
                     b.Navigation("Task");
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.Notification", b =>
-                {
-                    b.HasOne("DoForYou.API.Models.Task", "RelatedTask")
-                        .WithMany()
-                        .HasForeignKey("RelatedTaskId");
-
-                    b.HasOne("DoForYou.API.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("RelatedTask");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Payment", b =>
@@ -845,25 +617,6 @@ namespace DoForYou.API.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("DoForYou.API.Models.WithdrawalRequest", b =>
-                {
-                    b.HasOne("DoForYou.API.Models.BankAccount", "BankAccount")
-                        .WithMany()
-                        .HasForeignKey("BankAccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("DoForYou.API.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("BankAccount");
 
                     b.Navigation("User");
                 });

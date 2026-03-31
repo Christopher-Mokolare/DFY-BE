@@ -1,0 +1,99 @@
+using Microsoft.AspNetCore.SignalR;
+using DoForYou.API.Data;
+using DoForYou.API.Models;
+using DoForYou.API.Hubs;
+
+namespace DoForYou.API.Services;
+
+public interface INotificationService
+{
+    System.Threading.Tasks.Task CreateNotificationAsync(int userId, string type, string title, string message, int? relatedTaskId = null);
+    System.Threading.Tasks.Task NotifyTaskClaimedAsync(int creatorId, string taskDescription, string runnerName);
+    System.Threading.Tasks.Task NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName);
+    System.Threading.Tasks.Task NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount);
+    System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null);
+}
+
+public class NotificationService : INotificationService
+{
+    private readonly AppDbContext _context;
+    private readonly IHubContext<ChatHub> _hubContext;
+
+    public NotificationService(AppDbContext context, IHubContext<ChatHub> hubContext)
+    {
+        _context = context;
+        _hubContext = hubContext;
+    }
+
+    public async System.Threading.Tasks.Task CreateNotificationAsync(int userId, string type, string title, string message, int? relatedTaskId = null)
+    {
+        var notification = new Notification
+        {
+            UserId = userId,
+            Type = type,
+            Title = title,
+            Message = message,
+            RelatedTaskId = relatedTaskId,
+            IsRead = false
+        };
+
+        _context.Notifications.Add(notification);
+        await _context.SaveChangesAsync();
+
+        // Send real-time notification
+        await _hubContext.Clients.User(userId.ToString()).SendAsync("NewNotification", new
+        {
+            id = notification.Id,
+            type = notification.Type,
+            title = notification.Title,
+            message = notification.Message,
+            isRead = notification.IsRead,
+            createdAt = notification.CreatedAt,
+            relatedTaskId = notification.RelatedTaskId
+        });
+    }
+
+    public async System.Threading.Tasks.Task NotifyTaskClaimedAsync(int creatorId, string taskDescription, string runnerName)
+    {
+        await CreateNotificationAsync(
+            creatorId,
+            "task_claimed",
+            "Task Claimed",
+            $"{runnerName} has claimed your task: {taskDescription}",
+            null
+        );
+    }
+
+    public async System.Threading.Tasks.Task NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName)
+    {
+        await CreateNotificationAsync(
+            creatorId,
+            "task_completed",
+            "Task Completed",
+            $"{runnerName} has completed your task: {taskDescription}",
+            null
+        );
+    }
+
+    public async System.Threading.Tasks.Task NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount)
+    {
+        await CreateNotificationAsync(
+            runnerId,
+            "payment_received",
+            "Payment Received",
+            $"You received R{amount:F2} for completing: {taskDescription}",
+            null
+        );
+    }
+
+    public async System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null)
+    {
+        await CreateNotificationAsync(
+            recipientId,
+            "new_message",
+            "New Message",
+            $"You have a new message from {senderName} about: {taskDescription}",
+            taskId
+        );
+    }
+}

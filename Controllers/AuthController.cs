@@ -45,14 +45,15 @@ public class AuthController : ControllerBase
             UserType = request.UserType,
             IdNumber = request.IdNumber,
             Address = request.Address,
-            DateOfBirth = request.DateOfBirth,
+            DateOfBirth = ConvertToUtc(request.DateOfBirth),
             Username = request.Username,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             IsVerified = true,
             ProfileCompleted = true,
             EmailVerified = true,
             PhoneVerified = true,
-            Roles = "User"
+            Roles = "User",
+            CreatedAt = DateTime.UtcNow
         };
 
         _context.Users.Add(user);
@@ -100,11 +101,14 @@ public class AuthController : ControllerBase
             return BadRequest("Invalid request");
         }
         
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+        // Clean email - remove mailto: prefix if present
+        var cleanEmail = request.Email?.Replace("mailto:", "").Trim();
+        
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == cleanEmail);
         
         if (user == null)
         {
-            Console.WriteLine($"User not found: {request.Email}");
+            Console.WriteLine($"User not found: {cleanEmail}");
             return Ok(new AuthResponse
             {
                 Success = false,
@@ -182,9 +186,22 @@ public class AuthController : ControllerBase
             issuer: _configuration["Jwt:Issuer"] ?? "DoForYou",
             audience: _configuration["Jwt:Audience"] ?? "DoForYou",
             claims: claims,
-            expires: DateTime.Now.AddDays(7),
+            expires: DateTime.UtcNow.AddDays(7),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private static DateTime? ConvertToUtc(DateTime? dateTime)
+    {
+        if (!dateTime.HasValue) return null;
+        
+        return dateTime.Value.Kind switch
+        {
+            DateTimeKind.Utc => dateTime.Value,
+            DateTimeKind.Local => dateTime.Value.ToUniversalTime(),
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(dateTime.Value, DateTimeKind.Utc),
+            _ => dateTime.Value
+        };
     }
 }

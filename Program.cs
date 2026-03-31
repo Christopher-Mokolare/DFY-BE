@@ -6,7 +6,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DoForYou.API.Data;
 using DoForYou.API.Services;
+using DoForYou.API.Services.Background;
 using DoForYou.API.Middleware;
+using DoForYou.API.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +23,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // Services
 builder.Services.AddScoped<IRulesEngine, RulesEngine>();
+builder.Services.AddScoped<IEscrowService, EscrowService>();
+builder.Services.AddScoped<IWalletService, WalletService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IBankingService, BankingService>();
+builder.Services.AddHostedService<EscrowReleaseService>();
+
+// SignalR
+builder.Services.AddSignalR();
 
 // JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -77,13 +87,14 @@ app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<ChatHub>("/api/v1/hubs/chat");
 
 // Open Swagger in browser after application starts
 if (app.Environment.IsDevelopment())
 {
     app.Lifetime.ApplicationStarted.Register(() =>
     {
-        var url = "http://localhost:5000/swagger";
+        var url = "http://localhost:5001/swagger";
         try
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
