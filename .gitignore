@@ -11,3 +11,4 @@ appsettings.Development.json
 *.cache
 Thumbs.db
 .DS_Store
+appsettings.json
