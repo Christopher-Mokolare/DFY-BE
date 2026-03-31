@@ -68,7 +68,9 @@ public class UserController : ControllerBase
         user.LastName = request.LastName;
         if (!string.IsNullOrEmpty(request.PhoneNumber)) user.PhoneNumber = request.PhoneNumber;
         if (!string.IsNullOrEmpty(request.Address)) user.Address = request.Address;
-        user.DateOfBirth = request.DateOfBirth;
+        user.DateOfBirth = request.DateOfBirth.HasValue
+            ? DateTime.SpecifyKind(request.DateOfBirth.Value, DateTimeKind.Utc)
+            : null;
         if (!string.IsNullOrEmpty(request.IdNumber)) user.IdNumber = request.IdNumber;
         if (!string.IsNullOrEmpty(request.Username)) user.Username = request.Username;
         if (!string.IsNullOrEmpty(request.UserType)) user.UserType = request.UserType;
