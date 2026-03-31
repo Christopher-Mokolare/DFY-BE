@@ -45,6 +45,7 @@ public class UserController : ControllerBase
                 dateOfBirth = user.DateOfBirth,
                 username = user.Username,
                 profileCompleted = user.ProfileCompleted,
+                profileCompletion = CalculateProfileCompletion(user),
                 rating = user.Rating,
                 completedTasks = user.CompletedTasks,
                 walletBalance = user.WalletBalance,
@@ -176,6 +177,21 @@ public class UserController : ControllerBase
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return int.TryParse(userIdClaim, out var userId) ? userId : null;
+    }
+
+    private static int CalculateProfileCompletion(User user)
+    {
+        var fields = new[]
+        {
+            !string.IsNullOrEmpty(user.FirstName),
+            !string.IsNullOrEmpty(user.LastName),
+            !string.IsNullOrEmpty(user.PhoneNumber),
+            !string.IsNullOrEmpty(user.Address),
+            !string.IsNullOrEmpty(user.IdNumber),
+            !string.IsNullOrEmpty(user.UserType),
+            user.DateOfBirth.HasValue
+        };
+        return (int)Math.Round((double)fields.Count(f => f) / fields.Length * 100);
     }
 }
 
