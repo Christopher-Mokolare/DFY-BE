@@ -20,14 +20,23 @@ public class NotificationsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<List<object>>>> GetNotifications()
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetNotifications(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? type = null,
+        [FromQuery] bool unreadOnly = false)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        var notifications = await _context.Notifications
-            .Where(n => n.UserId == userId)
+        var query = _context.Notifications.Where(n => n.UserId == userId);
+        if (!string.IsNullOrEmpty(type)) query = query.Where(n => n.Type == type);
+        if (unreadOnly) query = query.Where(n => !n.IsRead);
+
+        var notifications = await query
             .OrderByDescending(n => n.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(n => new
             {
                 id = n.Id,
@@ -71,6 +80,19 @@ public class NotificationsController : ControllerBase
             Data = true,
             Message = "Notification marked as read"
         });
+    }
+
+    [HttpPost("mark-task-read")]
+    public async Task<ActionResult<ApiResponse<bool>>> MarkTaskNotificationsRead([FromBody] MarkTaskReadRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        await _context.Notifications
+            .Where(n => n.UserId == userId && !n.IsRead && n.Type == "new_message" && n.RelatedTaskId == request.TaskId)
+            .ExecuteUpdateAsync(n => n.SetProperty(x => x.IsRead, true));
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task notifications marked as read" });
     }
 
     [HttpPost("mark-all-read")]
@@ -130,9 +152,27 @@ public class NotificationsController : ControllerBase
         });
     }
 
+    [HttpDelete("clear-read")]
+    public async Task<ActionResult<ApiResponse<bool>>> ClearReadNotifications()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        await _context.Notifications
+            .Where(n => n.UserId == userId && n.IsRead)
+            .ExecuteDeleteAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Read notifications cleared" });
+    }
+
     private int? GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return int.TryParse(userIdClaim, out var userId) ? userId : null;
     }
+}
+
+public class MarkTaskReadRequest
+{
+    public int TaskId { get; set; }
 }
