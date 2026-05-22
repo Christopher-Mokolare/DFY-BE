@@ -11,60 +11,15 @@ namespace DoForYou.API.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<decimal>(
-                name: "CommissionAmount",
-                table: "Tasks",
-                type: "numeric(10,2)",
-                nullable: false,
-                defaultValue: 0m);
-
-            migrationBuilder.AddColumn<decimal>(
-                name: "CommissionPercentage",
-                table: "Tasks",
-                type: "numeric(5,2)",
-                nullable: false,
-                defaultValue: 15.00m);
-
-            migrationBuilder.AddColumn<DateTime>(
-                name: "DeletedAt",
-                table: "Tasks",
-                type: "timestamp with time zone",
-                nullable: true);
-
-            migrationBuilder.AddColumn<DateTime>(
-                name: "EscrowHoldUntil",
-                table: "Tasks",
-                type: "timestamp without time zone",
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "EscrowStatus",
-                table: "Tasks",
-                type: "character varying(20)",
-                maxLength: 20,
-                nullable: false,
-                defaultValue: "none");
-
-            migrationBuilder.AddColumn<bool>(
-                name: "IsDeleted",
-                table: "Tasks",
-                type: "boolean",
-                nullable: false,
-                defaultValue: false);
-
-            migrationBuilder.AddColumn<decimal>(
-                name: "PayoutAmount",
-                table: "Tasks",
-                type: "numeric(10,2)",
-                nullable: false,
-                defaultValue: 0m);
-
-            migrationBuilder.AddColumn<string>(
-                name: "TaskName",
-                table: "Tasks",
-                type: "text",
-                nullable: false,
-                defaultValue: "");
+            // Only add CommissionPercentage — all other columns already exist in the DB
+            migrationBuilder.Sql(@"
+                DO $$ BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                                  WHERE table_name='Tasks' AND column_name='CommissionPercentage') THEN
+                        ALTER TABLE ""Tasks"" ADD ""CommissionPercentage"" numeric(5,2) NOT NULL DEFAULT 15.00;
+                    END IF;
+                END $$;
+            ");
         }
 
         /// <inheritdoc />

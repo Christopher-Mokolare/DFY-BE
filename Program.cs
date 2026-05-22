@@ -72,8 +72,8 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(
                 "http://localhost:3000",
                 "http://localhost:4200",
-                "https://dfy-fe.onrender.com",
-                builder.Configuration["AllowedOrigin"] ?? "http://localhost:3000"
+                "http://localhost:5173",
+                builder.Configuration["AllowedOrigin"] ?? "http://localhost:5173"
               )
               .AllowAnyHeader()
               .AllowAnyMethod()
@@ -120,7 +120,8 @@ if (app.Environment.IsDevelopment())
 {
     app.Lifetime.ApplicationStarted.Register(() =>
     {
-        var url = "http://localhost:5001/swagger";
+        var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+        var url = $"http://localhost:{port}/swagger";
         try
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
