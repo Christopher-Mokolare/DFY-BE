@@ -844,10 +844,17 @@ public class TasksController : ControllerBase
 
     private string GeneratePayFastUrl(Models.Task task, User user)
     {
-        var baseUrl = "https://sandbox.payfast.co.za/eng/process";
-        var merchantId = "10000100";
-        var merchantKey = "46f0cd694581a";
-        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL") ?? "http://localhost:5000";
+        var isSandbox = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
+        var baseUrl = isSandbox
+            ? "https://sandbox.payfast.co.za/eng/process"
+            : "https://www.payfast.co.za/eng/process";
+
+        var merchantId = isSandbox ? "10000100" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_ID") ?? "10000100");
+        var merchantKey = isSandbox ? "46f0cd694581a" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_KEY") ?? "46f0cd694581a");
+
+        // Always use the deployed backend URL for PayFast callbacks
+        // so they work from both local dev and production
+        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL") ?? "https://dfy-be.onrender.com";
         var returnUrl = $"{backendUrl}/api/v1/payment/return";
         var cancelUrl = $"{backendUrl}/api/v1/payment/cancel";
         var notifyUrl = $"{backendUrl}/api/v1/payment/notify";
@@ -864,7 +871,7 @@ public class TasksController : ControllerBase
             ["email_address"] = user.Email,
             ["m_payment_id"] = task.TaskId,
             ["amount"] = task.Budget.ToString("F2"),
-            ["item_name"] = $"Task Payment - {task.TaskDescription}"
+            ["item_name"] = $"Task Payment - {task.TaskDescription.Substring(0, Math.Min(task.TaskDescription.Length, 100))}"
         };
 
         var queryString = string.Join("&", parameters.Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value)}"));

@@ -47,19 +47,44 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? "your-secret-key-here"))
         };
+        // Allow SignalR to receive JWT from query string (required for WebSocket handshake)
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/api/v1/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
 
 // CORS
 builder.Services.AddCors(options =>
 {
+    // Web policy — specific origins + credentials (for browser cookie/session flows)
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy.WithOrigins(
                 "http://localhost:3000",
                 "http://localhost:4200",
-                "https://dfy-fe.onrender.com",
-                builder.Configuration["AllowedOrigin"] ?? "http://localhost:3000"
+                "http://localhost:5173",
+                builder.Configuration["AllowedOrigin"] ?? "http://localhost:5173"
               )
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+
+    // Mobile policy — React Native sends no Origin header, so we allow any origin
+    // Authentication is handled via JWT Bearer token, not cookies, so this is safe
+    options.AddPolicy("AllowMobile", policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -82,19 +107,21 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowFrontend");
+app.UseCors("AllowMobile");
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ChatHub>("/api/v1/hubs/chat");
+app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 // Open Swagger in browser after application starts
 if (app.Environment.IsDevelopment())
 {
     app.Lifetime.ApplicationStarted.Register(() =>
     {
-        var url = "http://localhost:5001/swagger";
+        var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+        var url = $"http://localhost:{port}/swagger";
         try
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -117,5 +144,5 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+var port = Environment.GetEnvironmentVariable("PORT") ?? (app.Environment.IsDevelopment() ? "5001" : "8080");
 app.Run($"http://0.0.0.0:{port}");

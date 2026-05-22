@@ -12,3 +12,4 @@ appsettings.Development.json
 Thumbs.db
 .DS_Store
 appsettings.json
+appsettings.Production.json
