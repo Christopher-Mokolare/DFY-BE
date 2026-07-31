@@ -1,14 +1,12 @@
-name: Deploy to ECS
+name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
 
 env:
   AWS_REGION: af-south-1
   ECR_REPOSITORY: dfy-be
-  ECS_CLUSTER: dfy-cluster
-  ECS_SERVICE: dfy-service
   CONTAINER_NAME: dfy-be
 
 jobs:
@@ -17,6 +15,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set environment variables
+        run: |
+          if [ "${{ github.ref_name }}" == "main" ]; then
+            echo "ECS_CLUSTER=dfy-cluster" >> $GITHUB_ENV
+            echo "ECS_SERVICE=dfy-service" >> $GITHUB_ENV
+            echo "TASK_DEFINITION=task-definition.json" >> $GITHUB_ENV
+            echo "TASK_FAMILY=dfy-task" >> $GITHUB_ENV
+          else
+            echo "ECS_CLUSTER=dfy-cluster" >> $GITHUB_ENV
+            echo "ECS_SERVICE=dfy-service-qa" >> $GITHUB_ENV
+            echo "TASK_DEFINITION=task-definition-qa.json" >> $GITHUB_ENV
+            echo "TASK_FAMILY=dfy-task-qa" >> $GITHUB_ENV
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -42,14 +54,14 @@ jobs:
       - name: Download current ECS task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition dfy-task \
-            --query taskDefinition > task-definition.json
+            --task-definition ${{ env.TASK_FAMILY }} \
+            --query taskDefinition > ${{ env.TASK_DEFINITION }}
 
       - name: Update ECS task definition with new image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: task-definition.json
+          task-definition: ${{ env.TASK_DEFINITION }}
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 

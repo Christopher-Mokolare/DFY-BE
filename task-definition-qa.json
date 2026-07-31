@@ -1,0 +1,54 @@
+{
+  "family": "dfy-task-qa",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::416500110282:role/dfy-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::416500110282:role/dfy-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "dfy-be",
+      "image": "416500110282.dkr.ecr.af-south-1.amazonaws.com/dfy-be:latest",
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "ASPNETCORE_ENVIRONMENT",
+          "value": "Production"
+        },
+        {
+          "name": "PORT",
+          "value": "8080"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "ConnectionStrings__DefaultConnection",
+          "valueFrom": "arn:aws:secretsmanager:af-south-1:416500110282:secret:dfy/qa-g2WJGe:ConnectionStrings__DefaultConnection::"
+        },
+        {
+          "name": "Jwt__Key",
+          "valueFrom": "arn:aws:secretsmanager:af-south-1:416500110282:secret:dfy/qa-g2WJGe:Jwt__Key::"
+        },
+        {
+          "name": "AllowedOrigin",
+          "valueFrom": "arn:aws:secretsmanager:af-south-1:416500110282:secret:dfy/qa-g2WJGe:AllowedOrigin::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/dfy-be-qa",
+          "awslogs-region": "af-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "essential": true
+    }
+  ]
+}
