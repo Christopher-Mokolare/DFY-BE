@@ -16,7 +16,7 @@ public class CreateTaskRequest
     [Required]
     public DateTime DateNeeded { get; set; }
     
-    [Required, Range(1, 100000)]
+    [Required, Range(50, 100000, ErrorMessage = "validation failed: minimum budget is R50")]
     public decimal Budget { get; set; }
     
     public string? Notes { get; set; }
@@ -26,23 +26,13 @@ public class CreateTaskRequest
 
 public class UpdateTaskRequest
 {
-    [Required]
-    public string TaskDescription { get; set; } = string.Empty;
-    
-    [Required]
-    public string Category { get; set; } = string.Empty;
-    
-    [Required]
-    public string Area { get; set; } = string.Empty;
-    
-    [Required]
-    public DateTime DateNeeded { get; set; }
-    
-    [Required, Range(1, 100000)]
-    public decimal Budget { get; set; }
-    
+    public string? TaskDescription { get; set; }
+    public string? Category { get; set; }
+    public string? Area { get; set; }
+    public DateTime? DateNeeded { get; set; }
+    public decimal? Budget { get; set; }
     public string? Notes { get; set; }
-    public string Priority { get; set; } = "Standard";
+    public string? Priority { get; set; }
 }
 
 public class TaskDto
@@ -175,4 +165,15 @@ public class UserDto
     public DateTime CreatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
     public bool IsVerified { get; set; }
+}
+
+
+public class WithdrawalRequestDto
+{
+    public decimal Amount { get; set; }
+    public string? BankAccount { get; set; }
+    public string? BankName { get; set; }
+    public string? AccountHolder { get; set; }
+    public string? BranchCode { get; set; }
+    public string? AccountType { get; set; }
 }

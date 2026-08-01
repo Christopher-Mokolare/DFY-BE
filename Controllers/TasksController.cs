@@ -47,10 +47,10 @@ public class TasksController : ControllerBase
 
         // Only creators and both can post tasks
         if (user.UserType == "runner")
-            return Ok(new ApiResponse<object>
+            return StatusCode(403, new ApiResponse<object>
             {
                 Success = false,
-                Message = "Runners cannot post tasks. Change your user type to Creator or Both to post tasks."
+                Message = "Forbidden: Runners cannot post tasks."
             });
         // Check if user can create tasks using rules engine
         var ruleContext = new RuleContext
@@ -70,6 +70,13 @@ public class TasksController : ControllerBase
                 Message = errorMessage
             });
         }
+
+        if (request.Budget < 50)
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "validation failed: minimum budget is R50"
+            });
 
         var taskId = GenerateTaskId();
         
@@ -595,20 +602,20 @@ public class TasksController : ControllerBase
         if (task.TaskStatus != "PendingPayment")
             return Ok(new ApiResponse<object> { Success = false, Message = "Only pending payment tasks can be edited" });
 
-        // Update task fields
-        task.TaskDescription = request.TaskDescription;
-        task.Category = request.Category;
-        task.Area = request.Area;
-        task.Priority = request.Priority;
-        task.DateNeeded = DateTime.SpecifyKind(request.DateNeeded, DateTimeKind.Utc);
-        task.Budget = request.Budget;
-        task.Notes = request.Notes;
+        if (!string.IsNullOrEmpty(request.TaskDescription)) task.TaskDescription = request.TaskDescription;
+        if (!string.IsNullOrEmpty(request.Category)) task.Category = request.Category;
+        if (!string.IsNullOrEmpty(request.Area)) task.Area = request.Area;
+        if (!string.IsNullOrEmpty(request.Priority)) task.Priority = request.Priority;
+        if (!string.IsNullOrEmpty(request.Notes)) task.Notes = request.Notes;
+        if (request.DateNeeded.HasValue) task.DateNeeded = DateTime.SpecifyKind(request.DateNeeded.Value, DateTimeKind.Utc);
+        if (request.Budget.HasValue && request.Budget.Value >= 50)
+        {
+            task.Budget = request.Budget.Value;
+            var commission = _escrowService.CalculateCommission(task.Budget);
+            task.CommissionAmount = commission;
+            task.PayoutAmount = task.Budget - commission;
+        }
         task.UpdatedAt = DateTime.UtcNow;
-
-        // Recalculate commission and payout with new budget
-        var commission = _escrowService.CalculateCommission(request.Budget);
-        task.CommissionAmount = commission;
-        task.PayoutAmount = request.Budget - commission;
 
         await _context.SaveChangesAsync();
 
@@ -618,6 +625,25 @@ public class TasksController : ControllerBase
             Data = new { taskId = task.TaskId },
             Message = "Task updated successfully"
         });
+    }
+
+    [HttpDelete("{taskId}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId && t.CreatedByUserId == userId);
+        if (task == null)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+
+        if (task.TaskStatus != "PendingPayment")
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot delete task after payment" });
+
+        _context.Tasks.Remove(task);
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task deleted successfully" });
     }
 
     [HttpPost("payment-success")]

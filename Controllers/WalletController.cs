@@ -54,6 +54,7 @@ public class WalletController : ControllerBase
             Success = true,
             Data = new
             {
+                available = user.WalletBalance,
                 availableBalance = user.WalletBalance,
                 pendingPayouts = pendingPayouts,
                 totalEarned = totalEarned,
@@ -101,6 +102,76 @@ public class WalletController : ControllerBase
                 page = page,
                 pageSize = pageSize
             }
+        });
+    }
+
+    [HttpPost("withdraw")]
+    public async Task<ActionResult<ApiResponse<object>>> RequestWithdrawal([FromBody] WithdrawalRequestDto request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return Unauthorized();
+
+        if (request.Amount <= 0)
+            return Ok(new ApiResponse<object> { Success = false, Message = "Invalid withdrawal amount" });
+
+        if (request.Amount > user.WalletBalance)
+            return Ok(new ApiResponse<object> { Success = false, Message = "Insufficient balance" });
+
+        // Find or create bank account
+        var bankAccount = await _context.BankAccounts
+            .FirstOrDefaultAsync(b => b.UserId == userId && b.IsActive);
+
+        if (bankAccount == null)
+        {
+            bankAccount = new DoForYou.API.Models.BankAccount
+            {
+                UserId = userId.Value,
+                BankName = request.BankName ?? string.Empty,
+                AccountNumber = request.BankAccount ?? string.Empty,
+                AccountHolderName = request.AccountHolder ?? string.Empty,
+                BranchCode = request.BranchCode ?? string.Empty,
+                AccountType = request.AccountType ?? "Cheque",
+                IsActive = true
+            };
+            _context.BankAccounts.Add(bankAccount);
+            await _context.SaveChangesAsync();
+        }
+
+        var reference = $"WD-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}-{Random.Shared.Next(1000, 9999)}";
+
+        var withdrawal = new DoForYou.API.Models.WithdrawalRequest
+        {
+            UserId = userId.Value,
+            BankAccountId = bankAccount.Id,
+            Amount = request.Amount,
+            Fee = 0,
+            Status = "Pending",
+            Reference = reference
+        };
+        _context.WithdrawalRequests.Add(withdrawal);
+
+        // Debit wallet
+        user.WalletBalance -= request.Amount;
+        _context.WalletTransactions.Add(new DoForYou.API.Models.WalletTransaction
+        {
+            UserId = userId.Value,
+            Amount = request.Amount,
+            TransactionType = "debit",
+            Status = "processing",
+            Description = "Withdrawal request",
+            Reference = reference
+        });
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { reference, amount = request.Amount, status = "processing" },
+            Message = "Withdrawal request submitted successfully"
         });
     }
 
