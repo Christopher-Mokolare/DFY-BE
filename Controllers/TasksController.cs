@@ -416,6 +416,8 @@ public class TasksController : ControllerBase
             location = task.Area,
             budget = task.Budget,
             status = task.TaskStatus.ToLower(),
+            paymentStatus = task.PaymentStatus,
+            escrowStatus = task.EscrowStatus,
             priority = task.Priority.ToLower(),
             createdAt = task.CreatedAt,
             dueDate = task.DateNeeded,
@@ -478,8 +480,12 @@ public class TasksController : ControllerBase
         if (userId == null) return Unauthorized();
 
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
-        if (task == null || task.CreatedByUserId != userId || task.TaskStatus != "Completed")
+        if (task == null || task.CreatedByUserId != userId || (task.TaskStatus != "Completed" && task.TaskStatus != "RunnerPaid"))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot confirm task" });
+
+        // Already released (auto-release ran first)
+        if (task.TaskStatus == "RunnerPaid")
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Payment already released" });
 
         // Clear the hold so EscrowService releases immediately
         task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);

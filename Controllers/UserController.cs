@@ -57,6 +57,7 @@ public class UserController : ControllerBase
         });
     }
 
+    [HttpPost("profile")]
     [HttpPut("profile")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
@@ -91,6 +92,8 @@ public class UserController : ControllerBase
         });
     }
 
+    [HttpGet("/api/v1/users/dashboard")]
+    [HttpGet("/api/v1/users/dashboard/stats")]
     [HttpGet("dashboard/stats")]
     public async Task<ActionResult<ApiResponse<object>>> GetDashboardStats()
     {
@@ -118,6 +121,7 @@ public class UserController : ControllerBase
     }
 
     [HttpGet("/api/v1/UserPreferences")]
+    [HttpGet("preferences")]
     public async Task<ActionResult<ApiResponse<object>>> GetUserPreferences()
     {
         var userId = GetCurrentUserId();
@@ -148,6 +152,7 @@ public class UserController : ControllerBase
     }
 
     [HttpPut("/api/v1/UserPreferences")]
+    [HttpPost("/api/v1/UserPreferences")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserPreferences([FromBody] UserPreferencesRequest request)
     {
         var userId = GetCurrentUserId();
@@ -156,8 +161,12 @@ public class UserController : ControllerBase
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
-        // Update user type based on preferences
-        if (request.CanCreateTasks && request.CanAcceptTasks)
+        // Support both {userType} and {canCreateTasks, canAcceptTasks} formats
+        if (!string.IsNullOrEmpty(request.UserType))
+        {
+            user.UserType = request.UserType;
+        }
+        else if (request.CanCreateTasks && request.CanAcceptTasks)
             user.UserType = "both";
         else if (request.CanCreateTasks)
             user.UserType = "creator";
@@ -212,4 +221,5 @@ public class UserPreferencesRequest
 {
     public bool CanCreateTasks { get; set; }
     public bool CanAcceptTasks { get; set; }
+    public string? UserType { get; set; }
 }
