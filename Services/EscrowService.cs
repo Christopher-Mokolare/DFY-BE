@@ -37,19 +37,32 @@ public class EscrowService : IEscrowService
             if (task.EscrowHoldUntil.HasValue && task.EscrowHoldUntil > DateTime.UtcNow)
                 return false;
 
-            // Update runner wallet
+            // Credit runner wallet
             task.AcceptedByUser!.WalletBalance += task.PayoutAmount;
+
+            // Record wallet transaction
+            _context.WalletTransactions.Add(new WalletTransaction
+            {
+                UserId = task.AcceptedByUserId.Value,
+                Amount = task.PayoutAmount,
+                TransactionType = "credit",
+                Status = "completed",
+                Description = $"Payment for task: {task.TaskDescription}",
+                Reference = task.TaskId,
+                CreatedAt = DateTime.UtcNow
+            });
 
             // Update task
             task.EscrowStatus = "released";
             task.PaymentStatus = "EscrowReleased";
             task.TaskStatus = "RunnerPaid";
             task.PaidToRunnerAt = DateTime.UtcNow;
+            task.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
 
-            _logger.LogInformation("Escrow released for task {TaskId}: R{Payout}", taskId, task.PayoutAmount);
+            _logger.LogInformation("Escrow released for task {TaskId}: R{Payout}", task.TaskId, task.PayoutAmount);
             return true;
         }
         catch (Exception ex)

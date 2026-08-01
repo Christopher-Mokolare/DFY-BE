@@ -18,13 +18,15 @@ public class TasksController : ControllerBase
     private readonly IRulesEngine _rulesEngine;
     private readonly IEscrowService _escrowService;
     private readonly INotificationService _notificationService;
+    private readonly IConfiguration _configuration;
 
-    public TasksController(AppDbContext context, IRulesEngine rulesEngine, IEscrowService escrowService, INotificationService notificationService)
+    public TasksController(AppDbContext context, IRulesEngine rulesEngine, IEscrowService escrowService, INotificationService notificationService, IConfiguration configuration)
     {
         _context = context;
         _rulesEngine = rulesEngine;
         _escrowService = escrowService;
         _notificationService = notificationService;
+        _configuration = configuration;
     }
 
     [HttpPost]
@@ -472,36 +474,15 @@ public class TasksController : ControllerBase
         if (task == null || task.CreatedByUserId != userId || task.TaskStatus != "Completed")
             return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot confirm task" });
 
-        // Release payment to runner
-        task.TaskStatus = "RunnerPaid";
-        task.EscrowStatus = "none";
-        task.PaidToRunnerAt = DateTime.UtcNow;
-        task.UpdatedAt = DateTime.UtcNow;
-
-        // Add wallet transaction for runner
-        var walletTransaction = new WalletTransaction
-        {
-            UserId = task.AcceptedByUserId.Value,
-            Amount = task.PayoutAmount,
-            TransactionType = "credit",
-            Status = "completed",
-            Description = $"Payment for task: {task.TaskDescription}",
-            Reference = task.TaskId,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        // Update runner's wallet balance
-        var runner = await _context.Users.FindAsync(task.AcceptedByUserId);
-        if (runner != null)
-        {
-            runner.WalletBalance += task.PayoutAmount;
-        }
-
-        _context.WalletTransactions.Add(walletTransaction);
+        // Clear the hold so EscrowService releases immediately
+        task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
         await _context.SaveChangesAsync();
 
-        // Send notification to runner about payment
-        await _notificationService.NotifyPaymentReleasedAsync(task.AcceptedByUserId.Value, task.TaskDescription, task.PayoutAmount);
+        var released = await _escrowService.ReleaseEscrowAsync(task.Id);
+        if (!released)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Failed to release payment" });
+
+        await _notificationService.NotifyPaymentReleasedAsync(task.AcceptedByUserId!.Value, task.TaskDescription, task.PayoutAmount);
 
         return Ok(new ApiResponse<bool>
         {
@@ -852,20 +833,21 @@ public class TasksController : ControllerBase
         var merchantId = isSandbox ? "10000100" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_ID") ?? "10000100");
         var merchantKey = isSandbox ? "46f0cd694581a" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_KEY") ?? "46f0cd694581a");
 
-        // Always use the deployed backend URL for PayFast callbacks
-        // so they work from both local dev and production
-        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL") ?? "https://dfy-be.onrender.com";
-        var returnUrl = $"{backendUrl}/api/v1/payment/return";
-        var cancelUrl = $"{backendUrl}/api/v1/payment/cancel";
-        var notifyUrl = $"{backendUrl}/api/v1/payment/notify";
+        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL")
+            ?? _configuration["BackendUrl"]
+            ?? "https://api.doforyou.co.za";
+
+        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
+            ?? _configuration["FrontendUrl"]
+            ?? "https://do-for-you.vercel.app";
 
         var parameters = new Dictionary<string, string>
         {
             ["merchant_id"] = merchantId,
             ["merchant_key"] = merchantKey,
-            ["return_url"] = returnUrl,
-            ["cancel_url"] = cancelUrl,
-            ["notify_url"] = notifyUrl,
+            ["return_url"] = $"{frontendUrl}/payment/success?taskId={task.TaskId}",
+            ["cancel_url"] = $"{frontendUrl}/payment/cancelled?taskId={task.TaskId}",
+            ["notify_url"] = $"{backendUrl}/api/v1/payment/notify",
             ["name_first"] = user.FirstName,
             ["name_last"] = user.LastName,
             ["email_address"] = user.Email,

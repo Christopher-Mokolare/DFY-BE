@@ -54,7 +54,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             {
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
-                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/api/v1/hubs"))
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/api/v1/hubs/chat"))
                 {
                     context.Token = accessToken;
                 }
@@ -66,25 +66,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 // CORS
 builder.Services.AddCors(options =>
 {
-    // Web policy — specific origins + credentials (for browser cookie/session flows)
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:3000",
-                "http://localhost:4200",
-                "http://localhost:5173",
-                builder.Configuration["AllowedOrigin"] ?? "http://localhost:5173"
-              )
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
-    });
+        var allowedOrigins = (builder.Configuration["AllowedOrigin"] ?? "http://localhost:4200")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    // Mobile policy — React Native sends no Origin header, so we allow any origin
-    // Authentication is handled via JWT Bearer token, not cookies, so this is safe
-    options.AddPolicy("AllowMobile", policy =>
-    {
-        policy.SetIsOriginAllowed(_ => true)
+        var allOrigins = allowedOrigins
+            .Concat(new[] { "http://localhost:3000", "http://localhost:4200", "http://localhost:5173" })
+            .Distinct()
+            .ToArray();
+
+        policy.WithOrigins(allOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
@@ -107,7 +99,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("AllowMobile");
+app.UseCors("AllowFrontend");
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseAuthentication();
 app.UseAuthorization();

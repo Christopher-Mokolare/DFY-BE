@@ -12,10 +12,12 @@ namespace DoForYou.API.Controllers;
 public class PaymentController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public PaymentController(AppDbContext context)
+    public PaymentController(AppDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
     }
 
     [HttpPost("initiate")]
@@ -89,8 +91,12 @@ public class PaymentController : ControllerBase
             Console.WriteLine($"PayFast Notify: PaymentId={paymentId}, Status={paymentStatus}");
 
             if (string.IsNullOrEmpty(paymentId))
+                return BadRequest();
+
+            // Verify PayFast signature
+            if (!VerifyPayFastSignature(form))
             {
-                Console.WriteLine("PayFast Notify: Missing payment ID");
+                Console.WriteLine("PayFast Notify: Invalid signature");
                 return BadRequest();
             }
 
@@ -101,20 +107,14 @@ public class PaymentController : ControllerBase
                 return NotFound();
             }
 
-            // Update task status after successful payment
             if (paymentStatus == "COMPLETE")
             {
                 task.PaymentStatus = "EscrowHeld";
                 task.TaskStatus = "Posted";
                 task.EscrowStatus = "held";
                 task.UpdatedAt = DateTime.UtcNow;
-
                 await _context.SaveChangesAsync();
-                Console.WriteLine($"PayFast Notify: Task {paymentId} updated successfully");
-            }
-            else
-            {
-                Console.WriteLine($"PayFast Notify: Payment not complete, status: {paymentStatus}");
+                Console.WriteLine($"PayFast Notify: Task {paymentId} activated");
             }
 
             return Ok();
@@ -127,17 +127,59 @@ public class PaymentController : ControllerBase
     }
 
     [HttpGet("return")]
-    public IActionResult PayFastReturn()
+    public IActionResult PayFastReturn([FromQuery] string? taskId = null)
     {
-        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL") ?? "http://localhost:5173";
-        return Redirect($"{frontendUrl}/payments/success?status=success");
+        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
+            ?? _configuration["FrontendUrl"]
+            ?? "https://do-for-you.vercel.app";
+        var redirect = string.IsNullOrEmpty(taskId)
+            ? $"{frontendUrl}/payment/success"
+            : $"{frontendUrl}/payment/success?taskId={taskId}";
+        return Redirect(redirect);
     }
 
     [HttpGet("cancel")]
-    public IActionResult PayFastCancel()
+    public IActionResult PayFastCancel([FromQuery] string? taskId = null)
     {
-        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL") ?? "http://localhost:5173";
-        return Redirect($"{frontendUrl}/payments/cancelled");
+        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
+            ?? _configuration["FrontendUrl"]
+            ?? "https://do-for-you.vercel.app";
+        var redirect = string.IsNullOrEmpty(taskId)
+            ? $"{frontendUrl}/payment/cancelled"
+            : $"{frontendUrl}/payment/cancelled?taskId={taskId}";
+        return Redirect(redirect);
+    }
+
+    private bool VerifyPayFastSignature(IFormCollection form)
+    {
+        try
+        {
+            var isSandbox = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
+            // In sandbox mode, skip signature verification
+            if (isSandbox) return true;
+
+            var passphrase = Environment.GetEnvironmentVariable("PAYFAST_PASSPHRASE")
+                ?? _configuration["PayFast:Passphrase"];
+
+            var fields = form
+                .Where(f => f.Key != "signature")
+                .OrderBy(f => f.Key)
+                .Select(f => $"{f.Key}={Uri.EscapeDataString(f.Value.ToString())}");
+
+            var paramString = string.Join("&", fields);
+            if (!string.IsNullOrEmpty(passphrase))
+                paramString += $"&passphrase={Uri.EscapeDataString(passphrase)}";
+
+            using var md5 = System.Security.Cryptography.MD5.Create();
+            var hash = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(paramString))
+                .Select(b => b.ToString("x2")));
+
+            return hash == form["signature"].ToString();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private int? GetCurrentUserId()
