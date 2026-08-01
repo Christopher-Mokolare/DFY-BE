@@ -65,14 +65,24 @@ public class AdminController : ControllerBase
     [HttpGet("tasks")]
     public async Task<ActionResult<ApiResponse<PaginatedResponse<TaskDto>>>> GetAllTasks(
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 10,
+        [FromQuery] int pageSize = 20,
         [FromQuery] string? status = null,
+        [FromQuery] string? taskStatus = null,
+        [FromQuery] string? paymentStatus = null,
+        [FromQuery] string? priority = null,
         [FromQuery] string? search = null)
     {
         var query = _context.Tasks.Include(t => t.CreatedByUser).AsQueryable();
 
-        if (!string.IsNullOrEmpty(status))
-            query = query.Where(t => t.TaskStatus == status);
+        var resolvedTaskStatus = taskStatus ?? status;
+        if (!string.IsNullOrEmpty(resolvedTaskStatus))
+            query = query.Where(t => t.TaskStatus == resolvedTaskStatus);
+
+        if (!string.IsNullOrEmpty(paymentStatus))
+            query = query.Where(t => t.PaymentStatus == paymentStatus);
+
+        if (!string.IsNullOrEmpty(priority))
+            query = query.Where(t => t.Priority == priority);
 
         if (!string.IsNullOrEmpty(search))
             query = query.Where(t => t.TaskDescription.Contains(search) || t.TaskId.Contains(search));
@@ -169,24 +179,45 @@ public class AdminController : ControllerBase
     [HttpGet("payments")]
     public async Task<ActionResult<ApiResponse<object>>> GetPaymentsOverview()
     {
+        var paidStatuses = new[] { "EscrowHeld", "Completed", "RunnerPaid" };
+
         var totalRevenue = await _context.Tasks
-            .Where(t => t.PaymentStatus == "Completed")
+            .Where(t => paidStatuses.Contains(t.PaymentStatus))
             .SumAsync(t => t.Budget);
-        
+
+        var platformRevenue = await _context.Tasks
+            .Where(t => paidStatuses.Contains(t.PaymentStatus))
+            .SumAsync(t => t.CommissionAmount);
+
+        var helperPayouts = await _context.Tasks
+            .Where(t => t.TaskStatus == "RunnerPaid")
+            .SumAsync(t => t.PayoutAmount);
+
         var pendingRevenue = await _context.Tasks
-            .Where(t => t.PaymentStatus == "Pending")
+            .Where(t => t.PaymentStatus == "Pending" && t.TaskStatus == "PendingPayment")
             .SumAsync(t => t.Budget);
+
+        var pendingPayouts = await _context.Tasks
+            .Where(t => t.TaskStatus == "Completed" && t.EscrowStatus == "held")
+            .SumAsync(t => t.PayoutAmount);
 
         var recentPayments = await _context.Tasks
             .Include(t => t.CreatedByUser)
-            .Where(t => t.PaymentStatus == "Completed")
+            .Include(t => t.AcceptedByUser)
+            .Where(t => paidStatuses.Contains(t.PaymentStatus))
             .OrderByDescending(t => t.UpdatedAt)
             .Take(10)
             .Select(t => new
             {
                 taskId = t.TaskId,
+                description = t.TaskDescription,
                 amount = t.Budget,
+                commission = t.CommissionAmount,
+                payout = t.PayoutAmount,
+                paymentStatus = t.PaymentStatus,
+                taskStatus = t.TaskStatus,
                 userName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
+                helperName = t.AcceptedByUser != null ? $"{t.AcceptedByUser.FirstName} {t.AcceptedByUser.LastName}" : null,
                 date = t.UpdatedAt
             })
             .ToListAsync();
@@ -197,7 +228,10 @@ public class AdminController : ControllerBase
             Data = new
             {
                 totalRevenue,
+                platformRevenue,
+                helperPayouts,
                 pendingRevenue,
+                pendingPayouts,
                 recentPayments
             }
         });
