@@ -1,8 +1,7 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main, develop]
+  workflow_dispatch: # manual trigger only — deployment is handled by Render
 
 env:
   AWS_REGION: af-south-1
