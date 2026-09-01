@@ -6,6 +6,7 @@ using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using System.Security.Claims;
 using System.Text.Json;
+using BCrypt.Net;
 
 namespace DoForYou.API.Controllers;
 
@@ -15,10 +16,12 @@ namespace DoForYou.API.Controllers;
 public class UserController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IWebHostEnvironment _env;
 
-    public UserController(AppDbContext context)
+    public UserController(AppDbContext context, IWebHostEnvironment env)
     {
         _context = context;
+        _env = env;
     }
 
     [HttpGet("profile")]
@@ -52,7 +55,12 @@ public class UserController : ControllerBase
                 walletBalance = user.WalletBalance,
                 isVerified = user.IsVerified,
                 emailVerified = user.EmailVerified,
-                phoneVerified = user.PhoneVerified
+                phoneVerified = user.PhoneVerified,
+                isAvailable = user.IsAvailable,
+                bio = user.Bio,
+                serviceCategories = user.ServiceCategories,
+                coverageArea = user.CoverageArea,
+                profilePhotoUrl = user.ProfilePhotoUrl
             }
         });
     }
@@ -118,6 +126,92 @@ public class UserController : ControllerBase
                 totalEarnings
             }
         });
+    }
+
+    [HttpPost("availability")]
+    public async Task<ActionResult<ApiResponse<bool>>> SetAvailability([FromBody] AvailabilityRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+        user.IsAvailable = request.IsAvailable;
+        await _context.SaveChangesAsync();
+        return Ok(new ApiResponse<bool> { Success = true, Data = request.IsAvailable, Message = $"Availability set to {request.IsAvailable}" });
+    }
+
+    [HttpPut("provider-profile")]
+    [HttpPost("provider-profile")]
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateProviderProfile([FromBody] ProviderProfileRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+        if (request.Bio != null) user.Bio = request.Bio;
+        if (request.ServiceCategories != null) user.ServiceCategories = request.ServiceCategories;
+        if (request.CoverageArea != null) user.CoverageArea = request.CoverageArea;
+        await _context.SaveChangesAsync();
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Provider profile updated" });
+    }
+
+    [HttpPost("validate-id")]
+    public ActionResult<ApiResponse<object>> ValidateId([FromBody] ValidateIdRequest request)
+    {
+        var id = request.IdNumber?.Trim() ?? "";
+        if (id.Length != 13 || !id.All(char.IsDigit))
+            return Ok(new ApiResponse<object> { Success = false, Message = "ID number must be 13 digits" });
+        // Basic SA ID checksum (Luhn)
+        var sum = 0;
+        for (var i = 0; i < 13; i++)
+        {
+            var d = id[i] - '0';
+            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+        }
+        var valid = sum % 10 == 0;
+        return Ok(new ApiResponse<object> { Success = valid, Data = new { valid }, Message = valid ? "Valid ID number" : "Invalid ID number" });
+    }
+
+    [HttpPost("/api/v1/auth/send-verification")]
+    public async Task<ActionResult<ApiResponse<bool>>> SendVerification([FromBody] SendVerificationRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+        // Generate 6-digit OTP
+        var code = Random.Shared.Next(100000, 999999).ToString();
+        user.PhoneVerificationCode = BCrypt.Net.BCrypt.HashPassword(code);
+        user.PhoneVerificationExpiry = DateTime.UtcNow.AddMinutes(10);
+        await _context.SaveChangesAsync();
+        // In production: send via SMS/WhatsApp. For now return code in dev.
+        var isDev = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = isDev ? $"OTP: {code} (dev only)" : "Verification code sent"
+        });
+    }
+
+    [HttpPost("/api/v1/auth/verify-phone")]
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyPhone([FromBody] VerifyPhoneRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+        if (user.PhoneVerificationCode == null || user.PhoneVerificationExpiry < DateTime.UtcNow)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Code expired. Request a new one." });
+        if (!BCrypt.Net.BCrypt.Verify(request.Code, user.PhoneVerificationCode))
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid code" });
+        user.PhoneVerified = true;
+        user.IsVerified = true;
+        user.PhoneVerificationCode = null;
+        user.PhoneVerificationExpiry = null;
+        await _context.SaveChangesAsync();
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Phone verified successfully" });
     }
 
     [HttpGet("/api/v1/UserPreferences")]

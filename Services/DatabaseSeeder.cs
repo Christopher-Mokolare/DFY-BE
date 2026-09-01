@@ -8,8 +8,6 @@ public static class DatabaseSeeder
 {
     public static async System.Threading.Tasks.Task SeedAsync(AppDbContext context)
     {
-        await context.Database.EnsureCreatedAsync();
-
         // Seed Categories
         if (!await context.Categories.AnyAsync())
         {

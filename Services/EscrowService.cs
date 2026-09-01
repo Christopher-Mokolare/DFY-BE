@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using DoForYou.API.Data;
 using DoForYou.API.Models;
 
@@ -24,7 +25,12 @@ public class EscrowService : IEscrowService
 
     public async Task<bool> ReleaseEscrowAsync(int taskId)
     {
-        using var transaction = await _context.Database.BeginTransactionAsync();
+        IDbContextTransaction? transaction = null;
+        if (_context.Database.IsRelational())
+        {
+            transaction = await _context.Database.BeginTransactionAsync();
+        }
+
         try
         {
             var task = await _context.Tasks
@@ -60,14 +66,20 @@ public class EscrowService : IEscrowService
             task.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
+            if (transaction != null)
+            {
+                await transaction.CommitAsync();
+            }
 
             _logger.LogInformation("Escrow released for task {TaskId}: R{Payout}", task.TaskId, task.PayoutAmount);
             return true;
         }
         catch (Exception ex)
         {
-            await transaction.RollbackAsync();
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync();
+            }
             _logger.LogError(ex, "Error releasing escrow for task {TaskId}", taskId);
             return false;
         }

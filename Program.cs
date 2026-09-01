@@ -11,6 +11,17 @@ using DoForYou.API.Middleware;
 using DoForYou.API.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
+var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
+if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
+    jwtKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+if (!builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
+    throw new InvalidOperationException("JWT_KEY (or Jwt:Key) must be configured outside Development.");
+if (!string.IsNullOrWhiteSpace(jwtKey) && jwtKey.Length < 32)
+    throw new InvalidOperationException("JWT signing key must be at least 32 characters.");
+builder.Configuration["Jwt:Key"] = jwtKey;
+if (!builder.Environment.IsDevelopment() &&
+    string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
+    throw new InvalidOperationException("DefaultConnection must be configured outside Development.");
 
 // Add services to the container.
 builder.Services.AddControllers();
@@ -45,7 +56,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "DoForYou",
             ValidAudience = builder.Configuration["Jwt:Audience"] ?? "DoForYou",
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? "your-secret-key-here"))
+                Encoding.UTF8.GetBytes(jwtKey ?? "development-only-key-change-me-32chars"))
         };
         // Allow SignalR to receive JWT from query string (required for WebSocket handshake)
         options.Events = new JwtBearerEvents
@@ -62,6 +73,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("DevelopmentOnly", policy =>
+        policy.RequireAssertion(_ => builder.Environment.IsDevelopment()));
+});
 
 // CORS
 builder.Services.AddCors(options =>
@@ -71,10 +87,11 @@ builder.Services.AddCors(options =>
         var allowedOrigins = (builder.Configuration["AllowedOrigin"] ?? "http://localhost:4200")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var allOrigins = allowedOrigins
-            .Concat(new[] { "http://localhost:3000", "http://localhost:4200", "http://localhost:5173" })
-            .Distinct()
-            .ToArray();
+        var devOrigins = builder.Environment.IsDevelopment()
+            ? new[] { "http://localhost:3000", "http://localhost:4200", "http://localhost:5173" }
+            : Array.Empty<string>();
+
+        var allOrigins = allowedOrigins.Concat(devOrigins).Distinct().ToArray();
 
         policy.WithOrigins(allOrigins)
               .AllowAnyHeader()
@@ -85,11 +102,13 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Seed database
+// Seed database (skip in production - DB already seeded)
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await DatabaseSeeder.SeedAsync(context);
+    await context.Database.MigrateAsync();
+    if (!app.Environment.IsProduction())
+        await DatabaseSeeder.SeedAsync(context);
 }
 
 // Configure the HTTP request pipeline.

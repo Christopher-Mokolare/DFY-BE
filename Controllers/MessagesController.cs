@@ -140,9 +140,16 @@ public class MessagesController : ControllerBase
         if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Access denied" });
 
-        await _context.TaskMessages
+        var unreadMessages = await _context.TaskMessages
             .Where(m => m.TaskId == task.Id && m.SenderId != userId && !m.IsRead)
-            .ExecuteUpdateAsync(m => m.SetProperty(p => p.IsRead, true));
+            .ToListAsync();
+
+        foreach (var message in unreadMessages)
+        {
+            message.IsRead = true;
+        }
+
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<bool>
         {

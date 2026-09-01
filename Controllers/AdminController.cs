@@ -28,8 +28,14 @@ public class AdminController : ControllerBase
         var activeTasks = await _context.Tasks.CountAsync(t => t.TaskStatus == "Posted");
         var completedTasks = await _context.Tasks.CountAsync(t => t.TaskStatus == "Completed");
         var totalRevenue = await _context.Tasks
-            .Where(t => t.PaymentStatus == "Completed")
+            .Where(t => t.PaymentStatus == "Completed" || t.PaymentStatus == "EscrowHeld")
             .SumAsync(t => t.Budget);
+
+        var platformEarnings = await _context.Tasks
+            .Where(t => t.PaymentStatus == "Completed" || t.PaymentStatus == "EscrowHeld")
+            .SumAsync(t => t.CommissionAmount);
+
+        var openDisputes = await _context.Disputes.CountAsync(d => d.Status == "Open");
 
         var recentTasks = await _context.Tasks
             .Include(t => t.CreatedByUser)
@@ -57,6 +63,9 @@ public class AdminController : ControllerBase
                 activeTasks,
                 completedTasks,
                 totalRevenue,
+                platformEarnings,
+                grossVolume = totalRevenue,
+                openDisputes,
                 recentTasks
             }
         });
@@ -72,6 +81,8 @@ public class AdminController : ControllerBase
         [FromQuery] string? priority = null,
         [FromQuery] string? search = null)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var query = _context.Tasks.Include(t => t.CreatedByUser).AsQueryable();
 
         var resolvedTaskStatus = taskStatus ?? status;
@@ -99,7 +110,7 @@ public class AdminController : ControllerBase
                 Id = t.Id,
                 TaskId = t.TaskId,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
-                UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
+                UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId,
                 TaskDescription = t.TaskDescription,
                 Category = t.Category,
@@ -240,6 +251,8 @@ public class AdminController : ControllerBase
     [HttpGet("users")]
     public async Task<ActionResult<ApiResponse<object>>> GetUsers([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var totalCount = await _context.Users.CountAsync();
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
@@ -252,7 +265,7 @@ public class AdminController : ControllerBase
                 id = u.Id,
                 name = $"{u.FirstName} {u.LastName}",
                 email = u.Email,
-                contact = u.PhoneNumber,
+                contact = u.PhoneNumber == null ? null : "***",
                 role = u.Roles,
                 isVerified = u.IsVerified,
                 profileCompleted = u.ProfileCompleted,
@@ -279,50 +292,218 @@ public class AdminController : ControllerBase
     }
 
     [HttpPatch("users/{userId}/status")]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserStatus(int userId, [FromBody] object request)
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserStatus(int userId, [FromBody] UpdateUserStatusRequest request)
     {
         var user = await _context.Users.FindAsync(userId);
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
-        // For now, just return success - in a real app you'd parse the request and update the user
+        user.IsVerified = request.IsVerified;
         await _context.SaveChangesAsync();
 
-        return Ok(new ApiResponse<bool>
-        {
-            Success = true,
-            Data = true,
-            Message = "User status updated successfully"
-        });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User status updated" });
     }
 
     [HttpPatch("users/{userId}/role")]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] object request)
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] UpdateUserRoleRequest request)
     {
         var user = await _context.Users.FindAsync(userId);
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
-        // For now, just return success - in a real app you'd parse the request and update the user role
+        user.Roles = request.Role;
         await _context.SaveChangesAsync();
 
-        return Ok(new ApiResponse<bool>
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role updated" });
+    }
+
+    [HttpGet("users/{userId}/tasks")]
+    public async Task<ActionResult<ApiResponse<object>>> GetUserTaskHistory(int userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return NotFound(new ApiResponse<object> { Success = false, Message = "User not found" });
+
+        var postedTasks = await _context.Tasks
+            .Where(t => t.CreatedByUserId == userId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => new { taskId = t.TaskId, description = t.TaskDescription, taskStatus = t.TaskStatus, budget = t.Budget, createdAt = t.CreatedAt })
+            .ToListAsync();
+
+        var acceptedTasks = await _context.Tasks
+            .Where(t => t.AcceptedByUserId == userId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Select(t => new { taskId = t.TaskId, description = t.TaskDescription, taskStatus = t.TaskStatus, payout = t.PayoutAmount, createdAt = t.CreatedAt })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = true,
-            Message = "User role updated successfully"
+            Data = new
+            {
+                user = new { user.Id, user.WalletBalance, user.Rating, user.CompletedTasks },
+                postedTasks,
+                acceptedTasks
+            }
         });
     }
 
     [HttpPatch("tasks/bulk-verify")]
-    public async Task<ActionResult<ApiResponse<bool>>> BulkVerifyTasks([FromBody] object request)
+    public async Task<ActionResult<ApiResponse<bool>>> BulkVerifyTasks([FromBody] BulkVerifyRequest request)
     {
-        // For now, just return success - in a real app you'd parse the taskIds and update them
-        return Ok(new ApiResponse<bool>
+        var tasks = await _context.Tasks
+            .Where(t => request.TaskIds.Contains(t.TaskId))
+            .ToListAsync();
+
+        foreach (var task in tasks)
+        {
+            task.PaymentStatus = "Completed";
+            task.TaskStatus = "Posted";
+            task.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{tasks.Count} tasks verified" });
+    }
+
+    [HttpPatch("tasks/{taskId}/force-release-escrow")]
+    public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId)
+    {
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+
+        task.EscrowStatus = "released";
+        task.TaskStatus = "RunnerPaid";
+        task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
+        task.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Escrow released" });
+    }
+
+    [HttpDelete("tasks/{taskId}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId)
+    {
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+
+        _context.Tasks.Remove(task);
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task deleted" });
+    }
+
+    [HttpDelete("users/{userId}")]
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteUser(int userId)
+    {
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
+
+        _context.Users.Remove(user);
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User deleted" });
+    }
+
+    [HttpGet("audit-logs")]
+    public async Task<ActionResult<ApiResponse<object>>> GetAuditLogs([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var total = await _context.AuditLogs.CountAsync();
+        var logs = await _context.AuditLogs
+            .Include(a => a.User)
+            .OrderByDescending(a => a.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(a => new
+            {
+                id = a.Id,
+                userId = a.UserId,
+                userName = a.User != null ? $"{a.User.FirstName} {a.User.LastName}" : "System",
+                action = a.Action,
+                entityType = a.EntityType,
+                entityId = a.EntityId,
+                ipAddress = a.IpAddress,
+                createdAt = a.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = true,
-            Message = "Tasks verified successfully"
+            Data = new { logs, total, page, pageSize }
         });
+    }
+
+    [HttpGet("withdrawal-requests")]
+    public async Task<ActionResult<ApiResponse<object>>> GetWithdrawalRequests([FromQuery] string? status = null)
+    {
+        var query = _context.WithdrawalRequests
+            .Include(w => w.User)
+            .Include(w => w.BankAccount)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(status))
+            query = query.Where(w => w.Status == status);
+
+        var requests = await query
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => new
+            {
+                id = w.Id,
+                userId = w.UserId,
+                userName = $"{w.User.FirstName} {w.User.LastName}",
+                amount = w.Amount,
+                fee = w.Fee,
+                status = w.Status,
+                reference = w.Reference,
+                bankName = w.BankAccount.BankName,
+                accountNumber = "****",
+                createdAt = w.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object> { Success = true, Data = requests });
+    }
+
+    [HttpGet("bank-accounts")]
+    public async Task<ActionResult<ApiResponse<object>>> GetBankAccounts([FromQuery] bool? unverifiedOnly = null)
+    {
+        var query = _context.BankAccounts.Include(b => b.User).AsQueryable();
+
+        if (unverifiedOnly == true)
+            query = query.Where(b => !b.IsVerified);
+
+        var accounts = await query
+            .Select(b => new
+            {
+                id = b.Id,
+                userId = b.UserId,
+                userName = $"{b.User.FirstName} {b.User.LastName}",
+                bankName = b.BankName,
+                accountNumber = b.AccountNumber,
+                accountHolderName = b.AccountHolderName,
+                isVerified = b.IsVerified,
+                createdAt = b.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object> { Success = true, Data = accounts });
+    }
+
+    [HttpPatch("bank-accounts/{id}/verify")]
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyBankAccount(int id)
+    {
+        var account = await _context.BankAccounts.FindAsync(id);
+        if (account == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Bank account not found" });
+
+        account.IsVerified = true;
+        account.VerifiedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Bank account verified" });
     }
 }

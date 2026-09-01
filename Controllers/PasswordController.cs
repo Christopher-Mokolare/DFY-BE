@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 
@@ -6,6 +7,7 @@ namespace DoForYou.API.Controllers;
 
 [ApiController]
 [Route("api/test")]
+[Authorize(Policy = "DevelopmentOnly")]
 public class PasswordController : ControllerBase
 {
     private readonly AppDbContext _context;

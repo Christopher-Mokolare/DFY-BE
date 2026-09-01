@@ -162,3 +162,23 @@ public class AuditLog
 
     public User? User { get; set; }
 }
+
+public class SupportTicket
+{
+    public int Id { get; set; }
+    public int? UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public string Subject { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string Category { get; set; } = "General";
+    public string Priority { get; set; } = "Normal";
+    public string Status { get; set; } = "Open";
+    public string? AssignedTo { get; set; }
+    public string? AdminNotes { get; set; }
+    public string Reference { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ResolvedAt { get; set; }
+
+    public User? User { get; set; }
+}

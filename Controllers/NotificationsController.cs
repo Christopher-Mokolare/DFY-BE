@@ -88,9 +88,16 @@ public class NotificationsController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        await _context.Notifications
+        var taskNotifications = await _context.Notifications
             .Where(n => n.UserId == userId && !n.IsRead && n.Type == "new_message" && n.RelatedTaskId == request.TaskId)
-            .ExecuteUpdateAsync(n => n.SetProperty(x => x.IsRead, true));
+            .ToListAsync();
+
+        foreach (var notification in taskNotifications)
+        {
+            notification.IsRead = true;
+        }
+
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task notifications marked as read" });
     }
@@ -101,9 +108,16 @@ public class NotificationsController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        await _context.Notifications
+        var notifications = await _context.Notifications
             .Where(n => n.UserId == userId && !n.IsRead)
-            .ExecuteUpdateAsync(n => n.SetProperty(x => x.IsRead, true));
+            .ToListAsync();
+
+        foreach (var notification in notifications)
+        {
+            notification.IsRead = true;
+        }
+
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<bool>
         {
@@ -158,9 +172,12 @@ public class NotificationsController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        await _context.Notifications
+        var notifications = await _context.Notifications
             .Where(n => n.UserId == userId && n.IsRead)
-            .ExecuteDeleteAsync();
+            .ToListAsync();
+
+        _context.Notifications.RemoveRange(notifications);
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Read notifications cleared" });
     }

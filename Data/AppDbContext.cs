@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<BankAccount> BankAccounts { get; set; }
     public DbSet<WithdrawalRequest> WithdrawalRequests { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<SupportTicket> SupportTickets { get; set; }
 
     public override int SaveChanges()
     {
@@ -48,6 +49,8 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Models.Task>()
+            .HasQueryFilter(t => !t.IsDeleted);
         modelBuilder.Entity<Models.Task>()
             .HasOne(t => t.CreatedByUser)
             .WithMany()

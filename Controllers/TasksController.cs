@@ -154,6 +154,8 @@ public class TasksController : ControllerBase
         [FromQuery] string? search = null,
         [FromQuery] string? category = null)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var query = _context.Tasks
             .Include(t => t.CreatedByUser)
             .Where(t => (t.PaymentStatus == "EscrowHeld" || t.PaymentStatus == "Completed") && t.TaskStatus == "Posted");
@@ -176,7 +178,7 @@ public class TasksController : ControllerBase
                 Id = t.Id,
                 TaskId = t.TaskId,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
-                UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
+                UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId,
                 TaskDescription = t.TaskDescription,
                 Category = t.Category,
@@ -298,12 +300,18 @@ public class TasksController : ControllerBase
         if (task == null || task.CreatedByUserId == userId || task.TaskStatus != "Posted")
             return Ok(new ApiResponse<bool> { Success = false, Message = "Task not available" });
 
-        task.AcceptedByUserId = userId;
-        task.HelperName = request.HelperName;
-        task.HelperContact = request.HelperContact;
-        task.TaskStatus = "Claimed";
-        task.UpdatedAt = DateTime.UtcNow;
+        // Avoid ExecuteUpdateAsync here because the in-memory provider used in tests and some local scenarios
+        // does not support bulk updates; explicit fetch-and-save stays compatible across providers.
+        var taskToClaim = await _context.Tasks
+            .FirstOrDefaultAsync(t => t.Id == task.Id && t.TaskStatus == "Posted" && t.AcceptedByUserId == null);
+        if (taskToClaim == null)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Task not available" });
 
+        taskToClaim.AcceptedByUserId = userId;
+        taskToClaim.HelperName = request.HelperName;
+        taskToClaim.HelperContact = request.HelperContact;
+        taskToClaim.TaskStatus = "Claimed";
+        taskToClaim.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
         // Send notification to task creator
@@ -546,6 +554,8 @@ public class TasksController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
@@ -842,6 +852,100 @@ public class TasksController : ControllerBase
         });
     }
 
+    [HttpGet("my-completed")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetMyCompletedTasks()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var tasks = await _context.Tasks
+            .Include(t => t.CreatedByUser)
+            .Where(t => t.AcceptedByUserId == userId && (t.TaskStatus == "Completed" || t.TaskStatus == "RunnerPaid"))
+            .OrderByDescending(t => t.CompletedAt)
+            .Select(t => new
+            {
+                id = t.Id,
+                taskId = t.TaskId,
+                title = t.TaskDescription,
+                category = t.Category,
+                location = t.Area,
+                budget = t.Budget,
+                payoutAmount = t.PayoutAmount,
+                status = t.TaskStatus.ToLower(),
+                completedAt = t.CompletedAt,
+                creatorName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}"
+            })
+            .Cast<object>()
+            .ToListAsync();
+
+        return Ok(new ApiResponse<List<object>> { Success = true, Data = tasks });
+    }
+
+    [HttpPost("{taskId}/cancel")]
+    public async Task<ActionResult<ApiResponse<bool>>> CancelTask(string taskId, [FromBody] CancelTaskRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+
+        if (task.CreatedByUserId != userId && task.AcceptedByUserId != userId)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Not authorized" });
+
+        if (task.TaskStatus == "Completed" || task.TaskStatus == "RunnerPaid")
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot cancel a completed task" });
+
+        task.TaskStatus = "Cancelled";
+        task.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task cancelled" });
+    }
+
+    [HttpPost("cleanup")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ApiResponse<bool>>> CleanupExpiredTasks()
+    {
+        var expiry = DateTime.UtcNow.AddHours(-24);
+        var expired = await _context.Tasks
+            .Where(t => t.TaskStatus == "PendingPayment" && t.CreatedAt < expiry)
+            .ToListAsync();
+
+        foreach (var task in expired)
+        {
+            task.IsDeleted = true;
+            task.DeletedAt = DateTime.UtcNow;
+            task.TaskStatus = "Cancelled";
+        }
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{expired.Count} expired tasks cleaned up" });
+    }
+
+    [HttpPost("payment/initiate")]
+    public async Task<ActionResult<ApiResponse<object>>> InitiatePayment([FromBody] InitiatePaymentRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var task = await _context.Tasks
+            .Include(t => t.CreatedByUser)
+            .FirstOrDefaultAsync(t => t.TaskId == request.TaskId && t.CreatedByUserId == userId);
+
+        if (task == null)
+            return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
+
+        var paymentUrl = GeneratePayFastUrl(task, task.CreatedByUser);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { paymentUrl, paymentId = task.TaskId }
+        });
+    }
+
     private int? GetCurrentUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -862,8 +966,10 @@ public class TasksController : ControllerBase
             ? "https://sandbox.payfast.co.za/eng/process"
             : "https://www.payfast.co.za/eng/process";
 
-        var merchantId = isSandbox ? "10000100" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_ID") ?? "10000100");
-        var merchantKey = isSandbox ? "46f0cd694581a" : (Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_KEY") ?? "46f0cd694581a");
+        var merchantId = Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_ID") ?? _configuration["PayFast:MerchantId"];
+        var merchantKey = Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_KEY") ?? _configuration["PayFast:MerchantKey"];
+        if (string.IsNullOrWhiteSpace(merchantId) || string.IsNullOrWhiteSpace(merchantKey))
+            throw new InvalidOperationException("PayFast credentials are not configured.");
 
         var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL")
             ?? _configuration["BackendUrl"]

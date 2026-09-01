@@ -29,4 +29,9 @@ public class User
     public DateTime? DateOfBirth { get; set; }
     public string? Username { get; set; }
     public decimal WalletBalance { get; set; }
+    public bool IsAvailable { get; set; } = true;
+    public string? Bio { get; set; }
+    public string? ServiceCategories { get; set; }
+    public string? CoverageArea { get; set; }
+    public string? ProfilePhotoUrl { get; set; }
 }

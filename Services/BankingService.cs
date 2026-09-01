@@ -1,6 +1,7 @@
 using DoForYou.API.Data;
 using DoForYou.API.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -36,7 +37,7 @@ public class BankingService : IBankingService
             return false;
 
         // Validate South African account number format
-        if (accountNumber.Length < 9 || accountNumber.Length > 11)
+        if (accountNumber.Length < 9 || accountNumber.Length > 11 || !accountNumber.All(char.IsDigit))
             return false;
 
         // Validate branch code format (6 digits)
@@ -84,7 +85,7 @@ public class BankingService : IBankingService
         _context.WithdrawalRequests.Add(withdrawal);
         await _context.SaveChangesAsync();
 
-        // Send OTP via SMS/Email (implement SMS service)
+        // Send OTP through the configured notification provider.
         await SendOtpAsync(user.PhoneNumber ?? user.Email, otpCode);
 
         return withdrawal.Reference!;
@@ -100,7 +101,10 @@ public class BankingService : IBankingService
             return false;
 
         var hashedOtp = HashOtp(otpCode);
-        if (withdrawal.OtpCode != hashedOtp)
+        if (string.IsNullOrEmpty(withdrawal.OtpCode) ||
+            !CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(withdrawal.OtpCode),
+                Encoding.UTF8.GetBytes(hashedOtp)))
             return false;
 
         withdrawal.OtpVerified = true;
@@ -120,80 +124,76 @@ public class BankingService : IBankingService
         if (withdrawal == null)
             return false;
 
+        IDbContextTransaction? transaction = null;
+        if (_context.Database.IsRelational())
+        {
+            transaction = await _context.Database.BeginTransactionAsync();
+        }
+
         try
         {
+            if (withdrawal.Status != "Verified")
+                return false;
+
             withdrawal.Status = "Processing";
             withdrawal.ProcessedAt = DateTime.UtcNow;
+
+            var total = withdrawal.Amount + withdrawal.Fee;
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == withdrawal.UserId && u.WalletBalance >= total);
+            if (user == null)
+                throw new InvalidOperationException("Insufficient funds.");
+
+            user.WalletBalance -= total;
+
+            var withdrawalTransaction = new WalletTransaction
+            {
+                UserId = withdrawal.UserId,
+                Amount = -withdrawal.Amount,
+                TransactionType = "debit",
+                Status = "completed",
+                Description = $"Withdrawal to {withdrawal.BankAccount.BankName}",
+                Reference = withdrawal.Reference,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            var feeTransaction = new WalletTransaction
+            {
+                UserId = withdrawal.UserId,
+                Amount = -withdrawal.Fee,
+                TransactionType = "debit",
+                Status = "completed",
+                Description = "Withdrawal fee",
+                Reference = withdrawal.Reference,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.WalletTransactions.AddRange(withdrawalTransaction, feeTransaction);
+
+            withdrawal.Status = "ManualReview";
+
             await _context.SaveChangesAsync();
-
-            // Integrate with banking API (PayFast, Ozow, etc.)
-            var success = await ProcessBankTransferAsync(withdrawal);
-
-            if (success)
+            if (transaction != null)
             {
-                // Deduct from user wallet
-                withdrawal.User.WalletBalance -= (withdrawal.Amount + withdrawal.Fee);
-                
-                // Create transaction records
-                var withdrawalTransaction = new WalletTransaction
-                {
-                    UserId = withdrawal.UserId,
-                    Amount = -withdrawal.Amount,
-                    TransactionType = "debit",
-                    Status = "completed",
-                    Description = $"Withdrawal to {withdrawal.BankAccount.BankName}",
-                    Reference = withdrawal.Reference,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                var feeTransaction = new WalletTransaction
-                {
-                    UserId = withdrawal.UserId,
-                    Amount = -withdrawal.Fee,
-                    TransactionType = "debit",
-                    Status = "completed",
-                    Description = "Withdrawal fee",
-                    Reference = withdrawal.Reference,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                _context.WalletTransactions.AddRange(withdrawalTransaction, feeTransaction);
-
-                withdrawal.Status = "Completed";
-                withdrawal.CompletedAt = DateTime.UtcNow;
-
-                await _context.SaveChangesAsync();
-
-                // Send notification
-                await _notificationService.CreateNotificationAsync(
-                    withdrawal.UserId,
-                    "withdrawal_completed",
-                    "Withdrawal Completed",
-                    $"R{withdrawal.Amount:F2} has been transferred to your {withdrawal.BankAccount.BankName} account"
-                );
-
-                return true;
+                await transaction.CommitAsync();
             }
-            else
-            {
-                withdrawal.Status = "Failed";
-                withdrawal.FailureReason = "Bank transfer failed";
-                await _context.SaveChangesAsync();
 
-                await _notificationService.CreateNotificationAsync(
-                    withdrawal.UserId,
-                    "withdrawal_failed",
-                    "Withdrawal Failed",
-                    $"Your withdrawal of R{withdrawal.Amount:F2} could not be processed. Please try again."
-                );
+            await _notificationService.CreateNotificationAsync(
+                withdrawal.UserId,
+                "withdrawal_manual_review",
+                "Withdrawal submitted",
+                $"Your withdrawal request for R{withdrawal.Amount:F2} is queued for manual processing."
+            );
 
-                return false;
-            }
+            return true;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             withdrawal.Status = "Failed";
-            withdrawal.FailureReason = ex.Message;
+            withdrawal.FailureReason = "Unable to process withdrawal.";
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync();
+            }
             await _context.SaveChangesAsync();
             return false;
         }
@@ -228,20 +228,12 @@ public class BankingService : IBankingService
 
     private async System.Threading.Tasks.Task SendOtpAsync(string contact, string otpCode)
     {
-        // Implement SMS/Email service integration
-        // For demo purposes, log the OTP
-        Console.WriteLine($"OTP for {contact}: {otpCode}");
+        // Provider integration belongs here; never log OTPs or contact details.
+        await System.Threading.Tasks.Task.CompletedTask;
     }
 
     private async System.Threading.Tasks.Task<bool> ProcessBankTransferAsync(WithdrawalRequest withdrawal)
     {
-        // Integrate with South African banking APIs
-        // PayFast, Ozow, or direct bank integration
-        
-        // For demo, simulate processing delay
-        await System.Threading.Tasks.Task.Delay(2000);
-        
-        // Simulate 95% success rate
-        return Random.Shared.NextDouble() > 0.05;
+        return false;
     }
 }

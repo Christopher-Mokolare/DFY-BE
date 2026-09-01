@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace DoForYou.API.Controllers;
 
@@ -13,11 +15,13 @@ public class PaymentController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<PaymentController> _logger;
 
-    public PaymentController(AppDbContext context, IConfiguration configuration)
+    public PaymentController(AppDbContext context, IConfiguration configuration, ILogger<PaymentController> logger)
     {
         _context = context;
         _configuration = configuration;
+        _logger = logger;
     }
 
     [HttpPost("initiate")]
@@ -27,17 +31,8 @@ public class PaymentController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        // For now, return a mock PayFast URL
-        return Ok(new ApiResponse<object>
-        {
-            Success = true,
-            Data = new
-            {
-                paymentUrl = "https://sandbox.payfast.co.za/eng/process",
-                paymentId = Guid.NewGuid().ToString()
-            },
-            Message = "Payment initiated successfully"
-        });
+        return StatusCode(StatusCodes.Status410Gone,
+            new ApiResponse<object> { Success = false, Message = "Use the task payment workflow." });
     }
 
     [HttpGet("wallet")]
@@ -68,15 +63,8 @@ public class PaymentController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        return Ok(new ApiResponse<object>
-        {
-            Success = true,
-            Data = new
-            {
-                transactionId = Guid.NewGuid().ToString()
-            },
-            Message = "Withdrawal request submitted successfully"
-        });
+        return StatusCode(StatusCodes.Status410Gone,
+            new ApiResponse<object> { Success = false, Message = "Use the banking withdrawal workflow." });
     }
 
     [HttpPost("notify")]
@@ -90,40 +78,44 @@ public class PaymentController : ControllerBase
             var paymentId = form["m_payment_id"].ToString();
             var paymentStatus = form["payment_status"].ToString();
 
-            Console.WriteLine($"PayFast Notify: PaymentId={paymentId}, Status={paymentStatus}");
-
-            if (string.IsNullOrEmpty(paymentId))
+            if (string.IsNullOrEmpty(paymentId) || string.IsNullOrWhiteSpace(form["pf_payment_id"]))
                 return BadRequest();
 
             // Verify PayFast signature
             if (!VerifyPayFastSignature(form))
             {
-                Console.WriteLine("PayFast Notify: Invalid signature");
                 return BadRequest();
             }
 
             var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == paymentId);
             if (task == null)
             {
-                Console.WriteLine($"PayFast Notify: Task not found for ID {paymentId}");
                 return NotFound();
             }
 
-            if (paymentStatus == "COMPLETE")
+            if (!decimal.TryParse(form["amount_gross"], System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var amount) ||
+                amount != task.Budget ||
+                string.IsNullOrWhiteSpace(_configuration["PayFast:MerchantId"]) ||
+                !string.Equals(form["merchant_id"], _configuration["PayFast:MerchantId"], StringComparison.Ordinal) ||
+                !string.Equals(paymentStatus, "COMPLETE", StringComparison.OrdinalIgnoreCase))
+                return BadRequest();
+
+            // ITNs are retried; only the pending state may transition to held.
+            if (task.PaymentStatus == "Pending" && task.TaskStatus == "PendingPayment")
             {
                 task.PaymentStatus = "EscrowHeld";
                 task.TaskStatus = "Posted";
                 task.EscrowStatus = "held";
                 task.UpdatedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
-                Console.WriteLine($"PayFast Notify: Task {paymentId} activated");
             }
 
             return Ok();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"PayFast Notify Error: {ex.Message}");
+            _logger.LogError(ex, "PayFast ITN processing failed");
             return StatusCode(500);
         }
     }
@@ -156,15 +148,13 @@ public class PaymentController : ControllerBase
     {
         try
         {
-            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-            // Skip signature verification in Development and for test payments
-            if (environment == "Development") return true;
-
-            // Allow test payments (no signature field) to pass through
-            if (!form.ContainsKey("signature")) return true;
+            if (!form.TryGetValue("signature", out var signature) || string.IsNullOrWhiteSpace(signature))
+                return false;
 
             var passphrase = Environment.GetEnvironmentVariable("PAYFAST_PASSPHRASE")
                 ?? _configuration["PayFast:Passphrase"];
+            if (string.IsNullOrWhiteSpace(passphrase))
+                return false;
 
             var fields = form
                 .Where(f => f.Key != "signature")
@@ -172,14 +162,15 @@ public class PaymentController : ControllerBase
                 .Select(f => $"{f.Key}={Uri.EscapeDataString(f.Value.ToString())}");
 
             var paramString = string.Join("&", fields);
-            if (!string.IsNullOrEmpty(passphrase))
-                paramString += $"&passphrase={Uri.EscapeDataString(passphrase)}";
+            paramString += $"&passphrase={Uri.EscapeDataString(passphrase)}";
 
             using var md5 = System.Security.Cryptography.MD5.Create();
             var hash = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(paramString))
                 .Select(b => b.ToString("x2")));
 
-            return hash == form["signature"].ToString();
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(hash),
+                Encoding.UTF8.GetBytes(signature.ToString().ToLowerInvariant()));
         }
         catch
         {
