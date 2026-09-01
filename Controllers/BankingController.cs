@@ -24,6 +24,7 @@ public class BankingController : ControllerBase
     }
 
     [HttpPost("bank-accounts")]
+    [HttpPost("accounts")]
     public async Task<ActionResult<ApiResponse<object>>> AddBankAccount([FromBody] AddBankAccountRequest request)
     {
         var userId = GetCurrentUserId();
@@ -64,6 +65,7 @@ public class BankingController : ControllerBase
     }
 
     [HttpGet("bank-accounts")]
+    [HttpGet("accounts")]
     public async Task<ActionResult<ApiResponse<List<object>>>> GetBankAccounts()
     {
         var userId = GetCurrentUserId();
@@ -145,8 +147,8 @@ public class BankingController : ControllerBase
         if (!verified)
             return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid or expired OTP" });
 
-        // Process withdrawal in background
-        _ = System.Threading.Tasks.Task.Run(async () => await _bankingService.ProcessWithdrawalAsync(withdrawal.Id));
+        // Process in the request scope; never use a scoped DbContext from Task.Run.
+        await _bankingService.ProcessWithdrawalAsync(withdrawal.Id);
 
         return Ok(new ApiResponse<bool>
         {
@@ -157,15 +159,19 @@ public class BankingController : ControllerBase
     }
 
     [HttpGet("withdrawals")]
-    public async Task<ActionResult<ApiResponse<List<object>>>> GetWithdrawals()
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetWithdrawals([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var withdrawals = await _context.WithdrawalRequests
             .Include(w => w.BankAccount)
             .Where(w => w.UserId == userId)
             .OrderByDescending(w => w.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(w => new
             {
                 id = w.Id,

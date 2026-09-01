@@ -122,7 +122,7 @@ public class RegisterRequest
     public string Password { get; set; } = string.Empty;
     
     [Required]
-    public string? PhoneNumber { get; set; }
+    public string PhoneNumber { get; set; } = string.Empty;
     
     [Required]
     public string UserType { get; set; } = string.Empty;
@@ -176,4 +176,135 @@ public class WithdrawalRequestDto
     public string? AccountHolder { get; set; }
     public string? BranchCode { get; set; }
     public string? AccountType { get; set; }
+}
+
+public class RaiseDisputeRequest
+{
+    [Required]
+    public string TaskId { get; set; } = string.Empty;
+    [Required]
+    public string Issue { get; set; } = string.Empty;
+    [Required]
+    public string Category { get; set; } = string.Empty;
+}
+
+public class ResolveDisputeRequest
+{
+    [Required]
+    public string Resolution { get; set; } = string.Empty;
+    public string? Action { get; set; }
+}
+
+public class SubmitRatingRequest
+{
+    [Required]
+    public string TaskId { get; set; } = string.Empty;
+    [Required, Range(1, 5)]
+    public int RatingValue { get; set; }
+    public string? Review { get; set; }
+}
+
+public class UpdateUserStatusRequest
+{
+    public bool IsVerified { get; set; }
+}
+
+public class UpdateUserRoleRequest
+{
+    [Required]
+    public string Role { get; set; } = string.Empty;
+}
+
+public class BulkVerifyRequest
+{
+    [Required]
+    public List<string> TaskIds { get; set; } = new();
+}
+
+public class CancelTaskRequest
+{
+    public string? Reason { get; set; }
+}
+
+public class InitiatePaymentRequest
+{
+    [Required]
+    public string TaskId { get; set; } = string.Empty;
+}
+
+public class CreateSupportTicketRequest
+{
+    public string? Name { get; set; }
+    public string? Email { get; set; }
+    [System.ComponentModel.DataAnnotations.Required]
+    public string Subject { get; set; } = string.Empty;
+    [System.ComponentModel.DataAnnotations.Required]
+    public string Message { get; set; } = string.Empty;
+    public string? Category { get; set; }
+    public string? Priority { get; set; }
+}
+
+public class UpdateSupportTicketRequest
+{
+    public string? Status { get; set; }
+    public string? AssignedTo { get; set; }
+    public string? AdminNotes { get; set; }
+}
+
+public class CategoryRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Icon { get; set; }
+    public int? SortOrder { get; set; }
+}
+
+public class ReorderRequest
+{
+    public int SortOrder { get; set; }
+}
+
+public class AvailabilityRequest
+{
+    public bool IsAvailable { get; set; }
+}
+
+public class ProviderProfileRequest
+{
+    public string? Bio { get; set; }
+    public string? ServiceCategories { get; set; }
+    public string? CoverageArea { get; set; }
+}
+
+public class VerifyPhoneRequest
+{
+    [System.ComponentModel.DataAnnotations.Required]
+    public string Code { get; set; } = string.Empty;
+}
+
+public class SendVerificationRequest
+{
+    public string? Type { get; set; } = "phone"; // "phone" or "email"
+}
+
+public class ValidateIdRequest
+{
+    public string? IdNumber { get; set; }
+}
+
+public class ChangePasswordRequest
+{
+    [Required]
+    public string CurrentPassword { get; set; } = string.Empty;
+    [Required, MinLength(6)]
+    public string NewPassword { get; set; } = string.Empty;
+}
+
+public class VerifyOtpRequest
+{
+    [Required]
+    public string Reference { get; set; } = string.Empty;
+    [Required]
+    public string OtpCode { get; set; } = string.Empty;
 }

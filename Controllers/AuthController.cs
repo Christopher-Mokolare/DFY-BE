@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -17,11 +18,13 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(AppDbContext context, IConfiguration configuration)
+    public AuthController(AppDbContext context, IConfiguration configuration, ILogger<AuthController> logger)
     {
         _context = context;
         _configuration = configuration;
+        _logger = logger;
     }
 
     [HttpPost("register")]
@@ -40,7 +43,7 @@ public class AuthController : ControllerBase
         {
             FirstName = request.FirstName,
             LastName = request.LastName,
-            Email = request.Email,
+            Email = request.Email ?? string.Empty,
             PhoneNumber = request.PhoneNumber,
             UserType = request.UserType,
             IdNumber = request.IdNumber,
@@ -87,20 +90,30 @@ public class AuthController : ControllerBase
         });
     }
 
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<bool>>> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId)) return Unauthorized();
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return Unauthorized();
+
+        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Current password is incorrect" });
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Password changed successfully" });
+    }
+
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login([FromBody] LoginRequest request)
     {
-        Console.WriteLine($"=== LOGIN REQUEST RECEIVED ===");
-        Console.WriteLine($"Email: {request?.Email}");
-        Console.WriteLine($"Password length: {request?.Password?.Length}");
-        Console.WriteLine($"Request headers: {string.Join(", ", Request.Headers.Select(h => $"{h.Key}: {h.Value}"))}");
-        Console.WriteLine($"Request origin: {Request.Headers["Origin"]}");
-        
         if (request == null)
-        {
-            Console.WriteLine("Request is null");
             return BadRequest("Invalid request");
-        }
         
         // Clean email - remove mailto: prefix if present
         var cleanEmail = request.Email?.Replace("mailto:", "").Trim();
@@ -109,7 +122,6 @@ public class AuthController : ControllerBase
         
         if (user == null)
         {
-            Console.WriteLine($"User not found: {cleanEmail}");
             return Ok(new AuthResponse
             {
                 Success = false,
@@ -117,13 +129,10 @@ public class AuthController : ControllerBase
             });
         }
 
-        Console.WriteLine($"User found: {user.Email}, checking password...");
         var passwordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
-        Console.WriteLine($"Password valid: {passwordValid}");
         
         if (!passwordValid)
         {
-            Console.WriteLine("Password verification failed");
             return Ok(new AuthResponse
             {
                 Success = false,
@@ -136,7 +145,7 @@ public class AuthController : ControllerBase
 
         var token = GenerateJwtToken(user);
 
-        Console.WriteLine($"Login successful for: {user.Email}");
+        _logger.LogInformation("Successful login for user id {UserId}", user.Id);
         return Ok(new AuthResponse
         {
             Success = true,
@@ -180,7 +189,10 @@ public class AuthController : ControllerBase
 
     private string GenerateJwtToken(User user)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"] ?? "your-secret-key-here"));
+        var configuredKey = _configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
+        if (string.IsNullOrWhiteSpace(configuredKey))
+            throw new InvalidOperationException("JWT signing key is not configured.");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuredKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new List<Claim>

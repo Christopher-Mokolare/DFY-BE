@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Services;
 using System.Security.Claims;
 
 namespace DoForYou.API.Controllers;
@@ -68,6 +69,8 @@ public class WalletController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
@@ -110,69 +113,54 @@ public class WalletController : ControllerBase
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
+        return Ok(new ApiResponse<object> { Success = false, Message = "Please add a bank account and use the withdrawal flow." });
+    }
 
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null) return Unauthorized();
+    [HttpGet("withdrawals/pending")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetPendingWithdrawals()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
 
-        if (request.Amount <= 0)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Invalid withdrawal amount" });
-
-        if (request.Amount > user.WalletBalance)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Insufficient balance" });
-
-        // Find or create bank account
-        var bankAccount = await _context.BankAccounts
-            .FirstOrDefaultAsync(b => b.UserId == userId && b.IsActive);
-
-        if (bankAccount == null)
-        {
-            bankAccount = new DoForYou.API.Models.BankAccount
+        var pending = await _context.WithdrawalRequests
+            .Include(w => w.BankAccount)
+            .Where(w => w.UserId == userId && (w.Status == "Pending" || w.Status == "Verified" || w.Status == "Processing"))
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => new
             {
-                UserId = userId.Value,
-                BankName = request.BankName ?? string.Empty,
-                AccountNumber = request.BankAccount ?? string.Empty,
-                AccountHolderName = request.AccountHolder ?? string.Empty,
-                BranchCode = request.BranchCode ?? string.Empty,
-                AccountType = request.AccountType ?? "Cheque",
-                IsActive = true
-            };
-            _context.BankAccounts.Add(bankAccount);
-            await _context.SaveChangesAsync();
-        }
+                id = w.Id,
+                reference = w.Reference,
+                amount = w.Amount,
+                fee = w.Fee,
+                status = w.Status,
+                bankName = w.BankAccount.BankName,
+                createdAt = w.CreatedAt
+            })
+            .Cast<object>()
+            .ToListAsync();
 
-        var reference = $"WD-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}-{Random.Shared.Next(1000, 9999)}";
+        return Ok(new ApiResponse<List<object>> { Success = true, Data = pending });
+    }
 
-        var withdrawal = new DoForYou.API.Models.WithdrawalRequest
-        {
-            UserId = userId.Value,
-            BankAccountId = bankAccount.Id,
-            Amount = request.Amount,
-            Fee = 0,
-            Status = "Pending",
-            Reference = reference
-        };
-        _context.WithdrawalRequests.Add(withdrawal);
+    [HttpPost("verify-otp")]
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyOtp([FromBody] VerifyOtpRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
 
-        // Debit wallet
-        user.WalletBalance -= request.Amount;
-        _context.WalletTransactions.Add(new DoForYou.API.Models.WalletTransaction
-        {
-            UserId = userId.Value,
-            Amount = request.Amount,
-            TransactionType = "debit",
-            Status = "processing",
-            Description = "Withdrawal request",
-            Reference = reference
-        });
+        var withdrawal = await _context.WithdrawalRequests
+            .FirstOrDefaultAsync(w => w.Reference == request.Reference && w.UserId == userId);
 
-        await _context.SaveChangesAsync();
+        if (withdrawal == null)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid reference" });
 
-        return Ok(new ApiResponse<object>
-        {
-            Success = true,
-            Data = new { reference, amount = request.Amount, status = "processing" },
-            Message = "Withdrawal request submitted successfully"
-        });
+        var bankingService = HttpContext.RequestServices.GetRequiredService<IBankingService>();
+        var verified = await bankingService.VerifyOtpAsync(withdrawal.Id, request.OtpCode);
+        if (!verified)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid or expired OTP" });
+
+        await bankingService.ProcessWithdrawalAsync(withdrawal.Id);
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Withdrawal submitted for processing" });
     }
 
     private int? GetCurrentUserId()
