@@ -221,14 +221,15 @@ public class AdminController : ControllerBase
             .Select(t => new
             {
                 taskId = t.TaskId,
-                description = t.TaskDescription,
+                taskName = t.TaskDescription,
                 amount = t.Budget,
                 commission = t.CommissionAmount,
                 payout = t.PayoutAmount,
-                paymentStatus = t.PaymentStatus,
+                status = t.PaymentStatus,
                 taskStatus = t.TaskStatus,
                 userName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
-                helperName = t.AcceptedByUser != null ? $"{t.AcceptedByUser.FirstName} {t.AcceptedByUser.LastName}" : null,
+                runnerName = t.AcceptedByUser != null ? $"{t.AcceptedByUser.FirstName} {t.AcceptedByUser.LastName}" : null,
+                runnerContact = t.AcceptedByUser != null ? t.AcceptedByUser.PhoneNumber : null,
                 date = t.UpdatedAt
             })
             .ToListAsync();
@@ -239,10 +240,14 @@ public class AdminController : ControllerBase
             Data = new
             {
                 totalRevenue,
+                platformEarnings = platformRevenue,
+                grossVolume = totalRevenue,
                 platformRevenue,
                 helperPayouts,
                 pendingRevenue,
+                pendingCommission = pendingRevenue,
                 pendingPayouts,
+                totalRefunded = 0,
                 recentPayments
             }
         });
