@@ -106,6 +106,47 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    // If tables already exist but migrations history is empty, stamp all migrations as applied
+    // to avoid EF trying to recreate existing tables.
+    var conn = context.Database.GetDbConnection();
+    await conn.OpenAsync();
+    await using (var cmd = conn.CreateCommand())
+    {
+        cmd.CommandText = """
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'Categories'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = '__EFMigrationsHistory'
+            )
+            """;
+        var tablesExistWithoutHistory = (bool)(await cmd.ExecuteScalarAsync() ?? false);
+
+        if (tablesExistWithoutHistory)
+        {
+            // Create the migrations history table and stamp all known migrations
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+                    "MigrationId" character varying(150) NOT NULL,
+                    "ProductVersion" character varying(32) NOT NULL,
+                    CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
+                );
+                INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES
+                ('20260202072334_InitialCreate', '9.0.0'),
+                ('20260208003217_AddEscrowFeatures', '9.0.0'),
+                ('20260212083729_AddNotifications', '9.0.0'),
+                ('20260212095748_AddBankingSystem', '9.0.0'),
+                ('20260331103941_AddMissingTablesAndColumns', '9.0.0'),
+                ('20260331113745_SyncSchemaWithModel', '9.0.0')
+                ON CONFLICT DO NOTHING;
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    await conn.CloseAsync();
+
     await context.Database.MigrateAsync();
     if (!app.Environment.IsProduction())
         await DatabaseSeeder.SeedAsync(context);
