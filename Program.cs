@@ -10,6 +10,11 @@ using DoForYou.API.Services.Background;
 using DoForYou.API.Middleware;
 using DoForYou.API.Hubs;
 
+// Render free instances have a strict inotify/file-descriptor limit. Disable config reload watchers
+// so the app does not crash during startup while loading appsettings.json.
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE")))
+    Environment.SetEnvironmentVariable("DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE", "false");
+
 var builder = WebApplication.CreateBuilder(args);
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
 if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))

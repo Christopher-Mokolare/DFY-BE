@@ -338,7 +338,9 @@ public class TasksController : ControllerBase
         if (task.PaymentStatus != "Pending" || request.PaymentStatus.ToLower() != "completed")
             return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid payment status update" });
 
-        task.PaymentStatus = "Completed";
+        task.PaymentStatus = "EscrowHeld";
+        task.EscrowStatus = "held";
+        task.EscrowHoldUntil = DateTime.UtcNow.AddHours(48);
         task.TaskStatus = "Posted";
         task.UpdatedAt = DateTime.UtcNow;
 
@@ -462,6 +464,8 @@ public class TasksController : ControllerBase
             return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot complete task" });
 
         task.TaskStatus = "Completed";
+        task.PaymentStatus = "EscrowHeld";
+        task.EscrowStatus = "held";
         task.CompletedAt = DateTime.UtcNow;
         task.EscrowHoldUntil = DateTime.UtcNow.AddHours(48); // 48-hour escrow hold
         task.UpdatedAt = DateTime.UtcNow;

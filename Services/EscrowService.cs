@@ -37,11 +37,16 @@ public class EscrowService : IEscrowService
                 .Include(t => t.AcceptedByUser)
                 .FirstOrDefaultAsync(t => t.Id == taskId);
 
-            if (task == null || task.AcceptedByUserId == null || task.EscrowStatus != "held")
+            if (task == null || task.AcceptedByUserId == null)
+                return false;
+
+            if (task.EscrowStatus != "held" && task.PaymentStatus != "EscrowHeld")
                 return false;
 
             if (task.EscrowHoldUntil.HasValue && task.EscrowHoldUntil > DateTime.UtcNow)
                 return false;
+
+            task.EscrowStatus = "held";
 
             // Credit runner wallet
             task.AcceptedByUser!.WalletBalance += task.PayoutAmount;
