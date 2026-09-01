@@ -32,8 +32,7 @@ public class ErrorHandlingMiddleware
         var response = new
         {
             success = false,
-            message = "An error occurred while processing your request",
-            error = exception.Message
+            message = "An error occurred while processing your request"
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(response));

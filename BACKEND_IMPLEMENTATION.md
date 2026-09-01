@@ -306,7 +306,7 @@ Register a new user.
   "firstName": "John",
   "lastName": "Doe",
   "email": "john@example.com",
-  "password": "SecurePass123",
+  "password": "<your_password>",
   "phoneNumber": "0123456789",
   "userType": "Both",
   "idNumber": "9001010000000",
@@ -352,7 +352,7 @@ Authenticate user and receive JWT token.
 ```json
 {
   "email": "john@example.com",
-  "password": "SecurePass123"
+  "password": "<your_password>"
 }
 ```
 
@@ -1030,7 +1030,7 @@ Pending → Completed
 
 **Sandbox Credentials:**
 - Merchant ID: `10000100`
-- Merchant Key: `46f0cd694581a`
+- Merchant Key: `<merchant_key>`
 - Passphrase: (optional for sandbox)
 
 **URLs:**
@@ -1507,13 +1507,13 @@ public class ErrorHandlingMiddleware
 
 #### Admin User
 - Email: `admin@doforyou.com`
-- Password: `Admin123`
+- Password: `<set_via_env>`
 - Role: Admin
 - Verified: Yes
 
 #### Test User
-- Email: `2co.mokolare@gmail.com`
-- Password: `password123`
+- Email: `<test_email>`
+- Password: `<test_password>`
 - Role: User
 - UserType: Both
 - Verified: Yes

@@ -106,7 +106,7 @@ A fully integrated .NET 8 Web API for the DoForYou task management platform that
 
 **Admin User:**
 - Email: `admin@doforyou.com`
-- Password: `admin123`
+- Password: `<set_via_env>`
 
 ## Development
 

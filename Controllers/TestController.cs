@@ -26,7 +26,6 @@ public class TestController : ControllerBase
     [HttpPost("test-login")]
     public IActionResult TestLogin([FromBody] object request)
     {
-        Console.WriteLine($"Test login request received: {request}");
         return Ok(new { message = "Request received", data = request });
     }
 
@@ -41,9 +40,9 @@ public class TestController : ControllerBase
             
             return Ok(users);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(new { error = "Failed to retrieve users" });
         }
     }
 
@@ -55,18 +54,17 @@ public class TestController : ControllerBase
             var canConnect = await _context.Database.CanConnectAsync();
             var categoryCount = await _context.Categories.CountAsync();
             var userCount = await _context.Users.CountAsync();
-            
+
             return Ok(new
             {
                 connected = canConnect,
                 categories = categoryCount,
-                users = userCount,
-                connectionString = _context.Database.GetConnectionString()
+                users = userCount
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(new { error = "Database connection failed" });
         }
     }
 
@@ -94,9 +92,9 @@ public class TestController : ControllerBase
                 taskStatus = task.TaskStatus
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return BadRequest(new { error = ex.Message });
+            return BadRequest(new { error = "Simulation failed" });
         }
     }
 }
