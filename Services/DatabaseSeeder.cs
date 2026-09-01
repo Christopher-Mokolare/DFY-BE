@@ -42,11 +42,27 @@ public static class DatabaseSeeder
                 PhoneVerified = true,
                 Roles = "Admin",
                 UserType = "Admin",
-                PhoneNumber = "0123456789"
+                PhoneNumber = "0123456789",
+                IdNumber = "0000000000000",
+                Address = "DoForYou HQ",
+                DateOfBirth = new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)
             };
 
             context.Users.Add(adminUser);
             await context.SaveChangesAsync();
+        }
+        else
+        {
+            // Patch existing admin to have full profile
+            var admin = await context.Users.FirstAsync(u => u.Email == "admin@doforyou.com");
+            if (!admin.ProfileCompleted || string.IsNullOrEmpty(admin.IdNumber))
+            {
+                admin.IdNumber = admin.IdNumber ?? "0000000000000";
+                admin.Address = admin.Address ?? "DoForYou HQ";
+                admin.DateOfBirth = admin.DateOfBirth ?? new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                admin.ProfileCompleted = true;
+                await context.SaveChangesAsync();
+            }
         }
 
         // Seed Test User
