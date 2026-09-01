@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Services;
 using System.Security.Claims;
 
 namespace DoForYou.API.Controllers;
@@ -13,8 +14,13 @@ namespace DoForYou.API.Controllers;
 public class DisputesController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IEscrowService _escrowService;
 
-    public DisputesController(AppDbContext context) => _context = context;
+    public DisputesController(AppDbContext context, IEscrowService escrowService)
+    {
+        _context = context;
+        _escrowService = escrowService;
+    }
 
     [HttpPost]
     public async Task<ActionResult<ApiResponse<object>>> RaiseDispute([FromBody] RaiseDisputeRequest request)
@@ -122,15 +128,31 @@ public class DisputesController : ControllerBase
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] ResolveDisputeRequest request)
     {
-        var dispute = await _context.Disputes.FindAsync(id);
+        var dispute = await _context.Disputes
+            .Include(d => d.Task)
+            .FirstOrDefaultAsync(d => d.Id == id);
         if (dispute == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute not found" });
 
         dispute.Status = "Resolved";
         dispute.Resolution = request.Resolution;
         dispute.ResolvedAt = DateTime.UtcNow;
-
         await _context.SaveChangesAsync();
+
+        // Execute financial action
+        if (request.Action == "release_to_runner" && dispute.Task != null)
+        {
+            dispute.Task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
+            await _context.SaveChangesAsync();
+            await _escrowService.ReleaseEscrowAsync(dispute.Task.Id);
+        }
+        else if (request.Action == "refund_creator" && dispute.Task != null)
+        {
+            dispute.Task.TaskStatus = "Cancelled";
+            dispute.Task.EscrowStatus = "refunded";
+            dispute.Task.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });
     }

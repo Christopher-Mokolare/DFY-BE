@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Services;
 using System.Security.Claims;
 
 namespace DoForYou.API.Controllers;
@@ -13,10 +14,31 @@ namespace DoForYou.API.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IEscrowService _escrowService;
 
-    public AdminController(AppDbContext context)
+    public AdminController(AppDbContext context, IEscrowService escrowService)
     {
         _context = context;
+        _escrowService = escrowService;
+    }
+
+    private int? GetAdminId() =>
+        int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
+
+    private async System.Threading.Tasks.Task WriteAuditAsync(string action, string entityType, int? entityId, string? oldVal = null, string? newVal = null)
+    {
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = GetAdminId(),
+            Action = action,
+            EntityType = entityType,
+            EntityId = entityId,
+            OldValues = oldVal,
+            NewValues = newVal,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
     }
 
     [HttpGet("dashboard")]
@@ -157,6 +179,7 @@ public class AdminController : ControllerBase
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", "Completed");
 
         return Ok(new ApiResponse<bool>
         {
@@ -178,6 +201,7 @@ public class AdminController : ControllerBase
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
+        await WriteAuditAsync("UnverifyPayment", "Task", task.Id, "Completed", "Pending");
 
         return Ok(new ApiResponse<bool>
         {
@@ -303,8 +327,10 @@ public class AdminController : ControllerBase
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
+        var old = user.IsVerified;
         user.IsVerified = request.IsVerified;
         await _context.SaveChangesAsync();
+        await WriteAuditAsync(request.IsVerified ? "VerifyUser" : "UnverifyUser", "User", userId, old.ToString(), request.IsVerified.ToString());
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User status updated" });
     }
@@ -316,8 +342,10 @@ public class AdminController : ControllerBase
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
+        var oldRole = user.Roles;
         user.Roles = request.Role;
         await _context.SaveChangesAsync();
+        await WriteAuditAsync("UpdateUserRole", "User", userId, oldRole, request.Role);
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role updated" });
     }
@@ -383,6 +411,7 @@ public class AdminController : ControllerBase
         task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
         task.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
+        await WriteAuditAsync("ForceReleaseEscrow", "Task", task.Id, null, "RunnerPaid");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Escrow released" });
     }
@@ -508,6 +537,7 @@ public class AdminController : ControllerBase
         account.IsVerified = true;
         account.VerifiedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
+        await WriteAuditAsync("VerifyBankAccount", "BankAccount", id, "Unverified", "Verified");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Bank account verified" });
     }
