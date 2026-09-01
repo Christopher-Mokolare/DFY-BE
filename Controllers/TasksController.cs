@@ -998,7 +998,26 @@ public class TasksController : ControllerBase
             ["item_name"] = $"Task Payment - {task.TaskDescription.Substring(0, Math.Min(task.TaskDescription.Length, 100))}"
         };
 
-        var queryString = string.Join("&", parameters.Select(p => $"{p.Key}={Uri.EscapeDataString(p.Value)}"));
+        // PayFast requires uppercase hex encoding, spaces as '+', trimmed values, lowercase MD5
+        static string PfEncode(string value)
+        {
+            var encoded = Uri.EscapeDataString(value.Trim());
+            // Uri.EscapeDataString produces lowercase hex (%3a); PayFast requires uppercase (%3A)
+            return System.Text.RegularExpressions.Regex.Replace(encoded, "%[0-9a-f]{2}",
+                m => m.Value.ToUpperInvariant()).Replace("%20", "+");
+        }
+
+        var passphrase = Environment.GetEnvironmentVariable("PAYFAST_PASSPHRASE") ?? _configuration["PayFast:Passphrase"];
+        var sigString = string.Join("&", parameters.Select(p => $"{p.Key}={PfEncode(p.Value)}"));
+        if (!string.IsNullOrWhiteSpace(passphrase))
+            sigString += $"&passphrase={PfEncode(passphrase)}";
+
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var signature = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sigString)).Select(b => b.ToString("x2")));
+
+        // Append signature unencoded (it's already a hex string with no special chars)
+        var queryString = string.Join("&", parameters.Select(p => $"{p.Key}={PfEncode(p.Value)}"));
+        queryString += $"&signature={signature}";
         return $"{baseUrl}?{queryString}";
     }
 }

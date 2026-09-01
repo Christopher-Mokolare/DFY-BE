@@ -156,13 +156,20 @@ public class PaymentController : ControllerBase
             if (string.IsNullOrWhiteSpace(passphrase))
                 return false;
 
+            static string PfEncode(string value)
+            {
+                var encoded = Uri.EscapeDataString(value.Trim());
+                return System.Text.RegularExpressions.Regex.Replace(encoded, "%[0-9a-f]{2}",
+                    m => m.Value.ToUpperInvariant()).Replace("%20", "+");
+            }
+
             var fields = form
                 .Where(f => f.Key != "signature")
                 .OrderBy(f => f.Key)
-                .Select(f => $"{f.Key}={Uri.EscapeDataString(f.Value.ToString())}");
+                .Select(f => $"{f.Key}={PfEncode(f.Value.ToString())}");
 
             var paramString = string.Join("&", fields);
-            paramString += $"&passphrase={Uri.EscapeDataString(passphrase)}";
+            paramString += $"&passphrase={PfEncode(passphrase)}";
 
             using var md5 = System.Security.Cryptography.MD5.Create();
             var hash = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(paramString))

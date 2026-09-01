@@ -2,26 +2,188 @@ using System.ComponentModel.DataAnnotations;
 
 namespace DoForYou.API.DTOs;
 
-public class CreateTaskRequest
+public class CreateTaskRequest : IValidatableObject
 {
+    private static readonly string[] AllowedCategories =
+    {
+        "Grocery Shopping",
+        "Delivery",
+        "Cleaning",
+        "Gardening",
+        "Moving",
+        "Repairs",
+        "Tutoring",
+        "Pet Care",
+        "Cooking",
+        "Other"
+    };
+
+    private static readonly string[] AllowedGautengCities =
+    {
+        "Johannesburg",
+        "Sandton",
+        "Randburg",
+        "Roodepoort",
+        "Soweto",
+        "Midrand",
+        "Pretoria",
+        "Centurion",
+        "Tembisa",
+        "Benoni",
+        "Boksburg",
+        "Germiston",
+        "Alberton",
+        "Vereeniging",
+        "Vanderbijlpark",
+        "Krugersdorp",
+        "Brakpan"
+    };
+
     [Required]
+    [StringLength(500, MinimumLength = 20, ErrorMessage = "Task description must be between 20 and 500 characters.")]
     public string TaskDescription { get; set; } = string.Empty;
-    
+
     [Required]
     public string Category { get; set; } = string.Empty;
-    
+
     [Required]
     public string Area { get; set; } = string.Empty;
-    
+
     [Required]
     public DateTime DateNeeded { get; set; }
-    
-    [Required, Range(50, 100000, ErrorMessage = "validation failed: minimum budget is R50")]
+
+    [Required]
+    [Range(50, 100000, ErrorMessage = "Budget must be between R50 and R100000.")]
     public decimal Budget { get; set; }
-    
+
     public string? Notes { get; set; }
     public string Priority { get; set; } = "Standard";
     public bool TermsAccepted { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        var errors = new List<ValidationResult>();
+
+        if (string.IsNullOrWhiteSpace(TaskDescription))
+        {
+            errors.Add(new ValidationResult("Task description is required."));
+        }
+        else if (TaskDescription.Trim().Length < 20 || TaskDescription.Trim().Length > 500)
+        {
+            errors.Add(new ValidationResult("Task description must be between 20 and 500 characters."));
+        }
+
+        var category = Category?.Trim();
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            errors.Add(new ValidationResult("Category is required."));
+        }
+        else if (!AllowedCategories.Contains(category, StringComparer.OrdinalIgnoreCase))
+        {
+            errors.Add(new ValidationResult("Category is invalid. Please choose a valid category."));
+        }
+
+        var area = Area?.Trim();
+        if (string.IsNullOrWhiteSpace(area))
+        {
+            errors.Add(new ValidationResult("Area is required."));
+        }
+        else if (area.Length < 2)
+        {
+            errors.Add(new ValidationResult("Area must be at least 2 characters long."));
+        }
+        else if (!AllowedGautengCities.Contains(area, StringComparer.OrdinalIgnoreCase))
+        {
+            if (Latitude.HasValue || Longitude.HasValue)
+            {
+                if (!Latitude.HasValue || !Longitude.HasValue || !IsWithinGautengPolygon(Latitude.Value, Longitude.Value))
+                {
+                    errors.Add(new ValidationResult("Location must be within Gauteng. Please choose an approved Gauteng area."));
+                }
+            }
+            else
+            {
+                errors.Add(new ValidationResult("Location must be within Gauteng. Please choose an approved Gauteng area."));
+            }
+        }
+
+        var normalizedPriority = Priority?.Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedPriority) && !new[] { "Low", "Medium", "High", "Urgent", "Standard" }.Contains(normalizedPriority, StringComparer.OrdinalIgnoreCase))
+        {
+            errors.Add(new ValidationResult("Priority is invalid."));
+        }
+
+        if (DateNeeded <= DateTime.UtcNow.AddMinutes(30))
+        {
+            errors.Add(new ValidationResult("Date needed must be in the future."));
+        }
+
+        if (DateNeeded > DateTime.UtcNow.AddDays(365))
+        {
+            errors.Add(new ValidationResult("Date needed cannot be more than 365 days in the future."));
+        }
+
+        if (Budget < 50 || Budget > 100000)
+        {
+            errors.Add(new ValidationResult("Budget must be between R50 and R100000."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(Notes) && Notes.Trim().Length > 1000)
+        {
+            errors.Add(new ValidationResult("Notes must be 1000 characters or less."));
+        }
+
+        if (!TermsAccepted)
+        {
+            errors.Add(new ValidationResult("You must accept the terms and conditions before posting a task."));
+        }
+
+        if ((Latitude.HasValue && !Longitude.HasValue) || (!Latitude.HasValue && Longitude.HasValue))
+        {
+            errors.Add(new ValidationResult("Both latitude and longitude must be provided together."));
+        }
+
+        if (Latitude.HasValue && Longitude.HasValue && !IsWithinGautengPolygon(Latitude.Value, Longitude.Value))
+        {
+            errors.Add(new ValidationResult("Selected coordinates must fall within Gauteng."));
+        }
+
+        return errors;
+    }
+
+    private static bool IsWithinGautengPolygon(double latitude, double longitude)
+    {
+        // Approximate Gauteng polygon for service-area validation.
+        var polygon = new[]
+        {
+            new[] { -25.77, 27.90 },
+            new[] { -25.70, 28.55 },
+            new[] { -26.10, 28.96 },
+            new[] { -26.75, 28.82 },
+            new[] { -27.10, 27.98 },
+            new[] { -26.95, 27.12 },
+            new[] { -26.20, 27.00 }
+        };
+
+        var inside = false;
+        var j = polygon.Length - 1;
+        for (var i = 0; i < polygon.Length; j = i++)
+        {
+            var xi = polygon[i][0]; var yi = polygon[i][1];
+            var xj = polygon[j][0]; var yj = polygon[j][1];
+
+            var intersects = ((yi > longitude) != (yj > longitude)) &&
+                             (latitude < (xj - xi) * (longitude - yi) / (yj - yi + double.Epsilon) + xi);
+            if (intersects)
+            {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
 }
 
 public class UpdateTaskRequest
