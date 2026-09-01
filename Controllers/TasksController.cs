@@ -965,7 +965,10 @@ public class TasksController : ControllerBase
 
     private string GeneratePayFastUrl(Models.Task task, User user)
     {
-        var isSandbox = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
+        var payfastMode = Environment.GetEnvironmentVariable("PAYFAST_MODE") ?? "sandbox";
+        var isSandbox = string.Equals(payfastMode, "sandbox", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase);
+
         var baseUrl = isSandbox
             ? "https://sandbox.payfast.co.za/eng/process"
             : "https://www.payfast.co.za/eng/process";

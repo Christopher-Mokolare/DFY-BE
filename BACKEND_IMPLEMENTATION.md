@@ -34,6 +34,12 @@ DoForYou-API/
 └── Migrations/          # EF Core migrations
 ```
 
+### PayFast Mode
+- Default mode is sandbox for local and staging test environments.
+- Set `PAYFAST_MODE=sandbox` to force sandbox checkout URLs.
+- Set `PAYFAST_MODE=live` only for production deployment.
+- The checkout URL uses `https://sandbox.payfast.co.za/eng/process` in sandbox mode and `https://www.payfast.co.za/eng/process` in live mode.
+
 ### Key Design Patterns
 - **Repository Pattern**: Via Entity Framework DbContext
 - **Dependency Injection**: Built-in .NET DI container

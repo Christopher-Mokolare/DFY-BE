@@ -60,6 +60,31 @@ A fully integrated .NET 8 Web API for the DoForYou task management platform that
 - `POST /api/v1/admin/tasks/{taskId}/verify` - Verify task payment
 - `POST /api/v1/admin/tasks/{taskId}/unverify` - Unverify task payment
 
+## PayFast configuration
+
+This project uses PayFast in sandbox mode by default so payment testing does not charge real money.
+
+Set the following environment variables before running the API:
+
+```bash
+export PAYFAST_MODE=sandbox
+export PAYFAST_MERCHANT_ID=your_sandbox_merchant_id
+export PAYFAST_MERCHANT_KEY=your_sandbox_merchant_key
+export PAYFAST_PASSPHRASE=your_sandbox_passphrase_if_used
+export BACKEND_URL=http://localhost:5001
+export FRONTEND_URL=http://localhost:3000
+```
+
+Switch to live mode only when you are ready for production:
+
+```bash
+export PAYFAST_MODE=live
+```
+
+The generated checkout URL will resolve to:
+- Sandbox: `https://sandbox.payfast.co.za/eng/process`
+- Live: `https://www.payfast.co.za/eng/process`
+
 ## Features
 
 ✅ **Complete Frontend Integration**
