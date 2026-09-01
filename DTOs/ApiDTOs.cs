@@ -4,40 +4,6 @@ namespace DoForYou.API.DTOs;
 
 public class CreateTaskRequest : IValidatableObject
 {
-    private static readonly string[] AllowedCategories =
-    {
-        "Grocery Shopping",
-        "Delivery",
-        "Cleaning",
-        "Gardening",
-        "Moving",
-        "Repairs",
-        "Tutoring",
-        "Pet Care",
-        "Cooking",
-        "Other"
-    };
-
-    private static readonly string[] AllowedGautengCities =
-    {
-        "Johannesburg",
-        "Sandton",
-        "Randburg",
-        "Roodepoort",
-        "Soweto",
-        "Midrand",
-        "Pretoria",
-        "Centurion",
-        "Tembisa",
-        "Benoni",
-        "Boksburg",
-        "Germiston",
-        "Alberton",
-        "Vereeniging",
-        "Vanderbijlpark",
-        "Krugersdorp",
-        "Brakpan"
-    };
 
     [Required]
     [StringLength(500, MinimumLength = 20, ErrorMessage = "Task description must be between 20 and 500 characters.")]
@@ -80,10 +46,6 @@ public class CreateTaskRequest : IValidatableObject
         {
             errors.Add(new ValidationResult("Category is required."));
         }
-        else if (!AllowedCategories.Contains(category, StringComparer.OrdinalIgnoreCase))
-        {
-            errors.Add(new ValidationResult("Category is invalid. Please choose a valid category."));
-        }
 
         var area = Area?.Trim();
         if (string.IsNullOrWhiteSpace(area))
@@ -93,20 +55,6 @@ public class CreateTaskRequest : IValidatableObject
         else if (area.Length < 2)
         {
             errors.Add(new ValidationResult("Area must be at least 2 characters long."));
-        }
-        else if (!AllowedGautengCities.Contains(area, StringComparer.OrdinalIgnoreCase))
-        {
-            if (Latitude.HasValue || Longitude.HasValue)
-            {
-                if (!Latitude.HasValue || !Longitude.HasValue || !IsWithinGautengPolygon(Latitude.Value, Longitude.Value))
-                {
-                    errors.Add(new ValidationResult("Location must be within Gauteng. Please choose an approved Gauteng area."));
-                }
-            }
-            else
-            {
-                errors.Add(new ValidationResult("Location must be within Gauteng. Please choose an approved Gauteng area."));
-            }
         }
 
         var normalizedPriority = Priority?.Trim();
@@ -145,44 +93,7 @@ public class CreateTaskRequest : IValidatableObject
             errors.Add(new ValidationResult("Both latitude and longitude must be provided together."));
         }
 
-        if (Latitude.HasValue && Longitude.HasValue && !IsWithinGautengPolygon(Latitude.Value, Longitude.Value))
-        {
-            errors.Add(new ValidationResult("Selected coordinates must fall within Gauteng."));
-        }
-
         return errors;
-    }
-
-    private static bool IsWithinGautengPolygon(double latitude, double longitude)
-    {
-        // Approximate Gauteng polygon for service-area validation.
-        var polygon = new[]
-        {
-            new[] { -25.77, 27.90 },
-            new[] { -25.70, 28.55 },
-            new[] { -26.10, 28.96 },
-            new[] { -26.75, 28.82 },
-            new[] { -27.10, 27.98 },
-            new[] { -26.95, 27.12 },
-            new[] { -26.20, 27.00 }
-        };
-
-        var inside = false;
-        var j = polygon.Length - 1;
-        for (var i = 0; i < polygon.Length; j = i++)
-        {
-            var xi = polygon[i][0]; var yi = polygon[i][1];
-            var xj = polygon[j][0]; var yj = polygon[j][1];
-
-            var intersects = ((yi > longitude) != (yj > longitude)) &&
-                             (latitude < (xj - xi) * (longitude - yi) / (yj - yi + double.Epsilon) + xi);
-            if (intersects)
-            {
-                inside = !inside;
-            }
-        }
-
-        return inside;
     }
 }
 
