@@ -11,7 +11,7 @@ FUTURE=$(python3 -c "from datetime import datetime,timedelta; print((datetime.ut
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 PASS=0; FAIL=0; FAILURES=()
 
-pass()  { echo -e "${GREEN}  ✅ $1${NC}"; ((PASS++)); }
+pass()  { echo -e "${GREEN}  ✅ $1${NC}"; ((PASS++)) || true; }
 fail()  { echo -e "${RED}  ❌ $1${NC}"; ((FAIL++)); FAILURES+=("$1"); }
 step()  { echo -e "\n${YELLOW}━━━ $1 ━━━${NC}"; }
 info()  { echo -e "${CYAN}     $1${NC}"; }
