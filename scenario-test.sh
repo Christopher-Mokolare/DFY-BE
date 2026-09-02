@@ -17,7 +17,7 @@ step()  { echo -e "\n${YELLOW}━━━ $1 ━━━${NC}"; }
 info()  { echo -e "${CYAN}     $1${NC}"; }
 
 extract() { echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d$2)" 2>/dev/null; }
-ok()      { extract "$1" "['success']"; }
+ok()      { echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); print('True' if d.get('success') else 'False')" 2>/dev/null; }
 
 register() {
   local first=$1 last=$2 email=$3 type=$4 phone=$5
@@ -120,7 +120,8 @@ step "4. Cancel tasks 1 & 2 (simulate failed/cancelled tasks)"
 
 # Task 1: creator cancels before payment (still PendingPayment — delete it)
 DEL1=$(curl -s -X DELETE "$BASE_URL/tasks/$TASK1" -H "Authorization: Bearer $CREATOR_TOKEN")
-[[ $(ok "$DEL1") == "True" ]] && pass "Task 1 deleted (creator abandoned before payment)" || fail "Task 1 delete"
+DEL1_OK=$(ok "$DEL1")
+[[ "$DEL1_OK" == "True" ]] && pass "Task 1 deleted (creator abandoned before payment)" || { echo "  DEL1 response: $DEL1"; fail "Task 1 delete"; }
 
 # Task 2: admin hard-cancels via unverify then force status
 CANCEL2=$(curl -s -X PATCH "$BASE_URL/admin/tasks/$TASK2/unverify" -H "Authorization: Bearer $ADMIN_TOKEN")

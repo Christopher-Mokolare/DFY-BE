@@ -667,7 +667,10 @@ public class TasksController : ControllerBase
         if (task.TaskStatus != "PendingPayment")
             return Ok(new ApiResponse<bool> { Success = false, Message = "Cannot delete task after payment" });
 
-        _context.Tasks.Remove(task);
+        task.IsDeleted = true;
+        task.DeletedAt = DateTime.UtcNow;
+        task.TaskStatus = "Cancelled";
+        task.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task deleted successfully" });
