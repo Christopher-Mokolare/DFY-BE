@@ -94,6 +94,8 @@ public class MessagesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
+        var isAdmin = User.IsInRole("Admin");
+
         // Try to find task by string TaskId first, then by numeric Id
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null && int.TryParse(taskId, out var numericId))
@@ -101,7 +103,7 @@ public class MessagesController : ControllerBase
             task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == numericId);
         }
         
-        if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
+        if (task == null || (!isAdmin && task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
             return Ok(new ApiResponse<List<object>> { Success = false, Message = "Access denied" });
 
         var messages = await _context.TaskMessages

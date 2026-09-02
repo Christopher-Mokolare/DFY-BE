@@ -476,6 +476,33 @@ public class AdminController : ControllerBase
         });
     }
 
+    [HttpGet("tasks/{taskId}/messages")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetTaskMessages(string taskId)
+    {
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        if (task == null)
+            return NotFound(new ApiResponse<List<object>> { Success = false, Message = "Task not found" });
+
+        var messages = await _context.TaskMessages
+            .Include(m => m.Sender)
+            .Where(m => m.TaskId == task.Id)
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => new
+            {
+                id = m.Id,
+                senderId = m.SenderId,
+                senderName = $"{m.Sender.FirstName} {m.Sender.LastName}",
+                senderEmail = m.Sender.Email,
+                content = m.Content,
+                timestamp = m.CreatedAt,
+                isRead = m.IsRead
+            })
+            .Cast<object>()
+            .ToListAsync();
+
+        return Ok(new ApiResponse<List<object>> { Success = true, Data = messages });
+    }
+
     [HttpGet("withdrawal-requests")]
     public async Task<ActionResult<ApiResponse<object>>> GetWithdrawalRequests([FromQuery] string? status = null)
     {
