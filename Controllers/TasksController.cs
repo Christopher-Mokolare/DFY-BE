@@ -117,6 +117,13 @@ public class TasksController : ControllerBase
         _context.Tasks.Add(task);
         await _context.SaveChangesAsync();
 
+        await _notificationService.NotifyAdminsAsync(
+            "payment_pending",
+            "New Task Awaiting Payment",
+            $"{user.FirstName} {user.LastName} created task {taskId} — R{request.Budget:F0} ({request.Category})",
+            task.Id
+        );
+
         var taskDto = new TaskDto
         {
             Id = task.Id,

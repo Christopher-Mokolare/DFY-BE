@@ -15,11 +15,13 @@ public class DisputesController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IEscrowService _escrowService;
+    private readonly INotificationService _notificationService;
 
-    public DisputesController(AppDbContext context, IEscrowService escrowService)
+    public DisputesController(AppDbContext context, IEscrowService escrowService, INotificationService notificationService)
     {
         _context = context;
         _escrowService = escrowService;
+        _notificationService = notificationService;
     }
 
     [HttpPost]
@@ -46,6 +48,15 @@ public class DisputesController : ControllerBase
 
         _context.Disputes.Add(dispute);
         await _context.SaveChangesAsync();
+
+        var reporter = await _context.Users.FindAsync(userId.Value);
+        var reporterName = reporter != null ? $"{reporter.FirstName} {reporter.LastName}" : "A user";
+        await _notificationService.NotifyAdminsAsync(
+            "dispute_raised",
+            "New Dispute Raised",
+            $"{reporterName} raised a dispute on task {task.TaskId}: {request.Issue.Substring(0, Math.Min(request.Issue.Length, 80))}",
+            task.Id
+        );
 
         return Ok(new ApiResponse<object>
         {

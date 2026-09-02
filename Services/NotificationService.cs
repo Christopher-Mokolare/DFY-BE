@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.Models;
 using DoForYou.API.Hubs;
@@ -12,6 +13,7 @@ public interface INotificationService
     System.Threading.Tasks.Task NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName);
     System.Threading.Tasks.Task NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount);
     System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null);
+    System.Threading.Tasks.Task NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null);
 }
 
 public class NotificationService : INotificationService
@@ -95,5 +97,16 @@ public class NotificationService : INotificationService
             $"You have a new message from {senderName} about: {taskDescription}",
             taskId
         );
+    }
+
+    public async System.Threading.Tasks.Task NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null)
+    {
+        var adminIds = await _context.Users
+            .Where(u => u.Roles != null && u.Roles.Contains("Admin"))
+            .Select(u => u.Id)
+            .ToListAsync();
+
+        foreach (var adminId in adminIds)
+            await CreateNotificationAsync(adminId, type, title, message, relatedTaskId);
     }
 }

@@ -8,6 +8,7 @@ using System.Text;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
+using DoForYou.API.Services;
 using BCrypt.Net;
 
 namespace DoForYou.API.Controllers;
@@ -19,12 +20,14 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
+    private readonly INotificationService _notificationService;
 
-    public AuthController(AppDbContext context, IConfiguration configuration, ILogger<AuthController> logger)
+    public AuthController(AppDbContext context, IConfiguration configuration, ILogger<AuthController> logger, INotificationService notificationService)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
+        _notificationService = notificationService;
     }
 
     [HttpPost("register")]
@@ -61,6 +64,12 @@ public class AuthController : ControllerBase
 
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
+
+        _ = _notificationService.NotifyAdminsAsync(
+            "new_user",
+            "New User Registered",
+            $"{user.FirstName} {user.LastName} ({user.Email}) joined as {user.UserType ?? "user"}"
+        );
 
         var token = GenerateJwtToken(user);
 
