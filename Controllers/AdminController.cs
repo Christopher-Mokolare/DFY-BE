@@ -455,19 +455,24 @@ public class AdminController : ControllerBase
             {
                 id = a.Id,
                 userId = a.UserId,
+                adminName = a.User != null ? $"{a.User.FirstName} {a.User.LastName}" : "System",
                 userName = a.User != null ? $"{a.User.FirstName} {a.User.LastName}" : "System",
                 action = a.Action,
                 entityType = a.EntityType,
                 entityId = a.EntityId,
+                oldValues = a.OldValues,
+                newValues = a.NewValues,
                 ipAddress = a.IpAddress,
                 createdAt = a.CreatedAt
             })
             .ToListAsync();
 
+        var totalPages = (int)Math.Ceiling(total / (double)pageSize);
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { logs, total, page, pageSize }
+            Data = new { logs, total, totalCount = total, page, pageSize, totalPages }
         });
     }
 
