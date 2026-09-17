@@ -1,12 +1,12 @@
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
-using DoForYou.API.Data;
-using DoForYou.API.DTOs;
-using DoForYou.API.Models;
-using System.Security.Claims;
-using System.Text.Json;
-using BCrypt.Net;
+using Microsoft.AspNetCore.Mvc
+using Microsoft.AspNetCore.Authorization
+using Microsoft.EntityFrameworkCore
+using DoForYou.API.Data
+using DoForYou.API.DTOs
+using DoForYou.API.Models
+using System.Security.Claims
+using System.Text.Json
+using BCrypt.Net
 
 namespace DoForYou.API.Controllers;
 
@@ -52,7 +52,6 @@ public class UserController : ControllerBase
                 profileCompletion = CalculateProfileCompletion(user),
                 rating = user.Rating,
                 completedTasks = user.CompletedTasks,
-                walletBalance = user.WalletBalance,
                 isVerified = user.IsVerified,
                 emailVerified = user.EmailVerified,
                 phoneVerified = user.PhoneVerified,
@@ -161,7 +160,6 @@ public class UserController : ControllerBase
         var id = request.IdNumber?.Trim() ?? "";
         if (id.Length != 13 || !id.All(char.IsDigit))
             return Ok(new ApiResponse<object> { Success = false, Message = "ID number must be 13 digits" });
-        // Basic SA ID checksum (Luhn)
         var sum = 0;
         for (var i = 0; i < 13; i++)
         {
@@ -180,12 +178,10 @@ public class UserController : ControllerBase
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
-        // Generate 6-digit OTP
         var code = Random.Shared.Next(100000, 999999).ToString();
         user.PhoneVerificationCode = BCrypt.Net.BCrypt.HashPassword(code);
         user.PhoneVerificationExpiry = DateTime.UtcNow.AddMinutes(10);
         await _context.SaveChangesAsync();
-        // In production: send via SMS/WhatsApp. For now return code in dev.
         var isDev = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
         return Ok(new ApiResponse<bool>
         {
@@ -221,7 +217,6 @@ public class UserController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        // Return preferences based on user type
         var user = await _context.Users.FindAsync(userId);
         var userType = user?.UserType ?? "creator";
         
@@ -255,7 +250,6 @@ public class UserController : ControllerBase
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
-        // Support both {userType} and {canCreateTasks, canAcceptTasks} formats
         if (!string.IsNullOrEmpty(request.UserType))
         {
             user.UserType = request.UserType;
