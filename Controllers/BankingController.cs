@@ -16,11 +16,16 @@ public class BankingController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IBankingService _bankingService;
+    private readonly IOzowBankService _ozowBankService;
 
-    public BankingController(AppDbContext context, IBankingService bankingService)
+    public BankingController(
+        AppDbContext context,
+        IBankingService bankingService,
+        IOzowBankService ozowBankService)
     {
         _context = context;
         _bankingService = bankingService;
+        _ozowBankService = ozowBankService;
     }
 
     [HttpPost("bank-accounts")]
@@ -30,37 +35,140 @@ public class BankingController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        // Validate bank account
-        var isValid = await _bankingService.ValidateBankAccountAsync(request.BankName, request.AccountNumber, request.BranchCode);
-        if (!isValid)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Invalid bank account details" });
+        var bankGroupId = request.BankGroupId.Trim();
+        var bankName = request.BankName.Trim();
+        var accountNumber = request.AccountNumber.Trim();
+        var accountHolderName = request.AccountHolderName.Trim();
+        var branchCode = request.BranchCode.Trim();
+        var accountType = request.AccountType.Trim();
 
-        // Check for duplicate
+        if (string.IsNullOrWhiteSpace(bankGroupId))
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "A valid Ozow bank selection is required."
+            });
+        }
+
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+        if (user == null)
+            return Unauthorized();
+
+        var availableBanks =
+            await _ozowBankService.GetAvailableBanksAsync(
+                HttpContext.RequestAborted);
+
+        var selectedBank =
+            availableBanks.FirstOrDefault(bank =>
+                string.Equals(
+                    bank.BankGroupId,
+                    bankGroupId,
+                    StringComparison.OrdinalIgnoreCase));
+
+        if (selectedBank == null)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The selected bank is not currently available for Ozow payouts."
+            });
+        }
+
+        // BankGroupId is the authoritative bank selection.
+        // Always use Ozow's canonical bank name and universal branch code
+        // instead of trusting display values supplied by the client.
+        bankName = selectedBank.BankGroupName;
+        branchCode = selectedBank.UniversalBranchCode;
+
+        var isValid = await _bankingService.ValidateBankAccountAsync(
+            bankName,
+            accountNumber,
+            branchCode);
+
+        if (!isValid)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Invalid bank account details."
+            });
+        }
+
         var exists = await _context.BankAccounts
-            .AnyAsync(ba => ba.UserId == userId && ba.AccountNumber == request.AccountNumber && ba.IsActive);
+            .AnyAsync(ba =>
+                ba.UserId == userId &&
+                ba.AccountNumber == accountNumber &&
+                ba.IsActive);
 
         if (exists)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Bank account already exists" });
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Bank account already exists."
+            });
+        }
 
         var bankAccount = new BankAccount
         {
             UserId = userId.Value,
-            BankName = request.BankName,
-            AccountNumber = request.AccountNumber,
-            AccountHolderName = request.AccountHolderName,
-            BranchCode = request.BranchCode,
-            AccountType = request.AccountType,
-            IsVerified = false // Requires verification process
+            BankName = selectedBank.BankGroupName,
+            BankGroupId = selectedBank.BankGroupId,
+            AccountNumber = accountNumber,
+            AccountHolderName = accountHolderName,
+            BranchCode = branchCode,
+            AccountType = accountType,
+            IsVerified = false,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
         };
 
         _context.BankAccounts.Add(bankAccount);
         await _context.SaveChangesAsync();
 
+        var verification =
+            await _bankingService.VerifyBankAccountAsync(
+                user,
+                bankAccount,
+                HttpContext.RequestAborted);
+
+        if (!verification.Success)
+        {
+            bankAccount.IsVerified = false;
+            bankAccount.VerifiedAt = null;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Data = new
+                {
+                    bankAccountId = bankAccount.Id,
+                    isVerified = false
+                },
+                Message = verification.Message
+            });
+        }
+
+        bankAccount.IsVerified = true;
+        bankAccount.VerifiedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { bankAccountId = bankAccount.Id },
-            Message = "Bank account added successfully. Verification required before use."
+            Data = new
+            {
+                bankAccountId = bankAccount.Id,
+                isVerified = true,
+                verifiedAt = bankAccount.VerifiedAt
+            },
+            Message = verification.Message
         });
     }
 
@@ -141,26 +249,117 @@ public class BankingController : ControllerBase
     }
 
 
-    [HttpGet("banks")]
-    public ActionResult<ApiResponse<List<object>>> GetSupportedBanks()
+    [HttpPost("bank-accounts/{id:int}/verify")]
+    public async Task<ActionResult<ApiResponse<object>>> VerifyBankAccount(
+        int id,
+        CancellationToken cancellationToken)
     {
-        var banks = new List<object>
+        var userId = GetCurrentUserId();
+        if (userId == null)
+            return Unauthorized();
+
+        var bankAccount = await _context.BankAccounts
+            .FirstOrDefaultAsync(
+                ba => ba.Id == id && ba.UserId == userId.Value,
+                cancellationToken);
+
+        if (bankAccount == null)
         {
-            new { code = "ABSA", name = "ABSA", branchCode = "632005" },
-            new { code = "STD", name = "Standard Bank", branchCode = "051001" },
-            new { code = "FNB", name = "FNB", branchCode = "250655" },
-            new { code = "NED", name = "Nedbank", branchCode = "198765" },
-            new { code = "CAP", name = "Capitec", branchCode = "470010" },
-            new { code = "INV", name = "Investec", branchCode = "580105" },
-            new { code = "AFB", name = "African Bank", branchCode = "430000" },
-            new { code = "TYM", name = "TymeBank", branchCode = "678910" },
-            new { code = "DSC", name = "Discovery Bank", branchCode = "679000" }
-        };
+            return NotFound(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Bank account not found."
+            });
+        }
+
+        if (!bankAccount.IsActive)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "This bank account is inactive."
+            });
+        }
+
+        var user = await _context.Users
+            .FirstOrDefaultAsync(
+                u => u.Id == userId.Value,
+                cancellationToken);
+
+        if (user == null)
+            return Unauthorized();
+
+        var verification =
+            await _bankingService.VerifyBankAccountAsync(
+                user,
+                bankAccount,
+                cancellationToken);
+
+        if (!verification.Success)
+        {
+            bankAccount.IsVerified = false;
+            bankAccount.VerifiedAt = null;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Data = new
+                {
+                    bankAccountId = bankAccount.Id,
+                    isVerified = false
+                },
+                Message = verification.Message
+            });
+        }
+
+        bankAccount.IsVerified = true;
+        bankAccount.VerifiedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new
+            {
+                bankAccountId = bankAccount.Id,
+                isVerified = true,
+                verifiedAt = bankAccount.VerifiedAt
+            },
+            Message = verification.Message
+        });
+    }
+
+    [HttpGet("banks")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetSupportedBanks(
+        CancellationToken cancellationToken)
+    {
+        var banks =
+            await _ozowBankService.GetAvailableBanksAsync(
+                cancellationToken);
+
+        if (banks.Count == 0)
+        {
+            return StatusCode(503, new ApiResponse<List<object>>
+            {
+                Success = false,
+                Message = "Bank list is temporarily unavailable."
+            });
+        }
+
+        var data =
+            banks.Select(bank => new
+            {
+                bankGroupId = bank.BankGroupId,
+                name = bank.BankGroupName,
+                branchCode = bank.UniversalBranchCode
+            }).ToList<object>();
 
         return Ok(new ApiResponse<List<object>>
         {
             Success = true,
-            Data = banks
+            Data = data
         });
     }
 
@@ -179,6 +378,7 @@ public class BankingController : ControllerBase
 
 public class AddBankAccountRequest
 {
+    public string BankGroupId { get; set; } = string.Empty;
     public string BankName { get; set; } = string.Empty;
     public string AccountNumber { get; set; } = string.Empty;
     public string AccountHolderName { get; set; } = string.Empty;

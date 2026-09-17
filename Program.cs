@@ -70,6 +70,19 @@ builder.Configuration["Ozow:PaymentIsTest"] =
     ?? builder.Configuration["Ozow:PaymentIsTest"]
     ?? "true";
 
+builder.Configuration["Ozow:OneClientId"] =
+    Environment.GetEnvironmentVariable("OZOW_ONE_CLIENT_ID")
+    ?? builder.Configuration["Ozow:OneClientId"];
+
+builder.Configuration["Ozow:OneClientSecret"] =
+    Environment.GetEnvironmentVariable("OZOW_ONE_CLIENT_SECRET")
+    ?? builder.Configuration["Ozow:OneClientSecret"];
+
+builder.Configuration["Ozow:OneBaseUrl"] =
+    Environment.GetEnvironmentVariable("OZOW_ONE_BASE_URL")
+    ?? builder.Configuration["Ozow:OneBaseUrl"]
+    ?? "https://stagingone.ozow.com/v1";
+
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
 if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
     jwtKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -161,11 +174,13 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddHttpClient("OzowPayment");
 builder.Services.AddScoped<IOzowPaymentService, OzowPaymentService>();
+builder.Services.AddHttpClient("OzowOne");
 
 builder.Services.AddHttpClient("OzowPayout");
 
 builder.Services.AddScoped<OzowPayoutHashService>();
 builder.Services.AddScoped<IOzowPayoutService, OzowPayoutService>();
+builder.Services.AddScoped<IOzowBankService, OzowBankService>();
 builder.Services.AddHostedService<OzowPayoutProcessorService>();
 
 var app = builder.Build();
