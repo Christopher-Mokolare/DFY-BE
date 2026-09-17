@@ -231,7 +231,7 @@ The app can pass through the marketplace lifecycle in staging with robust logic,
 
 Outstanding items include:
 
-- real PayFast callback / ITN validation confirmation
+- real Ozow callback / ITN validation confirmation
 - provider sandbox/live configuration verification
 - payout release to runner wallet after confirmation
 - real withdrawal processing and bank account verification
@@ -246,7 +246,7 @@ Minimum environment checklist:
 - database connection string for the target environment
 - JWT signing key and token expiry settings
 - application URL and callback URL configuration
-- PayFast merchant credentials and sandbox/live mode switch
+- Ozow merchant credentials and sandbox/live mode switch
 - webhook / ITN endpoint configuration
 - email / OTP / notification provider credentials
 - file storage or media configuration if applicable
@@ -295,7 +295,7 @@ This is the principal outstanding production gap.
 
 Needed before production confidence:
 
-- PayFast / provider credentials validated in real environment
+- Ozow / provider credentials validated in real environment
 - callback verification checked end-to-end
 - settlement flow tested beyond sandbox simulation
 - payout approval and wallet withdrawal logic validated on live behavior
@@ -415,7 +415,7 @@ Not yet fully validated in live-provider conditions:
 
 ### Phase 2: production finance validation
 
-- validate real PayFast sandbox/live setup
+- validate real Ozow sandbox/live setup
 - confirm callback and status synchronization flows
 - verify wallet credit and release logic with actual provider events
 - validate final settlement / payout eligibility logic

@@ -12,6 +12,7 @@ public interface INotificationService
     System.Threading.Tasks.Task NotifyTaskClaimedAsync(int creatorId, string taskDescription, string runnerName);
     System.Threading.Tasks.Task NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName);
     System.Threading.Tasks.Task NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount);
+    System.Threading.Tasks.Task NotifyPayoutCompletedAsync(int runnerId, string taskDescription, decimal amount, int? taskId = null);
     System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null);
     System.Threading.Tasks.Task NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null);
 }
@@ -42,7 +43,6 @@ public class NotificationService : INotificationService
         _context.Notifications.Add(notification);
         await _context.SaveChangesAsync();
 
-        // Send real-time notification
         await _hubContext.Clients.User(userId.ToString()).SendAsync("NewNotification", new
         {
             id = notification.Id,
@@ -77,14 +77,27 @@ public class NotificationService : INotificationService
         );
     }
 
+    // Kept as the existing interface entry point used by the task confirmation flow.
+    // The payout is queued here; Ozow status 5 is the authoritative payout completion event.
     public async System.Threading.Tasks.Task NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount)
     {
         await CreateNotificationAsync(
             runnerId,
-            "payment_received",
-            "Payment Received",
-            $"You received R{amount:F2} for completing: {taskDescription}",
+            "payout_pending",
+            "Payout Initiated",
+            $"Your R{amount:F2} runner payout has been queued and is being processed through Ozow for: {taskDescription}",
             null
+        );
+    }
+
+    public async System.Threading.Tasks.Task NotifyPayoutCompletedAsync(int runnerId, string taskDescription, decimal amount, int? taskId = null)
+    {
+        await CreateNotificationAsync(
+            runnerId,
+            "payout_completed",
+            "Payout Completed",
+            $"Your R{amount:F2} runner payout has been completed through Ozow for: {taskDescription}",
+            taskId
         );
     }
 

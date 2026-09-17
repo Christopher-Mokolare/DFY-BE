@@ -106,7 +106,7 @@ echo "  [1.9] Initiate Payment..."
 PAYMENT_URL=$(extract "$TASK_REG" "['data']['paymentUrl']")
 [[ -n "$PAYMENT_URL" ]] && pass "1.9 Payment URL Generated" || fail "1.9 Payment URL Generated"
 
-echo "  [1.10] Simulate PayFast Payment..."
+echo "  [1.10] Simulate Ozow Payment..."
 PAYMENT=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/payment/notify" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "m_payment_id=${TASK_ID}&payment_status=COMPLETE&amount_gross=500.00")

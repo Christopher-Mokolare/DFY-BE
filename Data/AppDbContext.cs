@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<Notification> Notifications { get; set; }
     public DbSet<BankAccount> BankAccounts { get; set; }
     public DbSet<WithdrawalRequest> WithdrawalRequests { get; set; }
+    public DbSet<Payout> Payouts { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<SupportTicket> SupportTickets { get; set; }
 
@@ -62,5 +63,33 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(t => t.AcceptedByUserId)
             .OnDelete(DeleteBehavior.SetNull);
+
+
+        modelBuilder.Entity<Payout>()
+            .HasIndex(p => p.MerchantReference)
+            .IsUnique();
+
+        modelBuilder.Entity<Payout>()
+            .HasIndex(p => p.ProviderReference)
+            .IsUnique()
+            .HasFilter("\"ProviderReference\" IS NOT NULL");
+
+        modelBuilder.Entity<Payout>()
+            .HasOne(p => p.Task)
+            .WithMany()
+            .HasForeignKey(p => p.TaskId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Payout>()
+            .HasOne(p => p.Runner)
+            .WithMany()
+            .HasForeignKey(p => p.RunnerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Payout>()
+            .HasOne(p => p.BankAccount)
+            .WithMany()
+            .HasForeignKey(p => p.BankAccountId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

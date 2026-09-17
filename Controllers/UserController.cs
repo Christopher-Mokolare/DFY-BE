@@ -52,7 +52,6 @@ public class UserController : ControllerBase
                 profileCompletion = CalculateProfileCompletion(user),
                 rating = user.Rating,
                 completedTasks = user.CompletedTasks,
-                walletBalance = user.WalletBalance,
                 isVerified = user.IsVerified,
                 emailVerified = user.EmailVerified,
                 phoneVerified = user.PhoneVerified,
@@ -71,7 +70,6 @@ public class UserController : ControllerBase
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
-
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
@@ -79,9 +77,7 @@ public class UserController : ControllerBase
         user.LastName = request.LastName;
         if (!string.IsNullOrEmpty(request.PhoneNumber)) user.PhoneNumber = request.PhoneNumber;
         if (!string.IsNullOrEmpty(request.Address)) user.Address = request.Address;
-        user.DateOfBirth = request.DateOfBirth.HasValue
-            ? DateTime.SpecifyKind(request.DateOfBirth.Value, DateTimeKind.Utc)
-            : null;
+        user.DateOfBirth = request.DateOfBirth.HasValue ? DateTime.SpecifyKind(request.DateOfBirth.Value, DateTimeKind.Utc) : null;
         if (!string.IsNullOrEmpty(request.IdNumber)) user.IdNumber = request.IdNumber;
         if (!string.IsNullOrEmpty(request.Username)) user.Username = request.Username;
         if (!string.IsNullOrEmpty(request.UserType)) user.UserType = request.UserType;
@@ -91,13 +87,7 @@ public class UserController : ControllerBase
             && !string.IsNullOrEmpty(user.UserType);
 
         await _context.SaveChangesAsync();
-
-        return Ok(new ApiResponse<bool>
-        {
-            Success = true,
-            Data = true,
-            Message = "Profile updated successfully"
-        });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Profile updated successfully" });
     }
 
     [HttpGet("/api/v1/users/dashboard")]
@@ -118,13 +108,7 @@ public class UserController : ControllerBase
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new
-            {
-                postedTasks,
-                activeTasks,
-                completedTasks,
-                totalEarnings
-            }
+            Data = new { postedTasks, activeTasks, completedTasks, totalEarnings }
         });
     }
 
@@ -161,7 +145,6 @@ public class UserController : ControllerBase
         var id = request.IdNumber?.Trim() ?? "";
         if (id.Length != 13 || !id.All(char.IsDigit))
             return Ok(new ApiResponse<object> { Success = false, Message = "ID number must be 13 digits" });
-        // Basic SA ID checksum (Luhn)
         var sum = 0;
         for (var i = 0; i < 13; i++)
         {
@@ -180,19 +163,12 @@ public class UserController : ControllerBase
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
-        // Generate 6-digit OTP
         var code = Random.Shared.Next(100000, 999999).ToString();
         user.PhoneVerificationCode = BCrypt.Net.BCrypt.HashPassword(code);
         user.PhoneVerificationExpiry = DateTime.UtcNow.AddMinutes(10);
         await _context.SaveChangesAsync();
-        // In production: send via SMS/WhatsApp. For now return code in dev.
         var isDev = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
-        return Ok(new ApiResponse<bool>
-        {
-            Success = true,
-            Data = true,
-            Message = isDev ? $"OTP: {code} (dev only)" : "Verification code sent"
-        });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = isDev ? $"OTP: {code} (dev only)" : "Verification code sent" });
     }
 
     [HttpPost("/api/v1/auth/verify-phone")]
@@ -220,11 +196,8 @@ public class UserController : ControllerBase
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
-
-        // Return preferences based on user type
         var user = await _context.Users.FindAsync(userId);
         var userType = user?.UserType ?? "creator";
-        
         return Ok(new ApiResponse<object>
         {
             Success = true,
@@ -251,30 +224,16 @@ public class UserController : ControllerBase
     {
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
-
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
-        // Support both {userType} and {canCreateTasks, canAcceptTasks} formats
-        if (!string.IsNullOrEmpty(request.UserType))
-        {
-            user.UserType = request.UserType;
-        }
-        else if (request.CanCreateTasks && request.CanAcceptTasks)
-            user.UserType = "both";
-        else if (request.CanCreateTasks)
-            user.UserType = "creator";
-        else if (request.CanAcceptTasks)
-            user.UserType = "runner";
+        if (!string.IsNullOrEmpty(request.UserType)) user.UserType = request.UserType;
+        else if (request.CanCreateTasks && request.CanAcceptTasks) user.UserType = "both";
+        else if (request.CanCreateTasks) user.UserType = "creator";
+        else if (request.CanAcceptTasks) user.UserType = "runner";
 
         await _context.SaveChangesAsync();
-
-        return Ok(new ApiResponse<bool>
-        {
-            Success = true,
-            Data = true,
-            Message = "Preferences updated successfully"
-        });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Preferences updated successfully" });
     }
 
     private int? GetCurrentUserId()

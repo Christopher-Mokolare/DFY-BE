@@ -7,7 +7,7 @@ namespace DoForYou.API.Services;
 
 public interface IEscrowService
 {
-    Task<bool> ReleaseEscrowAsync(int taskId);
+    Task<bool> ReleaseEscrowAsync(int taskId, bool force = false);
     Task<int> AutoReleaseExpiredEscrowsAsync();
     decimal CalculateCommission(decimal amount);
 }
@@ -23,68 +23,70 @@ public class EscrowService : IEscrowService
         _logger = logger;
     }
 
-    public async Task<bool> ReleaseEscrowAsync(int taskId)
+    public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false)
     {
         IDbContextTransaction? transaction = null;
         if (_context.Database.IsRelational())
-        {
             transaction = await _context.Database.BeginTransactionAsync();
-        }
 
         try
         {
-            var task = await _context.Tasks
-                .Include(t => t.AcceptedByUser)
-                .FirstOrDefaultAsync(t => t.Id == taskId);
+            var task = await _context.Tasks.Include(t => t.AcceptedByUser).FirstOrDefaultAsync(t => t.Id == taskId);
+            if (task == null || task.AcceptedByUserId == null) return false;
+            if (task.EscrowStatus != "held" && task.PaymentStatus != "EscrowHeld") return false;
 
-            if (task == null || task.AcceptedByUserId == null)
+            // Poster confirmation is an explicit release instruction and must bypass the
+            // normal 48-hour auto-release hold. Automatic release still honours the hold.
+            if (!force && task.EscrowHoldUntil.HasValue && task.EscrowHoldUntil > DateTime.UtcNow)
                 return false;
 
-            if (task.EscrowStatus != "held" && task.PaymentStatus != "EscrowHeld")
-                return false;
-
-            if (task.EscrowHoldUntil.HasValue && task.EscrowHoldUntil > DateTime.UtcNow)
-                return false;
-
-            task.EscrowStatus = "held";
-
-            // Credit runner wallet
-            task.AcceptedByUser!.WalletBalance += task.PayoutAmount;
-
-            // Record wallet transaction
-            _context.WalletTransactions.Add(new WalletTransaction
+            var existingPayout = await _context.Payouts.FirstOrDefaultAsync(p => p.TaskId == task.Id && p.Status != "Cancelled");
+            if (existingPayout != null)
             {
-                UserId = task.AcceptedByUserId.Value,
-                Amount = task.PayoutAmount,
-                TransactionType = "credit",
-                Status = "completed",
-                Description = $"Payment for task: {task.TaskDescription}",
-                Reference = task.TaskId,
-                CreatedAt = DateTime.UtcNow
-            });
+                if (transaction != null) await transaction.CommitAsync();
+                return true;
+            }
 
-            // Update task
+            var bankAccount = await _context.BankAccounts.FirstOrDefaultAsync(b => b.UserId == task.AcceptedByUserId.Value && b.IsActive && b.IsVerified);
+            if (bankAccount == null)
+            {
+                if (transaction != null) await transaction.RollbackAsync();
+                _logger.LogWarning("Cannot release task {TaskId}: runner {RunnerId} has no active verified bank account.", task.TaskId, task.AcceptedByUserId.Value);
+                return false;
+            }
+
+            var merchantReference = $"DFY-PAYOUT-{task.TaskId}";
+            var payout = new Payout
+            {
+                TaskId = task.Id,
+                RunnerId = task.AcceptedByUserId.Value,
+                BankAccountId = bankAccount.Id,
+                Amount = task.PayoutAmount,
+                Status = "Pending",
+                Provider = "Ozow",
+                MerchantReference = merchantReference,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _context.Payouts.Add(payout);
             task.EscrowStatus = "released";
             task.PaymentStatus = "EscrowReleased";
-            task.TaskStatus = "RunnerPaid";
-            task.PaidToRunnerAt = DateTime.UtcNow;
+            task.TaskStatus = "PayoutPending";
+            task.PayoutStatus = "Pending";
+            task.PayoutReference = merchantReference;
+            task.PayoutInitiatedAt = DateTime.UtcNow;
+            task.PaidToRunnerAt = null;
             task.UpdatedAt = DateTime.UtcNow;
 
             await _context.SaveChangesAsync();
-            if (transaction != null)
-            {
-                await transaction.CommitAsync();
-            }
-
+            if (transaction != null) await transaction.CommitAsync();
             _logger.LogInformation("Escrow released for task {TaskId}: R{Payout}", task.TaskId, task.PayoutAmount);
             return true;
         }
         catch (Exception ex)
         {
-            if (transaction != null)
-            {
-                await transaction.RollbackAsync();
-            }
+            if (transaction != null) await transaction.RollbackAsync();
             _logger.LogError(ex, "Error releasing escrow for task {TaskId}", taskId);
             return false;
         }
@@ -92,22 +94,12 @@ public class EscrowService : IEscrowService
 
     public async Task<int> AutoReleaseExpiredEscrowsAsync()
     {
-        var expiredTasks = await _context.Tasks
-            .Where(t => t.EscrowStatus == "held" &&
-                       t.EscrowHoldUntil.HasValue &&
-                       t.EscrowHoldUntil <= DateTime.UtcNow)
-            .ToListAsync();
-
+        var expiredTasks = await _context.Tasks.Where(t => t.EscrowStatus == "held" && t.EscrowHoldUntil.HasValue && t.EscrowHoldUntil <= DateTime.UtcNow).ToListAsync();
         int count = 0;
         foreach (var task in expiredTasks)
-        {
             if (await ReleaseEscrowAsync(task.Id)) count++;
-        }
         return count;
     }
 
-    public decimal CalculateCommission(decimal amount)
-    {
-        return Math.Max(amount * 0.15m, 5.00m);
-    }
+    public decimal CalculateCommission(decimal amount) => Math.Max(amount * 0.15m, 5.00m);
 }

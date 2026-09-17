@@ -19,7 +19,7 @@
 - **Database**: PostgreSQL with Entity Framework Core
 - **Authentication**: JWT Bearer Tokens
 - **Password Hashing**: BCrypt
-- **Payment Gateway**: PayFast (Sandbox)
+- **Payment Gateway**: Ozow (Sandbox)
 - **API Documentation**: Swagger/OpenAPI
 
 ### Project Structure
@@ -34,11 +34,11 @@ DoForYou-API/
 └── Migrations/          # EF Core migrations
 ```
 
-### PayFast Mode
+### Ozow Mode
 - Default mode is sandbox for local and staging test environments.
-- Set `PAYFAST_MODE=sandbox` to force sandbox checkout URLs.
-- Set `PAYFAST_MODE=live` only for production deployment.
-- The checkout URL uses `https://sandbox.payfast.co.za/eng/process` in sandbox mode and `https://www.payfast.co.za/eng/process` in live mode.
+- Set `OZOW_MODE=sandbox` to force sandbox checkout URLs.
+- Set `OZOW_MODE=live` only for production deployment.
+- The checkout URL uses `https://sandbox.ozow.co.za/eng/process` in sandbox mode and `https://www.ozow.co.za/eng/process` in live mode.
 
 ### Key Design Patterns
 - **Repository Pattern**: Via Entity Framework DbContext
@@ -416,7 +416,7 @@ Create a new task (requires authentication).
       "taskStatus": "PendingPayment",
       "priority": "Standard"
     },
-    "paymentUrl": "https://sandbox.payfast.co.za/eng/process?..."
+    "paymentUrl": "https://sandbox.ozow.co.za/eng/process?..."
   },
   "message": "Task created successfully. Complete payment to activate."
 }
@@ -427,7 +427,7 @@ Create a new task (requires authentication).
 - Budget must be between R50 and R10,000
 - Task ID generation: `DFY-{timestamp}-{random}`
 - Initial status: `PendingPayment`
-- PayFast payment URL generation
+- Ozow payment URL generation
 
 #### GET /api/v1/tasks/available
 Browse available tasks (public endpoint).
@@ -817,9 +817,9 @@ Get all categories (public endpoint).
 ### Payment Endpoints
 
 #### POST /api/v1/payment/notify
-PayFast webhook for payment notifications.
+Ozow webhook for payment notifications.
 
-**Request Body:** (PayFast IPN format)
+**Request Body:** (Ozow IPN format)
 ```
 m_payment_id=DFY-1707123456-7890
 pf_payment_id=12345
@@ -834,21 +834,21 @@ HTTP 200 OK
 ```
 
 **Business Rules Applied:**
-- Verify PayFast signature
+- Verify Ozow signature
 - Update task payment status to "Completed"
 - Change task status from "PendingPayment" to "Posted"
 
 #### GET /api/v1/payment/return
-PayFast return URL after successful payment.
+Ozow return URL after successful payment.
 
 **Query Parameters:**
-- Standard PayFast return parameters
+- Standard Ozow return parameters
 
 **Response:**
 Redirect to frontend success page
 
 #### GET /api/v1/payment/cancel
-PayFast cancel URL when payment is cancelled.
+Ozow cancel URL when payment is cancelled.
 
 **Response:**
 Redirect to frontend cancel page
@@ -1001,10 +1001,10 @@ Pending → Completed
 
 **Pending:**
 - Initial state after task creation
-- Waiting for PayFast payment
+- Waiting for Ozow payment
 
 **Completed:**
-- Payment verified by PayFast
+- Payment verified by Ozow
 - Task can be posted
 
 ### Business Rules by State
@@ -1032,7 +1032,7 @@ Pending → Completed
 
 ## Payment Integration
 
-### PayFast Configuration
+### Ozow Configuration
 
 **Sandbox Credentials:**
 - Merchant ID: `10000100`
@@ -1040,7 +1040,7 @@ Pending → Completed
 - Passphrase: (optional for sandbox)
 
 **URLs:**
-- Process URL: `https://sandbox.payfast.co.za/eng/process`
+- Process URL: `https://sandbox.ozow.co.za/eng/process`
 - Return URL: `http://localhost:4200/tasks/payment-success`
 - Cancel URL: `http://localhost:4200/tasks/payment-cancel`
 - Notify URL: `http://localhost:5001/api/v1/payment/notify`
@@ -1049,16 +1049,16 @@ Pending → Completed
 
 1. **Task Creation**
    - User creates task
-   - System generates PayFast payment URL
+   - System generates Ozow payment URL
    - Task status: "PendingPayment"
 
 2. **Payment Processing**
-   - User redirected to PayFast
+   - User redirected to Ozow
    - User completes payment
-   - PayFast sends IPN to notify URL
+   - Ozow sends IPN to notify URL
 
 3. **Payment Verification**
-   - System receives PayFast IPN
+   - System receives Ozow IPN
    - Verifies payment signature
    - Updates task payment status to "Completed"
    - Changes task status to "Posted"
@@ -1068,7 +1068,7 @@ Pending → Completed
    - Admin or automated system releases payment
    - Funds transferred to runner's wallet
 
-### PayFast Parameters
+### Ozow Parameters
 
 ```csharp
 merchant_id: Merchant ID
@@ -1611,12 +1611,12 @@ Console.WriteLine($"Password valid: {passwordValid}");
 ### Integration Tests (Recommended)
 - API endpoint responses
 - Database operations
-- PayFast integration
+- Ozow integration
 - Authentication flow
 
 ### Manual Testing
 - Swagger UI for API testing
-- PayFast sandbox for payment testing
+- Ozow sandbox for payment testing
 - Frontend integration testing
 
 ---
@@ -1638,7 +1638,7 @@ dotnet ef database update
 - [ ] Configure production database connection
 - [ ] Enable HTTPS
 - [ ] Update CORS origins
-- [ ] Configure PayFast production credentials
+- [ ] Configure Ozow production credentials
 - [ ] Set up logging infrastructure
 - [ ] Configure rate limiting
 - [ ] Set up monitoring and alerts
@@ -1725,11 +1725,11 @@ All endpoints prefixed with `/api/v1/`
 - Check token expiry
 - Ensure JWT secret key matches
 
-#### PayFast Webhook Not Received
+#### Ozow Webhook Not Received
 **Symptom:** Payment status not updating
 **Solution:**
 - Verify notify URL is publicly accessible
-- Check PayFast IPN logs
+- Check Ozow IPN logs
 - Ensure signature validation is correct
 
 #### CORS Errors
@@ -1782,7 +1782,7 @@ Import OpenAPI spec from Swagger for Postman testing.
 ### Version 1.0.0 (Current)
 - Initial release
 - Complete task management system
-- PayFast payment integration
+- Ozow payment integration
 - Business rules engine
 - JWT authentication
 - Admin panel

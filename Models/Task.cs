@@ -28,6 +28,11 @@ public class Task
     public DateTime? CompletedAt { get; set; }
     public DateTime? PaidToRunnerAt { get; set; }
     public bool IsDeleted { get; set; } = false;
+    public string? PaymentReference { get; set; }
+    public string PayoutStatus { get; set; } = "NotStarted";
+    public string? PayoutReference { get; set; }
+    public DateTime? PayoutInitiatedAt { get; set; }
+    public DateTime? PayoutCompletedAt { get; set; }
     public DateTime? DeletedAt { get; set; }
     
     // Escrow fields

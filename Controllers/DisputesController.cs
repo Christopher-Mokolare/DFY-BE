@@ -37,6 +37,14 @@ public class DisputesController : ControllerBase
         if (task.CreatedByUserId != userId && task.AcceptedByUserId != userId)
             return Ok(new ApiResponse<object> { Success = false, Message = "Not authorized to dispute this task" });
 
+        if (task.TaskStatus == "RunnerPaid" || task.EscrowStatus == "released" || task.EscrowStatus == "refunded")
+            return Ok(new ApiResponse<object> { Success = false, Message = "This task is no longer eligible for a dispute" });
+
+        var existingOpenDispute = await _context.Disputes
+            .AnyAsync(d => d.TaskId == task.Id && d.Status == "Open");
+        if (existingOpenDispute)
+            return Ok(new ApiResponse<object> { Success = false, Message = "An open dispute already exists for this task" });
+
         var dispute = new Models.Dispute
         {
             TaskId = task.Id,
@@ -45,6 +53,15 @@ public class DisputesController : ControllerBase
             Category = request.Category,
             Status = "Open"
         };
+
+        // A dispute must stop the normal 48-hour auto-release path. The task remains
+        // completed/held so an admin can later release it into the Ozow payout flow.
+        if (task.EscrowStatus == "held" || task.PaymentStatus == "EscrowHeld")
+        {
+            task.EscrowStatus = "disputed";
+            task.PaymentStatus = "DisputePending";
+            task.UpdatedAt = DateTime.UtcNow;
+        }
 
         _context.Disputes.Add(dispute);
         await _context.SaveChangesAsync();
@@ -62,7 +79,7 @@ public class DisputesController : ControllerBase
         {
             Success = true,
             Data = new { id = dispute.Id, status = dispute.Status },
-            Message = "Dispute raised successfully"
+            Message = "Dispute raised successfully. Escrow is frozen pending admin resolution."
         });
     }
 
@@ -100,13 +117,14 @@ public class DisputesController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
         var query = _context.Disputes
             .Include(d => d.Task)
             .Include(d => d.ReportedByUser)
             .AsQueryable();
 
-        if (!string.IsNullOrEmpty(status))
-            query = query.Where(d => d.Status == status);
+        if (!string.IsNullOrEmpty(status)) query = query.Where(d => d.Status == status);
 
         var total = await query.CountAsync();
         var disputes = await query
@@ -128,11 +146,7 @@ public class DisputesController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(new ApiResponse<object>
-        {
-            Success = true,
-            Data = new { disputes, total, page, pageSize }
-        });
+        return Ok(new ApiResponse<object> { Success = true, Data = new { disputes, total, page, pageSize } });
     }
 
     [HttpPatch("{id}/resolve")]
@@ -144,25 +158,69 @@ public class DisputesController : ControllerBase
             .FirstOrDefaultAsync(d => d.Id == id);
         if (dispute == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute not found" });
+        if (dispute.Status == "Resolved")
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Dispute is already resolved" });
+
+        var task = dispute.Task;
+        if (task == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute task not found" });
+
+        if (request.Action == "release_to_runner")
+        {
+            // Re-open the escrow hold for the release service, then create the normal
+            // idempotent Ozow payout. The payout processor will only mark the runner paid
+            // after Ozow confirms status 5.
+            task.EscrowStatus = "held";
+            task.PaymentStatus = "EscrowHeld";
+            task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
+            task.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            var released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
+            if (!released)
+                return Ok(new ApiResponse<bool> { Success = false, Message = "Unable to release escrow into the Ozow payout flow" });
+        }
+        else if (request.Action == "refund_creator")
+        {
+            // Refund provider integration is not yet implemented. Do not mark a task as
+            // financially refunded when no provider-side refund has been confirmed.
+            return StatusCode(StatusCodes.Status501NotImplemented,
+                new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "Creator refunds require the Ozow refund integration and cannot be marked refunded yet."
+                });
+        }
+        else
+        {
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "Unsupported dispute resolution action" });
+        }
 
         dispute.Status = "Resolved";
         dispute.Resolution = request.Resolution;
         dispute.ResolvedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
-        // Execute financial action
-        if (request.Action == "release_to_runner" && dispute.Task != null)
+        // Notify the participants about the administrative resolution.
+        var message = request.Action == "release_to_runner"
+            ? $"Your dispute for task {task.TaskId} was resolved and the runner payout is being processed through Ozow."
+            : $"Your dispute for task {task.TaskId} was resolved.";
+
+        await _notificationService.CreateNotificationAsync(
+            task.CreatedByUserId,
+            "dispute_resolved",
+            "Dispute Resolved",
+            message,
+            task.Id);
+
+        if (task.AcceptedByUserId.HasValue)
         {
-            dispute.Task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
-            await _context.SaveChangesAsync();
-            await _escrowService.ReleaseEscrowAsync(dispute.Task.Id);
-        }
-        else if (request.Action == "refund_creator" && dispute.Task != null)
-        {
-            dispute.Task.TaskStatus = "Cancelled";
-            dispute.Task.EscrowStatus = "refunded";
-            dispute.Task.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+            await _notificationService.CreateNotificationAsync(
+                task.AcceptedByUserId.Value,
+                "dispute_resolved",
+                "Dispute Resolved",
+                message,
+                task.Id);
         }
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });

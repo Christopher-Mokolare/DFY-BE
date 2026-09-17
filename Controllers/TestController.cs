@@ -1,3 +1,4 @@
+using DoForYou.API.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -20,13 +21,21 @@ public class TestController : ControllerBase
     [HttpGet("ping")]
     public IActionResult Ping()
     {
-        return Ok(new { message = "API is working", timestamp = DateTime.UtcNow });
+        return Ok(new
+        {
+            message = "API is working",
+            timestamp = DateTime.UtcNow
+        });
     }
 
     [HttpPost("test-login")]
     public IActionResult TestLogin([FromBody] object request)
     {
-        return Ok(new { message = "Request received", data = request });
+        return Ok(new
+        {
+            message = "Request received",
+            data = request
+        });
     }
 
     [HttpGet("users")]
@@ -35,14 +44,24 @@ public class TestController : ControllerBase
         try
         {
             var users = await _context.Users
-                .Select(u => new { u.Id, u.Email, u.FirstName, u.LastName, u.Roles })
+                .Select(u => new
+                {
+                    u.Id,
+                    u.Email,
+                    u.FirstName,
+                    u.LastName,
+                    u.Roles
+                })
                 .ToListAsync();
-            
+
             return Ok(users);
         }
         catch (Exception)
         {
-            return BadRequest(new { error = "Failed to retrieve users" });
+            return BadRequest(new
+            {
+                error = "Failed to retrieve users"
+            });
         }
     }
 
@@ -64,37 +83,10 @@ public class TestController : ControllerBase
         }
         catch (Exception)
         {
-            return BadRequest(new { error = "Database connection failed" });
-        }
-    }
-
-    [HttpPost("simulate-payfast/{taskId}")]
-    public async Task<IActionResult> SimulatePayFastWebhook(string taskId)
-    {
-        try
-        {
-            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
-            if (task == null)
-                return NotFound(new { error = "Task not found" });
-
-            // Simulate successful PayFast webhook
-            task.PaymentStatus = "EscrowHeld";
-            task.TaskStatus = "Posted";
-            task.EscrowStatus = "held";
-            task.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-
-            return Ok(new { 
-                message = "PayFast webhook simulated successfully", 
-                taskId = task.TaskId,
-                paymentStatus = task.PaymentStatus,
-                taskStatus = task.TaskStatus
+            return BadRequest(new
+            {
+                error = "Database connection failed"
             });
-        }
-        catch (Exception)
-        {
-            return BadRequest(new { error = "Simulation failed" });
         }
     }
 }

@@ -16,11 +16,16 @@ public class BankingController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IBankingService _bankingService;
+    private readonly IOzowBankService _ozowBankService;
 
-    public BankingController(AppDbContext context, IBankingService bankingService)
+    public BankingController(
+        AppDbContext context,
+        IBankingService bankingService,
+        IOzowBankService ozowBankService)
     {
         _context = context;
         _bankingService = bankingService;
+        _ozowBankService = ozowBankService;
     }
 
     [HttpPost("bank-accounts")]
@@ -30,37 +35,140 @@ public class BankingController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
-        // Validate bank account
-        var isValid = await _bankingService.ValidateBankAccountAsync(request.BankName, request.AccountNumber, request.BranchCode);
-        if (!isValid)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Invalid bank account details" });
+        var bankGroupId = request.BankGroupId.Trim();
+        var bankName = request.BankName.Trim();
+        var accountNumber = request.AccountNumber.Trim();
+        var accountHolderName = request.AccountHolderName.Trim();
+        var branchCode = request.BranchCode.Trim();
+        var accountType = request.AccountType.Trim();
 
-        // Check for duplicate
+        if (string.IsNullOrWhiteSpace(bankGroupId))
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "A valid Ozow bank selection is required."
+            });
+        }
+
+        var user = await _context.Users
+            .FirstOrDefaultAsync(u => u.Id == userId.Value);
+
+        if (user == null)
+            return Unauthorized();
+
+        var availableBanks =
+            await _ozowBankService.GetAvailableBanksAsync(
+                HttpContext.RequestAborted);
+
+        var selectedBank =
+            availableBanks.FirstOrDefault(bank =>
+                string.Equals(
+                    bank.BankGroupId,
+                    bankGroupId,
+                    StringComparison.OrdinalIgnoreCase));
+
+        if (selectedBank == null)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The selected bank is not currently available for Ozow payouts."
+            });
+        }
+
+        // BankGroupId is the authoritative bank selection.
+        // Always use Ozow's canonical bank name and universal branch code
+        // instead of trusting display values supplied by the client.
+        bankName = selectedBank.BankGroupName;
+        branchCode = selectedBank.UniversalBranchCode;
+
+        var isValid = await _bankingService.ValidateBankAccountAsync(
+            bankName,
+            accountNumber,
+            branchCode);
+
+        if (!isValid)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Invalid bank account details."
+            });
+        }
+
         var exists = await _context.BankAccounts
-            .AnyAsync(ba => ba.UserId == userId && ba.AccountNumber == request.AccountNumber && ba.IsActive);
-        
+            .AnyAsync(ba =>
+                ba.UserId == userId &&
+                ba.AccountNumber == accountNumber &&
+                ba.IsActive);
+
         if (exists)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Bank account already exists" });
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Bank account already exists."
+            });
+        }
 
         var bankAccount = new BankAccount
         {
             UserId = userId.Value,
-            BankName = request.BankName,
-            AccountNumber = request.AccountNumber,
-            AccountHolderName = request.AccountHolderName,
-            BranchCode = request.BranchCode,
-            AccountType = request.AccountType,
-            IsVerified = false // Requires verification process
+            BankName = selectedBank.BankGroupName,
+            BankGroupId = selectedBank.BankGroupId,
+            AccountNumber = accountNumber,
+            AccountHolderName = accountHolderName,
+            BranchCode = branchCode,
+            AccountType = accountType,
+            IsVerified = false,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
         };
 
         _context.BankAccounts.Add(bankAccount);
         await _context.SaveChangesAsync();
 
+        var verification =
+            await _bankingService.VerifyBankAccountAsync(
+                user,
+                bankAccount,
+                HttpContext.RequestAborted);
+
+        if (!verification.Success)
+        {
+            bankAccount.IsVerified = false;
+            bankAccount.VerifiedAt = null;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Data = new
+                {
+                    bankAccountId = bankAccount.Id,
+                    isVerified = false
+                },
+                Message = verification.Message
+            });
+        }
+
+        bankAccount.IsVerified = true;
+        bankAccount.VerifiedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { bankAccountId = bankAccount.Id },
-            Message = "Bank account added successfully. Verification required before use."
+            Data = new
+            {
+                bankAccountId = bankAccount.Id,
+                isVerified = true,
+                verifiedAt = bankAccount.VerifiedAt
+            },
+            Message = verification.Message
         });
     }
 
@@ -93,139 +201,165 @@ public class BankingController : ControllerBase
         });
     }
 
+
     [HttpPost("withdraw")]
-    public async Task<ActionResult<ApiResponse<object>>> InitiateWithdrawal([FromBody] WithdrawRequest request)
+    public ActionResult<ApiResponse<object>> Retiredwithdraw()
+    {
+        return StatusCode(410, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawals have been retired. Completed task payouts are sent directly to the verified runner bank account."
+        });
+    }
+
+
+
+    [HttpPost("verify-withdrawal")]
+    public ActionResult<ApiResponse<object>> Retiredverifywithdrawal()
+    {
+        return StatusCode(410, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawal OTP verification has been retired."
+        });
+    }
+
+
+
+    [HttpGet("withdrawals")]
+    public ActionResult<ApiResponse<object>> Retiredwithdrawals()
+    {
+        return StatusCode(410, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawal history has been retired."
+        });
+    }
+
+
+
+    [HttpGet("withdrawal-fee")]
+    public ActionResult<ApiResponse<object>> Retiredwithdrawalfee()
+    {
+        return StatusCode(410, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawal fees are no longer applicable."
+        });
+    }
+
+
+    [HttpPost("bank-accounts/{id:int}/verify")]
+    public async Task<ActionResult<ApiResponse<object>>> VerifyBankAccount(
+        int id,
+        CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
+        if (userId == null)
+            return Unauthorized();
 
-        try
+        var bankAccount = await _context.BankAccounts
+            .FirstOrDefaultAsync(
+                ba => ba.Id == id && ba.UserId == userId.Value,
+                cancellationToken);
+
+        if (bankAccount == null)
         {
-            // Validate minimum withdrawal
-            if (request.Amount < 50)
-                return Ok(new ApiResponse<object> { Success = false, Message = "Minimum withdrawal amount is R50" });
+            return NotFound(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Bank account not found."
+            });
+        }
 
-            // Validate maximum withdrawal
-            if (request.Amount > 10000)
-                return Ok(new ApiResponse<object> { Success = false, Message = "Maximum withdrawal amount is R10,000" });
+        if (!bankAccount.IsActive)
+        {
+            return Ok(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "This bank account is inactive."
+            });
+        }
 
-            var fee = await _bankingService.CalculateWithdrawalFeeAsync(request.Amount);
-            var reference = await _bankingService.InitiateWithdrawalAsync(userId.Value, request.BankAccountId, request.Amount);
+        var user = await _context.Users
+            .FirstOrDefaultAsync(
+                u => u.Id == userId.Value,
+                cancellationToken);
+
+        if (user == null)
+            return Unauthorized();
+
+        var verification =
+            await _bankingService.VerifyBankAccountAsync(
+                user,
+                bankAccount,
+                cancellationToken);
+
+        if (!verification.Success)
+        {
+            bankAccount.IsVerified = false;
+            bankAccount.VerifiedAt = null;
+            await _context.SaveChangesAsync(cancellationToken);
 
             return Ok(new ApiResponse<object>
             {
-                Success = true,
-                Data = new 
-                { 
-                    reference,
-                    amount = request.Amount,
-                    fee,
-                    total = request.Amount + fee,
-                    message = "OTP sent to your registered contact. Please verify to complete withdrawal."
-                }
+                Success = false,
+                Data = new
+                {
+                    bankAccountId = bankAccount.Id,
+                    isVerified = false
+                },
+                Message = verification.Message
             });
         }
-        catch (Exception ex)
-        {
-            return Ok(new ApiResponse<object> { Success = false, Message = ex.Message });
-        }
-    }
 
-    [HttpPost("verify-withdrawal")]
-    public async Task<ActionResult<ApiResponse<bool>>> VerifyWithdrawal([FromBody] VerifyWithdrawalRequest request)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
+        bankAccount.IsVerified = true;
+        bankAccount.VerifiedAt = DateTime.UtcNow;
 
-        var withdrawal = await _context.WithdrawalRequests
-            .FirstOrDefaultAsync(w => w.Reference == request.Reference && w.UserId == userId);
+        await _context.SaveChangesAsync(cancellationToken);
 
-        if (withdrawal == null)
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid withdrawal reference" });
-
-        var verified = await _bankingService.VerifyOtpAsync(withdrawal.Id, request.OtpCode);
-        if (!verified)
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid or expired OTP" });
-
-        // Process in the request scope; never use a scoped DbContext from Task.Run.
-        await _bankingService.ProcessWithdrawalAsync(withdrawal.Id);
-
-        return Ok(new ApiResponse<bool>
+        return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = true,
-            Message = "Withdrawal verified and is being processed. You will be notified once completed."
-        });
-    }
-
-    [HttpGet("withdrawals")]
-    public async Task<ActionResult<ApiResponse<List<object>>>> GetWithdrawals([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, 100);
-        var withdrawals = await _context.WithdrawalRequests
-            .Include(w => w.BankAccount)
-            .Where(w => w.UserId == userId)
-            .OrderByDescending(w => w.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(w => new
+            Data = new
             {
-                id = w.Id,
-                reference = w.Reference,
-                amount = w.Amount,
-                fee = w.Fee,
-                status = w.Status,
-                bankName = w.BankAccount.BankName,
-                accountNumber = MaskAccountNumber(w.BankAccount.AccountNumber),
-                createdAt = w.CreatedAt,
-                completedAt = w.CompletedAt,
-                failureReason = w.FailureReason
-            })
-            .Cast<object>()
-            .ToListAsync();
-
-        return Ok(new ApiResponse<List<object>>
-        {
-            Success = true,
-            Data = withdrawals
-        });
-    }
-
-    [HttpGet("withdrawal-fee")]
-    public async Task<ActionResult<ApiResponse<decimal>>> GetWithdrawalFee([FromQuery] decimal amount)
-    {
-        var fee = await _bankingService.CalculateWithdrawalFeeAsync(amount);
-        return Ok(new ApiResponse<decimal>
-        {
-            Success = true,
-            Data = fee
+                bankAccountId = bankAccount.Id,
+                isVerified = true,
+                verifiedAt = bankAccount.VerifiedAt
+            },
+            Message = verification.Message
         });
     }
 
     [HttpGet("banks")]
-    public ActionResult<ApiResponse<List<object>>> GetSupportedBanks()
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetSupportedBanks(
+        CancellationToken cancellationToken)
     {
-        var banks = new List<object>
+        var banks =
+            await _ozowBankService.GetAvailableBanksAsync(
+                cancellationToken);
+
+        if (banks.Count == 0)
         {
-            new { code = "ABSA", name = "ABSA", branchCode = "632005" },
-            new { code = "STD", name = "Standard Bank", branchCode = "051001" },
-            new { code = "FNB", name = "FNB", branchCode = "250655" },
-            new { code = "NED", name = "Nedbank", branchCode = "198765" },
-            new { code = "CAP", name = "Capitec", branchCode = "470010" },
-            new { code = "INV", name = "Investec", branchCode = "580105" },
-            new { code = "AFB", name = "African Bank", branchCode = "430000" },
-            new { code = "TYM", name = "TymeBank", branchCode = "678910" },
-            new { code = "DSC", name = "Discovery Bank", branchCode = "679000" }
-        };
+            return StatusCode(503, new ApiResponse<List<object>>
+            {
+                Success = false,
+                Message = "Bank list is temporarily unavailable."
+            });
+        }
+
+        var data =
+            banks.Select(bank => new
+            {
+                bankGroupId = bank.BankGroupId,
+                name = bank.BankGroupName,
+                branchCode = bank.UniversalBranchCode
+            }).ToList<object>();
 
         return Ok(new ApiResponse<List<object>>
         {
             Success = true,
-            Data = banks
+            Data = data
         });
     }
 
@@ -244,21 +378,10 @@ public class BankingController : ControllerBase
 
 public class AddBankAccountRequest
 {
+    public string BankGroupId { get; set; } = string.Empty;
     public string BankName { get; set; } = string.Empty;
     public string AccountNumber { get; set; } = string.Empty;
     public string AccountHolderName { get; set; } = string.Empty;
     public string BranchCode { get; set; } = string.Empty;
     public string AccountType { get; set; } = "Savings";
-}
-
-public class WithdrawRequest
-{
-    public int BankAccountId { get; set; }
-    public decimal Amount { get; set; }
-}
-
-public class VerifyWithdrawalRequest
-{
-    public string Reference { get; set; } = string.Empty;
-    public string OtpCode { get; set; } = string.Empty;
 }

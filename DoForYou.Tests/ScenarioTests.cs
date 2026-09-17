@@ -138,12 +138,24 @@ public class ScenarioTests
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task EscrowRelease_CreditsRunnerWalletAndMarksTaskPaid()
+    public async System.Threading.Tasks.Task EscrowRelease_CreatesPendingOzowPayout()
     {
-        using var context = CreateContext(nameof(EscrowRelease_CreditsRunnerWalletAndMarksTaskPaid));
+        using var context = CreateContext(nameof(EscrowRelease_CreatesPendingOzowPayout));
         var poster = CreateUser(1, "creator", true, "poster@test.com");
         var runner = CreateUser(2, "runner", true, "runner@test.com");
         context.Users.AddRange(poster, runner);
+
+        var bankAccount = new BankAccount
+        {
+            UserId = runner.Id,
+            BankName = "Test Bank",
+            AccountNumber = "1234567890",
+            BranchCode = "123456",
+            IsActive = true,
+            IsVerified = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        context.BankAccounts.Add(bankAccount);
 
         var task = new TaskEntity
         {
@@ -172,34 +184,28 @@ public class ScenarioTests
 
         Assert.True(released);
 
-        var refreshedRunner = await context.Users.SingleAsync(u => u.Id == runner.Id);
-        var transaction = await context.WalletTransactions.SingleAsync(w => w.UserId == runner.Id);
+        var payout = await context.Payouts.SingleAsync(p => p.TaskId == task.Id);
+        var refreshedTask = await context.Tasks.SingleAsync(t => t.Id == task.Id);
 
-        Assert.Equal(680m, refreshedRunner.WalletBalance);
-        Assert.Equal("credit", transaction.TransactionType);
-        Assert.Equal("completed", transaction.Status);
-        Assert.Equal(task.TaskId, transaction.Reference);
+        Assert.Equal(runner.Id, payout.RunnerId);
+        Assert.Equal(bankAccount.Id, payout.BankAccountId);
+        Assert.Equal(680m, payout.Amount);
+        Assert.Equal("Pending", payout.Status);
+        Assert.Equal("Ozow", payout.Provider);
+        Assert.Equal("DFY-PAYOUT-DFY-3", payout.MerchantReference);
+
+        Assert.Equal("released", refreshedTask.EscrowStatus);
+        Assert.Equal("EscrowReleased", refreshedTask.PaymentStatus);
+        Assert.Equal("PayoutPending", refreshedTask.TaskStatus);
+        Assert.Equal("Pending", refreshedTask.PayoutStatus);
+        Assert.Equal("DFY-PAYOUT-DFY-3", refreshedTask.PayoutReference);
+
+        Assert.Empty(await context.WalletTransactions
+            .Where(w => w.UserId == runner.Id)
+            .ToListAsync());
     }
 
-    [Fact]
-    public async System.Threading.Tasks.Task BankAccountValidation_AndWithdrawalFee_AreWithinExpectedLimits()
-    {
-        using var context = CreateContext(nameof(BankAccountValidation_AndWithdrawalFee_AreWithinExpectedLimits));
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Security:OtpSalt"] = "salt-value" })
-            .Build();
-        var bankingService = new BankingService(context, new NoOpNotificationService(), config);
-
-        var valid = await bankingService.ValidateBankAccountAsync("FNB", "123456789", "250655");
-        var minFee = await bankingService.CalculateWithdrawalFeeAsync(100m);
-        var highFee = await bankingService.CalculateWithdrawalFeeAsync(1000m);
-
-        Assert.True(valid);
-        Assert.Equal(5.00m, minFee);
-        Assert.Equal(15.00m, highFee);
-    }
-
-    private static AppDbContext CreateContext(string name)
+private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
@@ -208,21 +214,64 @@ public class ScenarioTests
         return new AppDbContext(options);
     }
 
+    private sealed class FakeOzowPaymentService : IOzowPaymentService
+    {
+        public Task<OzowPaymentResult> CreatePaymentAsync(
+            TaskEntity task,
+            User customer,
+            CancellationToken cancellationToken = default)
+        {
+            var reference = string.IsNullOrWhiteSpace(task.PaymentReference)
+                ? $"DFY-PAY-{task.TaskId}"
+                : task.PaymentReference;
+
+            return System.Threading.Tasks.Task.FromResult(
+                new OzowPaymentResult(
+                    true,
+                    $"https://example.test/ozow/{reference}",
+                    reference,
+                    null));
+        }
+
+        public Task<OzowTransactionResult> GetTransactionByReferenceAsync(
+            string transactionReference,
+            CancellationToken cancellationToken = default)
+        {
+            return System.Threading.Tasks.Task.FromResult(
+                new OzowTransactionResult(
+                    true,
+                    "TEST-OZOW-TRANSACTION",
+                    "Complete",
+                    null,
+                    transactionReference,
+                    null));
+        }
+
+        public bool VerifyNotificationHash(
+            IReadOnlyDictionary<string, string?> fields)
+        {
+            return true;
+        }
+    }
+
     private static TasksController CreateTasksController(AppDbContext context, int userId)
     {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Jwt:Key"] = "test-key-for-scenario-tests-32chars!!",
+                ["BackendUrl"] = "https://example.test",
+                ["FrontendUrl"] = "https://example.test",
+            })
+            .Build();
+
         var controller = new TasksController(
             context,
             new RulesEngine(context),
             new EscrowService(context, NullLogger<EscrowService>.Instance),
             new NoOpNotificationService(),
-            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Jwt:Key"] = "test-key-for-scenario-tests-32chars!!",
-                ["PayFast:MerchantId"] = "10000100",
-                ["PayFast:MerchantKey"] = "test-merchant-key",
-                ["BackendUrl"] = "https://example.test",
-                ["FrontendUrl"] = "https://example.test",
-            }).Build());
+            configuration,
+            new FakeOzowPaymentService());
 
         controller.ControllerContext = new ControllerContext
         {
@@ -263,5 +312,6 @@ public class ScenarioTests
         public TaskResult NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName) => TaskResult.CompletedTask;
         public TaskResult NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount) => TaskResult.CompletedTask;
         public TaskResult NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null) => TaskResult.CompletedTask;
+        public TaskResult NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null) => TaskResult.CompletedTask;
     }
 }
