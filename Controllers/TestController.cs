@@ -21,13 +21,21 @@ public class TestController : ControllerBase
     [HttpGet("ping")]
     public IActionResult Ping()
     {
-        return Ok(new { message = "API is working", timestamp = DateTime.UtcNow });
+        return Ok(new
+        {
+            message = "API is working",
+            timestamp = DateTime.UtcNow
+        });
     }
 
     [HttpPost("test-login")]
     public IActionResult TestLogin([FromBody] object request)
     {
-        return Ok(new { message = "Request received", data = request });
+        return Ok(new
+        {
+            message = "Request received",
+            data = request
+        });
     }
 
     [HttpGet("users")]
@@ -36,14 +44,24 @@ public class TestController : ControllerBase
         try
         {
             var users = await _context.Users
-                .Select(u => new { u.Id, u.Email, u.FirstName, u.LastName, u.Roles })
+                .Select(u => new
+                {
+                    u.Id,
+                    u.Email,
+                    u.FirstName,
+                    u.LastName,
+                    u.Roles
+                })
                 .ToListAsync();
-            
+
             return Ok(users);
         }
         catch (Exception)
         {
-            return BadRequest(new { error = "Failed to retrieve users" });
+            return BadRequest(new
+            {
+                error = "Failed to retrieve users"
+            });
         }
     }
 
@@ -65,19 +83,10 @@ public class TestController : ControllerBase
         }
         catch (Exception)
         {
-            return BadRequest(new { error = "Database connection failed" });
+            return BadRequest(new
+            {
+                error = "Database connection failed"
+            });
         }
     }
-
-    [HttpPost("simulate-payfast/{taskId}")]
-
-    public IActionResult FinancialMutationDisabled()
-    {
-        return StatusCode(410, new ApiResponse<object>
-        {
-            Success = false,
-            Message = "Financial test mutation endpoints are disabled."
-        });
-    }
-
 }

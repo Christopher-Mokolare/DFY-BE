@@ -3,9 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
-using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
+using DoForYou.API.Services;
 
 namespace DoForYou.API.Controllers;
 
@@ -14,171 +12,282 @@ namespace DoForYou.API.Controllers;
 public class PaymentController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly IOzowPaymentService _ozowPaymentService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<PaymentController> _logger;
 
-    public PaymentController(AppDbContext context, IConfiguration configuration, ILogger<PaymentController> logger)
+    public PaymentController(
+        AppDbContext context,
+        IOzowPaymentService ozowPaymentService,
+        IConfiguration configuration,
+        ILogger<PaymentController> logger)
     {
         _context = context;
+        _ozowPaymentService = ozowPaymentService;
         _configuration = configuration;
         _logger = logger;
     }
 
     [HttpPost("initiate")]
     [Authorize]
-    public async Task<ActionResult<ApiResponse<object>>> InitiatePayment([FromBody] object request)
+    public IActionResult InitiatePayment()
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
         return StatusCode(StatusCodes.Status410Gone,
-            new ApiResponse<object> { Success = false, Message = "Use the task payment workflow." });
+            new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Use the task payment workflow."
+            });
     }
-
 
     [HttpGet("wallet")]
     public ActionResult<ApiResponse<object>> GetWallet()
     {
-        return StatusCode(410, new ApiResponse<object>
-        {
-            Success = false,
-            Message = "Runner wallets have been retired. Runner earnings are paid directly to the verified bank account."
-        });
+        return StatusCode(StatusCodes.Status410Gone,
+            new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Runner wallets have been retired. Runner earnings are paid directly to the verified bank account."
+            });
     }
-
 
     [HttpPost("withdraw")]
     public ActionResult<ApiResponse<object>> WithdrawFunds()
     {
-        return StatusCode(410, new ApiResponse<object>
-        {
-            Success = false,
-            Message = "Runner wallet withdrawals have been retired. Completed task payouts are sent directly to the verified runner bank account."
-        });
+        return StatusCode(StatusCodes.Status410Gone,
+            new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Runner wallet withdrawals have been retired. Completed task payouts are sent directly to the verified runner bank account."
+            });
     }
 
-
     [HttpPost("notify")]
+    [AllowAnonymous]
     [IgnoreAntiforgeryToken]
-    [Consumes("application/x-www-form-urlencoded")]
-    public async Task<IActionResult> PayFastNotify()
+    [Consumes("application/x-www-form-urlencoded", "application/json")]
+    public async Task<IActionResult> OzowNotify()
     {
         try
         {
-            var form = await Request.ReadFormAsync();
-            var paymentId = form["m_payment_id"].ToString();
-            var paymentStatus = form["payment_status"].ToString();
+            var fields = new Dictionary<string, string?>(
+                StringComparer.OrdinalIgnoreCase);
 
-            if (string.IsNullOrEmpty(paymentId) || string.IsNullOrWhiteSpace(form["pf_payment_id"]))
-                return BadRequest();
+            if (Request.HasFormContentType)
+            {
+                var form = await Request.ReadFormAsync();
 
-            // Verify PayFast signature
-            if (!VerifyPayFastSignature(form))
+                foreach (var item in form)
+                    fields[item.Key] = item.Value.ToString();
+            }
+            else
+            {
+                var body = await Request.ReadFromJsonAsync<Dictionary<string, object?>>();
+
+                if (body != null)
+                {
+                    foreach (var item in body)
+                    {
+                        fields[item.Key] =
+                            item.Value?.ToString();
+                    }
+                }
+            }
+
+            var siteCode = GetField(fields, "SiteCode");
+            var transactionReference = GetField(fields, "TransactionReference");
+            var status = GetField(fields, "Status");
+            var amountText = GetField(fields, "Amount");
+
+            var configuredSiteCode = _configuration["Ozow:SiteCode"];
+
+            if (string.IsNullOrWhiteSpace(siteCode) ||
+                string.IsNullOrWhiteSpace(transactionReference) ||
+                string.IsNullOrWhiteSpace(status) ||
+                string.IsNullOrWhiteSpace(amountText))
             {
                 return BadRequest();
             }
 
-            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == paymentId);
+            if (!string.Equals(
+                    siteCode,
+                    configuredSiteCode,
+                    StringComparison.Ordinal))
+            {
+                _logger.LogWarning(
+                    "Rejected Ozow notification because SiteCode did not match.");
+                return BadRequest();
+            }
+
+            if (!_ozowPaymentService.VerifyNotificationHash(fields))
+            {
+                _logger.LogWarning(
+                    "Rejected Ozow notification because hash validation failed for {Reference}.",
+                    transactionReference);
+
+                return BadRequest();
+            }
+
+            if (!decimal.TryParse(
+                    amountText,
+                    System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var notificationAmount))
+            {
+                return BadRequest();
+            }
+
+            var task = await _context.Tasks
+                .FirstOrDefaultAsync(
+                    t => t.PaymentReference == transactionReference);
+
             if (task == null)
             {
+                _logger.LogWarning(
+                    "Ozow notification received for unknown payment reference {Reference}.",
+                    transactionReference);
+
                 return NotFound();
             }
 
-            if (!decimal.TryParse(form["amount_gross"], System.Globalization.NumberStyles.Number,
-                    System.Globalization.CultureInfo.InvariantCulture, out var amount) ||
-                amount != task.Budget ||
-                string.IsNullOrWhiteSpace(_configuration["PayFast:MerchantId"]) ||
-                !string.Equals(form["merchant_id"], _configuration["PayFast:MerchantId"], StringComparison.Ordinal) ||
-                !string.Equals(paymentStatus, "COMPLETE", StringComparison.OrdinalIgnoreCase))
-                return BadRequest();
-
-            // ITNs are retried; only the pending state may transition to held.
-            if (task.PaymentStatus == "Pending" && task.TaskStatus == "PendingPayment")
+            if (notificationAmount != task.Budget)
             {
-                task.PaymentStatus = "EscrowHeld";
-                task.TaskStatus = "Posted";
-                task.EscrowStatus = "held";
-                task.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+                _logger.LogWarning(
+                    "Ozow amount mismatch for {Reference}. Expected {Expected}, received {Received}.",
+                    transactionReference,
+                    task.Budget,
+                    notificationAmount);
+
+                return BadRequest();
             }
+
+            if (string.Equals(
+                    status,
+                    "Complete",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                // Never trust the webhook alone.
+                // Verify the transaction directly with Ozow as well.
+                var verified =
+                    await _ozowPaymentService.GetTransactionByReferenceAsync(
+                        transactionReference,
+                        HttpContext.RequestAborted);
+
+                if (!verified.Found ||
+                    !string.Equals(
+                        verified.Status,
+                        "Complete",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "Ozow notification for {Reference} could not be independently verified.",
+                        transactionReference);
+
+                    return BadRequest();
+                }
+
+                if (verified.Amount.HasValue &&
+                    verified.Amount.Value != task.Budget)
+                {
+                    _logger.LogWarning(
+                        "Ozow verified amount mismatch for {Reference}. Expected {Expected}, received {Received}.",
+                        transactionReference,
+                        task.Budget,
+                        verified.Amount.Value);
+
+                    return BadRequest();
+                }
+
+                // Idempotent transition.
+                if (task.PaymentStatus != "EscrowHeld" ||
+                    task.TaskStatus == "PendingPayment")
+                {
+                    task.PaymentStatus = "EscrowHeld";
+                    task.TaskStatus = "Posted";
+                    task.EscrowStatus = "held";
+                    task.UpdatedAt = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync();
+                }
+
+                return Ok();
+            }
+
+            if (string.Equals(
+                    status,
+                    "Cancelled",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    status,
+                    "Error",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                // Do not activate the task.
+                // It remains PendingPayment and can be retried.
+                _logger.LogInformation(
+                    "Ozow payment {Reference} ended with status {Status}.",
+                    transactionReference,
+                    status);
+
+                return Ok();
+            }
+
+            // Unknown/non-final statuses are acknowledged but do not activate the task.
+            _logger.LogInformation(
+                "Ozow payment {Reference} notification status: {Status}.",
+                transactionReference,
+                status);
 
             return Ok();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "PayFast ITN processing failed");
-            return StatusCode(500);
+            _logger.LogError(
+                ex,
+                "Ozow payment notification processing failed.");
+
+            return StatusCode(StatusCodes.Status500InternalServerError);
         }
     }
 
     [HttpGet("return")]
-    public IActionResult PayFastReturn([FromQuery] string? taskId = null)
+    [AllowAnonymous]
+    public IActionResult PaymentReturn([FromQuery] string? taskId = null)
     {
-        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
+        var frontendUrl =
+            Environment.GetEnvironmentVariable("FRONTEND_URL")
             ?? _configuration["FrontendUrl"]
             ?? "https://do-for-you.vercel.app";
+
         var redirect = string.IsNullOrEmpty(taskId)
             ? $"{frontendUrl}/payment/success"
-            : $"{frontendUrl}/payment/success?taskId={taskId}";
+            : $"{frontendUrl}/payment/success?taskId={Uri.EscapeDataString(taskId)}";
+
         return Redirect(redirect);
     }
 
     [HttpGet("cancel")]
-    public IActionResult PayFastCancel([FromQuery] string? taskId = null)
+    [AllowAnonymous]
+    public IActionResult PaymentCancel([FromQuery] string? taskId = null)
     {
-        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
+        var frontendUrl =
+            Environment.GetEnvironmentVariable("FRONTEND_URL")
             ?? _configuration["FrontendUrl"]
             ?? "https://do-for-you.vercel.app";
+
         var redirect = string.IsNullOrEmpty(taskId)
             ? $"{frontendUrl}/payment/cancelled"
-            : $"{frontendUrl}/payment/cancelled?taskId={taskId}";
+            : $"{frontendUrl}/payment/cancelled?taskId={Uri.EscapeDataString(taskId)}";
+
         return Redirect(redirect);
     }
 
-    private bool VerifyPayFastSignature(IFormCollection form)
+    private static string GetField(
+        IReadOnlyDictionary<string, string?> fields,
+        string name)
     {
-        try
-        {
-            if (!form.TryGetValue("signature", out var signature) || string.IsNullOrWhiteSpace(signature))
-                return false;
-
-            var passphrase = Environment.GetEnvironmentVariable("PAYFAST_PASSPHRASE")
-                ?? _configuration["PayFast:Passphrase"];
-            if (string.IsNullOrWhiteSpace(passphrase))
-                return false;
-
-            static string PfEncode(string value)
-            {
-                var encoded = Uri.EscapeDataString(value.Trim());
-                return System.Text.RegularExpressions.Regex.Replace(encoded, "%[0-9a-f]{2}",
-                    m => m.Value.ToUpperInvariant()).Replace("%20", "+");
-            }
-
-            var fields = form
-                .Where(f => f.Key != "signature")
-                .OrderBy(f => f.Key)
-                .Select(f => $"{f.Key}={PfEncode(f.Value.ToString())}");
-
-            var paramString = string.Join("&", fields);
-            paramString += $"&passphrase={PfEncode(passphrase)}";
-
-            using var md5 = System.Security.Cryptography.MD5.Create();
-            var hash = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(paramString))
-                .Select(b => b.ToString("x2")));
-
-            return CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(hash),
-                Encoding.UTF8.GetBytes(signature.ToString().ToLowerInvariant()));
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private int? GetCurrentUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        return int.TryParse(userIdClaim, out var userId) ? userId : null;
+        return fields.TryGetValue(name, out var value)
+            ? value?.Trim() ?? string.Empty
+            : string.Empty;
     }
 }

@@ -19,14 +19,22 @@ public class TasksController : ControllerBase
     private readonly IEscrowService _escrowService;
     private readonly INotificationService _notificationService;
     private readonly IConfiguration _configuration;
+    private readonly IOzowPaymentService _ozowPaymentService;
 
-    public TasksController(AppDbContext context, IRulesEngine rulesEngine, IEscrowService escrowService, INotificationService notificationService, IConfiguration configuration)
+    public TasksController(
+        AppDbContext context,
+        IRulesEngine rulesEngine,
+        IEscrowService escrowService,
+        INotificationService notificationService,
+        IConfiguration configuration,
+        IOzowPaymentService ozowPaymentService)
     {
         _context = context;
         _rulesEngine = rulesEngine;
         _escrowService = escrowService;
         _notificationService = notificationService;
         _configuration = configuration;
+        _ozowPaymentService = ozowPaymentService;
     }
 
     [HttpPost]
@@ -37,7 +45,7 @@ public class TasksController : ControllerBase
 
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return Unauthorized();
-        
+
         if (!user.ProfileCompleted)
             return Ok(new ApiResponse<object>
             {
@@ -79,11 +87,11 @@ public class TasksController : ControllerBase
             });
 
         var taskId = GenerateTaskId();
-        
+
         // Calculate commission
         var commission = _escrowService.CalculateCommission(request.Budget);
         var payout = request.Budget - commission;
-        
+
         var task = new Models.Task
         {
             TaskId = taskId,
@@ -124,6 +132,24 @@ public class TasksController : ControllerBase
             task.Id
         );
 
+        var payment = await _ozowPaymentService.CreatePaymentAsync(
+            task,
+            user,
+            HttpContext.RequestAborted);
+
+        if (!payment.Success || string.IsNullOrWhiteSpace(payment.PaymentUrl))
+        {
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = payment.Error ?? "Unable to create Ozow payment request."
+                });
+        }
+
+        task.PaymentReference = payment.TransactionReference;
+        await _context.SaveChangesAsync();
+
         var taskDto = new TaskDto
         {
             Id = task.Id,
@@ -143,12 +169,14 @@ public class TasksController : ControllerBase
             CreatedAt = task.CreatedAt
         };
 
-        var paymentUrl = GeneratePayFastUrl(task, user);
-
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { task = taskDto, paymentUrl },
+            Data = new
+            {
+                task = taskDto,
+                paymentUrl = payment.PaymentUrl
+            },
             Message = "Task created successfully. Complete payment to activate."
         });
     }
@@ -349,7 +377,7 @@ public class TasksController : ControllerBase
     {
         var categories = await _context.Categories.Select(c => c.Name).ToListAsync();
         var statuses = new[] { "Posted", "Claimed", "Completed" };
-        
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
@@ -370,12 +398,28 @@ public class TasksController : ControllerBase
         if (task == null || task.TaskStatus != "PendingPayment")
             return Ok(new ApiResponse<object> { Success = false, Message = "Task not found or payment not pending" });
 
-        var paymentUrl = GeneratePayFastUrl(task, task.CreatedByUser);
+        var payment = await _ozowPaymentService.CreatePaymentAsync(
+            task,
+            task.CreatedByUser,
+            HttpContext.RequestAborted);
+
+        if (!payment.Success || string.IsNullOrWhiteSpace(payment.PaymentUrl))
+        {
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = payment.Error ?? "Unable to create Ozow payment request."
+                });
+        }
+
+        task.PaymentReference = payment.TransactionReference;
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { paymentUrl },
+            Data = new { paymentUrl = payment.PaymentUrl },
             Message = "Payment URL generated successfully"
         });
     }
@@ -489,9 +533,9 @@ public class TasksController : ControllerBase
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Payment already released" });
 
         // Clear the hold so EscrowService releases immediately
-var released = await _escrowService.ReleaseEscrowAsync(
-        task.Id,
-        force: true);
+        var released = await _escrowService.ReleaseEscrowAsync(
+                task.Id,
+                force: true);
         if (!released)
             return Ok(new ApiResponse<bool> { Success = false, Message = "Failed to release payment" });
 
@@ -659,44 +703,15 @@ var released = await _escrowService.ReleaseEscrowAsync(
 
     [HttpPost("payment-success")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<bool>>> HandlePaymentSuccess()
+    public IActionResult HandlePaymentSuccess()
     {
-        var userId = GetCurrentUserId();
-        
-        // If no user ID from token, try to find the most recent pending payment task
-        if (userId == null)
-        {
-            // For anonymous access, we can't identify the specific user
-            // This should be handled by the PayFast notify webhook instead
-            return Ok(new ApiResponse<bool>
+        return StatusCode(StatusCodes.Status410Gone,
+            new ApiResponse<bool>
             {
-                Success = true,
-                Data = true,
-                Message = "Payment confirmation received"
+                Success = false,
+                Data = false,
+                Message = "Payment status is updated only by the Ozow payment notification."
             });
-        }
-
-        // Find the most recent pending payment task for this user
-        var task = await _context.Tasks
-            .Where(t => t.CreatedByUserId == userId && t.PaymentStatus == "Pending")
-            .OrderByDescending(t => t.CreatedAt)
-            .FirstOrDefaultAsync();
-
-        if (task != null)
-        {
-            task.PaymentStatus = "EscrowHeld";
-            task.TaskStatus = "Posted";
-            task.EscrowStatus = "held";
-            task.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-        }
-
-        return Ok(new ApiResponse<bool>
-        {
-            Success = true,
-            Data = true,
-            Message = "Payment success processed"
-        });
     }
 
     [HttpGet("dashboard/stats")]
@@ -708,51 +723,51 @@ var released = await _escrowService.ReleaseEscrowAsync(
         var user = await _context.Users.FindAsync(userId);
         var currentMonth = DateTime.UtcNow.Month;
         var currentYear = DateTime.UtcNow.Year;
-        
+
         // Task Creator Stats
         var postedTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId);
         var pendingPayment = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "PendingPayment");
         var creatorActiveTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "Claimed");
         var awaitingConfirmation = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "Completed");
         var creatorCompletedTasks = await _context.Tasks.CountAsync(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid");
-        
+
         var totalSpent = await _context.Tasks
             .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid")
             .SumAsync(t => t.Budget);
-            
+
         var thisMonthSpending = await _context.Tasks
-            .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid" && 
+            .Where(t => t.CreatedByUserId == userId && t.TaskStatus == "RunnerPaid" &&
                        t.UpdatedAt.Month == currentMonth && t.UpdatedAt.Year == currentYear)
             .SumAsync(t => t.Budget);
-            
+
         var averageTaskCost = creatorCompletedTasks > 0 ? totalSpent / creatorCompletedTasks : 0;
-        
+
         // Task Runner Stats
         var availableTasks = await _context.Tasks.CountAsync(t => t.TaskStatus == "Posted" && t.PaymentStatus == "Completed");
         var runnerActiveTasks = await _context.Tasks.CountAsync(t => t.AcceptedByUserId == userId && t.TaskStatus == "Claimed");
-        var runnerCompletedTasks = await _context.Tasks.CountAsync(t => 
-            t.AcceptedByUserId == userId && 
+        var runnerCompletedTasks = await _context.Tasks.CountAsync(t =>
+            t.AcceptedByUserId == userId &&
             (t.TaskStatus == "Completed" || t.TaskStatus == "RunnerPaid"));
-            
+
         var totalEarnings = await _context.WalletTransactions
-            .Where(wt => wt.UserId == userId && 
-                        wt.TransactionType == "credit" && 
+            .Where(wt => wt.UserId == userId &&
+                        wt.TransactionType == "credit" &&
                         wt.Status == "completed")
             .SumAsync(wt => wt.Amount);
-            
+
         var pendingPayouts = await _context.Tasks
-            .Where(t => t.AcceptedByUserId == userId && 
-                       t.TaskStatus == "Completed" && 
+            .Where(t => t.AcceptedByUserId == userId &&
+                       t.TaskStatus == "Completed" &&
                        t.EscrowStatus == "held")
             .SumAsync(t => t.PayoutAmount);
-            
+
         var thisMonthEarnings = await _context.WalletTransactions
-            .Where(wt => wt.UserId == userId && 
-                        wt.TransactionType == "credit" && 
+            .Where(wt => wt.UserId == userId &&
+                        wt.TransactionType == "credit" &&
                         wt.Status == "completed" &&
                         wt.CreatedAt.Month == currentMonth && wt.CreatedAt.Year == currentYear)
             .SumAsync(wt => wt.Amount);
-            
+
         var totalAcceptedTasks = await _context.Tasks.CountAsync(t => t.AcceptedByUserId == userId);
         var completionRate = totalAcceptedTasks > 0 ? (runnerCompletedTasks * 100) / totalAcceptedTasks : 0;
         var averageEarning = runnerCompletedTasks > 0 ? totalEarnings / runnerCompletedTasks : 0;
@@ -771,7 +786,7 @@ var released = await _escrowService.ReleaseEscrowAsync(
                 totalSpent,
                 thisMonthSpending,
                 averageTaskCost,
-                
+
                 // Task Runner Stats
                 availableTasks,
                 myActiveTasks = runnerActiveTasks,
@@ -782,7 +797,7 @@ var released = await _escrowService.ReleaseEscrowAsync(
                 thisMonthEarnings,
                 completionRate,
                 averageEarning,
-                
+
                 // Shared
                 myRating = user?.Rating ?? 0
             }
@@ -932,12 +947,32 @@ var released = await _escrowService.ReleaseEscrowAsync(
         if (task == null)
             return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
-        var paymentUrl = GeneratePayFastUrl(task, task.CreatedByUser);
+        var payment = await _ozowPaymentService.CreatePaymentAsync(
+            task,
+            task.CreatedByUser,
+            HttpContext.RequestAborted);
+
+        if (!payment.Success || string.IsNullOrWhiteSpace(payment.PaymentUrl))
+        {
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = payment.Error ?? "Unable to create Ozow payment request."
+                });
+        }
+
+        task.PaymentReference = payment.TransactionReference;
+        await _context.SaveChangesAsync();
 
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { paymentUrl, paymentId = task.TaskId }
+            Data = new
+            {
+                paymentUrl = payment.PaymentUrl,
+                paymentId = task.TaskId
+            }
         });
     }
 
@@ -954,64 +989,5 @@ var released = await _escrowService.ReleaseEscrowAsync(
         return $"DFY-{timestamp}-{random}";
     }
 
-    private string GeneratePayFastUrl(Models.Task task, User user)
-    {
-        var payfastMode = Environment.GetEnvironmentVariable("PAYFAST_MODE") ?? "sandbox";
-        var isSandbox = string.Equals(payfastMode, "sandbox", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Development", StringComparison.OrdinalIgnoreCase);
 
-        var baseUrl = isSandbox
-            ? "https://sandbox.payfast.co.za/eng/process"
-            : "https://www.payfast.co.za/eng/process";
-
-        var merchantId = Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_ID") ?? _configuration["PayFast:MerchantId"];
-        var merchantKey = Environment.GetEnvironmentVariable("PAYFAST_MERCHANT_KEY") ?? _configuration["PayFast:MerchantKey"];
-        if (string.IsNullOrWhiteSpace(merchantId) || string.IsNullOrWhiteSpace(merchantKey))
-            throw new InvalidOperationException("PayFast credentials are not configured.");
-
-        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL")
-            ?? _configuration["BackendUrl"]
-            ?? "https://api.doforyou.co.za";
-
-        var frontendUrl = Environment.GetEnvironmentVariable("FRONTEND_URL")
-            ?? _configuration["FrontendUrl"]
-            ?? "https://do-for-you.vercel.app";
-
-        var parameters = new Dictionary<string, string>
-        {
-            ["merchant_id"] = merchantId,
-            ["merchant_key"] = merchantKey,
-            ["return_url"] = $"{frontendUrl}/payment/success?taskId={task.TaskId}",
-            ["cancel_url"] = $"{frontendUrl}/payment/cancelled?taskId={task.TaskId}",
-            ["notify_url"] = $"{backendUrl}/api/v1/payment/notify",
-            ["name_first"] = user.FirstName,
-            ["name_last"] = user.LastName,
-            ["email_address"] = user.Email,
-            ["m_payment_id"] = task.TaskId,
-            ["amount"] = task.Budget.ToString("F2"),
-            ["item_name"] = $"Task Payment - {task.TaskDescription.Substring(0, Math.Min(task.TaskDescription.Length, 100))}"
-        };
-
-        // PayFast requires uppercase hex encoding, spaces as '+', trimmed values, lowercase MD5
-        static string PfEncode(string value)
-        {
-            var encoded = Uri.EscapeDataString(value.Trim());
-            // Uri.EscapeDataString produces lowercase hex (%3a); PayFast requires uppercase (%3A)
-            return System.Text.RegularExpressions.Regex.Replace(encoded, "%[0-9a-f]{2}",
-                m => m.Value.ToUpperInvariant()).Replace("%20", "+");
-        }
-
-        var passphrase = Environment.GetEnvironmentVariable("PAYFAST_PASSPHRASE") ?? _configuration["PayFast:Passphrase"];
-        var sigString = string.Join("&", parameters.Select(p => $"{p.Key}={PfEncode(p.Value)}"));
-        if (!string.IsNullOrWhiteSpace(passphrase))
-            sigString += $"&passphrase={PfEncode(passphrase)}";
-
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        var signature = string.Concat(md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(sigString)).Select(b => b.ToString("x2")));
-
-        // Append signature unencoded (it's already a hex string with no special chars)
-        var queryString = string.Join("&", parameters.Select(p => $"{p.Key}={PfEncode(p.Value)}"));
-        queryString += $"&signature={signature}";
-        return $"{baseUrl}?{queryString}";
-    }
 }

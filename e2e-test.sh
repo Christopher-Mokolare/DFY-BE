@@ -141,18 +141,18 @@ TASK_ID=$(extract "$CREATE_TASK" "['data']['task']['taskId']")
 pass "Task ID: $TASK_ID"
 
 PAYMENT_URL=$(extract "$CREATE_TASK" "['data']['paymentUrl']")
-pass "PayFast URL generated: ${PAYMENT_URL:0:60}..."
+pass "Ozow URL generated: ${PAYMENT_URL:0:60}..."
 
 # ─────────────────────────────────────────────
-# STEP 5: Simulate PayFast payment webhook
+# STEP 5: Simulate Ozow payment webhook
 # ─────────────────────────────────────────────
-step "5. Simulate PayFast payment (webhook notify)"
+step "5. Simulate Ozow payment (webhook notify)"
 NOTIFY=$(curl -s -X POST "$BASE_URL/payment/notify" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "m_payment_id=${TASK_ID}&payment_status=COMPLETE&amount_gross=500.00")
 
-# PayFast notify returns 200 OK (empty body)
-pass "PayFast webhook delivered"
+# Ozow notify returns 200 OK (empty body)
+pass "Ozow webhook delivered"
 
 # Give the server a moment to process
 sleep 1

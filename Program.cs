@@ -50,6 +50,26 @@ builder.Configuration["Ozow:PayoutIsRtc"] =
     ?? builder.Configuration["Ozow:PayoutIsRtc"];
 
 
+builder.Configuration["Ozow:PaymentApiKey"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYMENT_API_KEY")
+    ?? Environment.GetEnvironmentVariable("OZOW_API_KEY")
+    ?? builder.Configuration["Ozow:PaymentApiKey"];
+
+builder.Configuration["Ozow:PaymentPrivateKey"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYMENT_PRIVATE_KEY")
+    ?? Environment.GetEnvironmentVariable("OZOW_PRIVATE_KEY")
+    ?? builder.Configuration["Ozow:PaymentPrivateKey"];
+
+builder.Configuration["Ozow:PaymentBaseUrl"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYMENT_BASE_URL")
+    ?? builder.Configuration["Ozow:PaymentBaseUrl"]
+    ?? "https://stagingapi.ozow.com";
+
+builder.Configuration["Ozow:PaymentIsTest"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYMENT_IS_TEST")
+    ?? builder.Configuration["Ozow:PaymentIsTest"]
+    ?? "true";
+
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
 if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
     jwtKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -139,6 +159,9 @@ builder.Services.AddCors(options =>
 });
 
 
+builder.Services.AddHttpClient("OzowPayment");
+builder.Services.AddScoped<IOzowPaymentService, OzowPaymentService>();
+
 builder.Services.AddHttpClient("OzowPayout");
 
 builder.Services.AddScoped<OzowPayoutHashService>();
@@ -147,39 +170,8 @@ builder.Services.AddHostedService<OzowPayoutProcessorService>();
 
 var app = builder.Build();
 
-// Seed database (skip in production - DB already seeded)
-using (var scope = app.Services.CreateScope())
-{
-    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    // Stamp pre-existing migrations so EF does not try to recreate tables that already exist.
-    var conn = context.Database.GetDbConnection();
-    await conn.OpenAsync();
-    await using (var cmd = conn.CreateCommand())
-    {
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
-                "MigrationId" character varying(150) NOT NULL,
-                "ProductVersion" character varying(32) NOT NULL,
-                CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
-            );
-            INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion") VALUES
-                ('20260202072334_InitialCreate', '9.0.0'),
-                ('20260208003217_AddEscrowFeatures', '9.0.0'),
-                ('20260212083729_AddNotifications', '9.0.0'),
-                ('20260212095748_AddBankingSystem', '9.0.0'),
-                ('20260331103941_AddMissingTablesAndColumns', '9.0.0'),
-                ('20260331113745_SyncSchemaWithModel', '9.0.0')
-            ON CONFLICT DO NOTHING;
-            """;
-        await cmd.ExecuteNonQueryAsync();
-    }
-    await conn.CloseAsync();
-
-    await context.Database.MigrateAsync();
-    if (!app.Environment.IsProduction())
-        await DatabaseSeeder.SeedAsync(context);
-}
+// Database migrations are intentionally NOT executed at application startup.
+// Schema changes are applied explicitly and separately after code validation.
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
