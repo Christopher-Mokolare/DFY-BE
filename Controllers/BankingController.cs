@@ -38,7 +38,7 @@ public class BankingController : ControllerBase
         // Check for duplicate
         var exists = await _context.BankAccounts
             .AnyAsync(ba => ba.UserId == userId && ba.AccountNumber == request.AccountNumber && ba.IsActive);
-        
+
         if (exists)
             return Ok(new ApiResponse<object> { Success = false, Message = "Bank account already exists" });
 
@@ -93,118 +93,53 @@ public class BankingController : ControllerBase
         });
     }
 
+
     [HttpPost("withdraw")]
-    public async Task<ActionResult<ApiResponse<object>>> InitiateWithdrawal([FromBody] WithdrawRequest request)
+    public ActionResult<ApiResponse<object>> Retiredwithdraw()
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        try
+        return StatusCode(410, new ApiResponse<object>
         {
-            // Validate minimum withdrawal
-            if (request.Amount < 50)
-                return Ok(new ApiResponse<object> { Success = false, Message = "Minimum withdrawal amount is R50" });
-
-            // Validate maximum withdrawal
-            if (request.Amount > 10000)
-                return Ok(new ApiResponse<object> { Success = false, Message = "Maximum withdrawal amount is R10,000" });
-
-            var fee = await _bankingService.CalculateWithdrawalFeeAsync(request.Amount);
-            var reference = await _bankingService.InitiateWithdrawalAsync(userId.Value, request.BankAccountId, request.Amount);
-
-            return Ok(new ApiResponse<object>
-            {
-                Success = true,
-                Data = new 
-                { 
-                    reference,
-                    amount = request.Amount,
-                    fee,
-                    total = request.Amount + fee,
-                    message = "OTP sent to your registered contact. Please verify to complete withdrawal."
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            return Ok(new ApiResponse<object> { Success = false, Message = ex.Message });
-        }
+            Success = false,
+            Message = "Runner wallet withdrawals have been retired. Completed task payouts are sent directly to the verified runner bank account."
+        });
     }
+
+
 
     [HttpPost("verify-withdrawal")]
-    public async Task<ActionResult<ApiResponse<bool>>> VerifyWithdrawal([FromBody] VerifyWithdrawalRequest request)
+    public ActionResult<ApiResponse<object>> Retiredverifywithdrawal()
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        var withdrawal = await _context.WithdrawalRequests
-            .FirstOrDefaultAsync(w => w.Reference == request.Reference && w.UserId == userId);
-
-        if (withdrawal == null)
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid withdrawal reference" });
-
-        var verified = await _bankingService.VerifyOtpAsync(withdrawal.Id, request.OtpCode);
-        if (!verified)
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid or expired OTP" });
-
-        // Process in the request scope; never use a scoped DbContext from Task.Run.
-        await _bankingService.ProcessWithdrawalAsync(withdrawal.Id);
-
-        return Ok(new ApiResponse<bool>
+        return StatusCode(410, new ApiResponse<object>
         {
-            Success = true,
-            Data = true,
-            Message = "Withdrawal verified and is being processed. You will be notified once completed."
+            Success = false,
+            Message = "Runner wallet withdrawal OTP verification has been retired."
         });
     }
+
+
 
     [HttpGet("withdrawals")]
-    public async Task<ActionResult<ApiResponse<List<object>>>> GetWithdrawals([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public ActionResult<ApiResponse<object>> Retiredwithdrawals()
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, 100);
-        var withdrawals = await _context.WithdrawalRequests
-            .Include(w => w.BankAccount)
-            .Where(w => w.UserId == userId)
-            .OrderByDescending(w => w.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(w => new
-            {
-                id = w.Id,
-                reference = w.Reference,
-                amount = w.Amount,
-                fee = w.Fee,
-                status = w.Status,
-                bankName = w.BankAccount.BankName,
-                accountNumber = MaskAccountNumber(w.BankAccount.AccountNumber),
-                createdAt = w.CreatedAt,
-                completedAt = w.CompletedAt,
-                failureReason = w.FailureReason
-            })
-            .Cast<object>()
-            .ToListAsync();
-
-        return Ok(new ApiResponse<List<object>>
+        return StatusCode(410, new ApiResponse<object>
         {
-            Success = true,
-            Data = withdrawals
+            Success = false,
+            Message = "Runner wallet withdrawal history has been retired."
         });
     }
+
+
 
     [HttpGet("withdrawal-fee")]
-    public async Task<ActionResult<ApiResponse<decimal>>> GetWithdrawalFee([FromQuery] decimal amount)
+    public ActionResult<ApiResponse<object>> Retiredwithdrawalfee()
     {
-        var fee = await _bankingService.CalculateWithdrawalFeeAsync(amount);
-        return Ok(new ApiResponse<decimal>
+        return StatusCode(410, new ApiResponse<object>
         {
-            Success = true,
-            Data = fee
+            Success = false,
+            Message = "Runner wallet withdrawal fees are no longer applicable."
         });
     }
+
 
     [HttpGet("banks")]
     public ActionResult<ApiResponse<List<object>>> GetSupportedBanks()
@@ -249,16 +184,4 @@ public class AddBankAccountRequest
     public string AccountHolderName { get; set; } = string.Empty;
     public string BranchCode { get; set; } = string.Empty;
     public string AccountType { get; set; } = "Savings";
-}
-
-public class WithdrawRequest
-{
-    public int BankAccountId { get; set; }
-    public decimal Amount { get; set; }
-}
-
-public class VerifyWithdrawalRequest
-{
-    public string Reference { get; set; } = string.Empty;
-    public string OtpCode { get; set; } = string.Empty;
 }

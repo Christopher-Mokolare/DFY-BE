@@ -399,22 +399,77 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{tasks.Count} tasks verified" });
     }
 
+
     [HttpPatch("tasks/{taskId}/force-release-escrow")]
     public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId)
     {
-        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
+        var task = await _context.Tasks
+            .FirstOrDefaultAsync(t => t.TaskId == taskId);
+
         if (task == null)
-            return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+        {
+            return NotFound(new ApiResponse<bool>
+            {
+                Success = false,
+                Data = false,
+                Message = "Task not found"
+            });
+        }
 
-        task.EscrowStatus = "released";
-        task.TaskStatus = "RunnerPaid";
-        task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
-        task.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-        await WriteAuditAsync("ForceReleaseEscrow", "Task", task.Id, null, "RunnerPaid");
+        if (task.AcceptedByUserId == null)
+        {
+            return Ok(new ApiResponse<bool>
+            {
+                Success = false,
+                Data = false,
+                Message = "Task has no assigned runner."
+            });
+        }
 
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Escrow released" });
+        if (task.EscrowStatus != "held" &&
+            task.PaymentStatus != "EscrowHeld")
+        {
+            return Ok(new ApiResponse<bool>
+            {
+                Success = false,
+                Data = false,
+                Message = "Task is not eligible for escrow release."
+            });
+        }
+
+        // IMPORTANT:
+        // Admin release must enter the same direct-to-bank payout
+        // pipeline as normal confirmation. It must NEVER set
+        // RunnerPaid directly.
+        var released = await _escrowService.ReleaseEscrowAsync(
+            task.Id,
+            force: true);
+
+        if (!released)
+        {
+            return Ok(new ApiResponse<bool>
+            {
+                Success = false,
+                Data = false,
+                Message = "Unable to initiate runner payout."
+            });
+        }
+
+        await WriteAuditAsync(
+            "ForceReleaseEscrow",
+            "Task",
+            task.Id,
+            null,
+            "PayoutPending");
+
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = "Escrow released and runner payout queued for processing."
+        });
     }
+
 
     [HttpDelete("tasks/{taskId}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId)

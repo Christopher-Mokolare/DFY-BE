@@ -263,5 +263,6 @@ public class ScenarioTests
         public TaskResult NotifyTaskCompletedAsync(int creatorId, string taskDescription, string runnerName) => TaskResult.CompletedTask;
         public TaskResult NotifyPaymentReleasedAsync(int runnerId, string taskDescription, decimal amount) => TaskResult.CompletedTask;
         public TaskResult NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null) => TaskResult.CompletedTask;
+        public TaskResult NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null) => TaskResult.CompletedTask;
     }
 }

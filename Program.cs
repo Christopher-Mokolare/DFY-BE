@@ -16,6 +16,40 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_HOSTBUI
     Environment.SetEnvironmentVariable("DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE", "false");
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration["Ozow:SiteCode"] =
+    Environment.GetEnvironmentVariable("OZOW_SITE_CODE")
+    ?? builder.Configuration["Ozow:SiteCode"];
+
+builder.Configuration["Ozow:PayoutApiKey"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYOUT_API_KEY")
+    ?? builder.Configuration["Ozow:PayoutApiKey"];
+
+builder.Configuration["Ozow:PayoutBaseUrl"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYOUT_BASE_URL")
+    ?? builder.Configuration["Ozow:PayoutBaseUrl"];
+
+builder.Configuration["Ozow:NotifyUrl"] =
+    Environment.GetEnvironmentVariable("OZOW_NOTIFY_URL")
+    ?? builder.Configuration["Ozow:NotifyUrl"];
+
+builder.Configuration["Ozow:VerifyUrl"] =
+    Environment.GetEnvironmentVariable("OZOW_VERIFY_URL")
+    ?? builder.Configuration["Ozow:VerifyUrl"];
+
+builder.Configuration["Ozow:AccessToken"] =
+    Environment.GetEnvironmentVariable("OZOW_ACCESS_TOKEN")
+    ?? builder.Configuration["Ozow:AccessToken"];
+
+builder.Configuration["Ozow:AccountNumberDecryptionKey"] =
+    Environment.GetEnvironmentVariable("OZOW_ACCOUNT_NUMBER_DECRYPTION_KEY")
+    ?? builder.Configuration["Ozow:AccountNumberDecryptionKey"];
+
+builder.Configuration["Ozow:PayoutIsRtc"] =
+    Environment.GetEnvironmentVariable("OZOW_PAYOUT_IS_RTC")
+    ?? builder.Configuration["Ozow:PayoutIsRtc"];
+
+
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
 if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
     jwtKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -40,7 +74,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Services
 builder.Services.AddScoped<IRulesEngine, RulesEngine>();
 builder.Services.AddScoped<IEscrowService, EscrowService>();
-builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IBankingService, BankingService>();
 builder.Services.AddHostedService<EscrowReleaseService>();
@@ -104,6 +137,13 @@ builder.Services.AddCors(options =>
               .AllowCredentials();
     });
 });
+
+
+builder.Services.AddHttpClient("OzowPayout");
+
+builder.Services.AddScoped<OzowPayoutHashService>();
+builder.Services.AddScoped<IOzowPayoutService, OzowPayoutService>();
+builder.Services.AddHostedService<OzowPayoutProcessorService>();
 
 var app = builder.Build();
 

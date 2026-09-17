@@ -333,31 +333,13 @@ public class TasksController : ControllerBase
     }
 
     [HttpPut("{taskId}/payment-status")]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdatePaymentStatus(string taskId, [FromBody] UpdatePaymentStatusRequest request)
+    public IActionResult UpdatePaymentStatus(string taskId)
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
-        if (task == null || task.CreatedByUserId != userId)
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Task not found" });
-
-        if (task.PaymentStatus != "Pending" || request.PaymentStatus.ToLower() != "completed")
-            return Ok(new ApiResponse<bool> { Success = false, Message = "Invalid payment status update" });
-
-        task.PaymentStatus = "EscrowHeld";
-        task.EscrowStatus = "held";
-        task.EscrowHoldUntil = DateTime.UtcNow.AddHours(48);
-        task.TaskStatus = "Posted";
-        task.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(new ApiResponse<bool>
+        return StatusCode(410, new ApiResponse<bool>
         {
-            Success = true,
-            Data = true,
-            Message = "Payment status updated successfully!"
+            Success = false,
+            Data = false,
+            Message = "This endpoint has been retired. Payment status is updated by the payment provider notification."
         });
     }
 
@@ -507,10 +489,9 @@ public class TasksController : ControllerBase
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Payment already released" });
 
         // Clear the hold so EscrowService releases immediately
-        task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
-        await _context.SaveChangesAsync();
-
-        var released = await _escrowService.ReleaseEscrowAsync(task.Id);
+var released = await _escrowService.ReleaseEscrowAsync(
+        task.Id,
+        force: true);
         if (!released)
             return Ok(new ApiResponse<bool> { Success = false, Message = "Failed to release payment" });
 

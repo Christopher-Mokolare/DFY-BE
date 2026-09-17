@@ -35,37 +35,28 @@ public class PaymentController : ControllerBase
             new ApiResponse<object> { Success = false, Message = "Use the task payment workflow." });
     }
 
+
     [HttpGet("wallet")]
-    [Authorize]
-    public async Task<ActionResult<ApiResponse<object>>> GetWallet()
+    public ActionResult<ApiResponse<object>> GetWallet()
     {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
-
-        var user = await _context.Users.FindAsync(userId);
-        if (user == null) return NotFound();
-
-        return Ok(new ApiResponse<object>
+        return StatusCode(410, new ApiResponse<object>
         {
-            Success = true,
-            Data = new
-            {
-                balance = user.WalletBalance,
-                recentTransactions = new object[] { }
-            }
+            Success = false,
+            Message = "Runner wallets have been retired. Runner earnings are paid directly to the verified bank account."
         });
     }
 
-    [HttpPost("withdraw")]
-    [Authorize]
-    public async Task<ActionResult<ApiResponse<object>>> WithdrawFunds([FromBody] object request)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == null) return Unauthorized();
 
-        return StatusCode(StatusCodes.Status410Gone,
-            new ApiResponse<object> { Success = false, Message = "Use the banking withdrawal workflow." });
+    [HttpPost("withdraw")]
+    public ActionResult<ApiResponse<object>> WithdrawFunds()
+    {
+        return StatusCode(410, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawals have been retired. Completed task payouts are sent directly to the verified runner bank account."
+        });
     }
+
 
     [HttpPost("notify")]
     [IgnoreAntiforgeryToken]
