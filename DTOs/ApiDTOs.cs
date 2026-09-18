@@ -120,6 +120,7 @@ public class TaskDto
     public string Area { get; set; } = string.Empty;
     public DateTime DateNeeded { get; set; }
     public decimal Budget { get; set; }
+    public decimal PayoutAmount { get; set; }
     public string? Notes { get; set; }
     public string PaymentStatus { get; set; } = string.Empty;
     public string TaskStatus { get; set; } = string.Empty;
