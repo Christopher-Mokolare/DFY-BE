@@ -12,12 +12,11 @@ public record OzowPaymentResult(
     string? TransactionReference,
     string? Error);
 
-public record OzowTransactionResult(
-    bool Found,
+public record OzowRefundResult(
+    bool Success,
+    string? RefundId,
     string? TransactionId,
-    string? Status,
     decimal? Amount,
-    string? TransactionReference,
     string? Error);
 
 public interface IOzowPaymentService
@@ -27,11 +26,18 @@ public interface IOzowPaymentService
         User customer,
         CancellationToken cancellationToken = default);
 
+    Task<OzowRefundResult> SubmitRefundAsync(
+        string transactionId,
+        decimal amount,
+        string refundReason,
+        CancellationToken cancellationToken = default);
+
     Task<OzowTransactionResult> GetTransactionByReferenceAsync(
         string transactionReference,
         CancellationToken cancellationToken = default);
 
     bool VerifyNotificationHash(IReadOnlyDictionary<string, string?> fields);
+    bool VerifyRefundNotificationHash(IReadOnlyDictionary<string, string?> fields);
 }
 
 public sealed class OzowPaymentService : IOzowPaymentService
@@ -187,6 +193,98 @@ public sealed class OzowPaymentService : IOzowPaymentService
         }
     }
 
+    public async Task<OzowRefundResult> SubmitRefundAsync(
+        string transactionId,
+        decimal amount,
+        string refundReason,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(transactionId) || amount <= 0)
+            return new OzowRefundResult(false, null, transactionId, null, "Valid transaction ID and amount are required.");
+
+        var apiKey = Get("Ozow:PaymentApiKey");
+        var privateKey = Get("Ozow:PaymentPrivateKey");
+        var accessToken = Get("Ozow:AccessToken");
+
+        if (string.IsNullOrWhiteSpace(apiKey) ||
+            string.IsNullOrWhiteSpace(privateKey) ||
+            string.IsNullOrWhiteSpace(accessToken))
+            return new OzowRefundResult(false, null, transactionId, null, "Ozow refund credentials are not configured.");
+
+        var baseUrl = (Get("Ozow:RefundBaseUrl")
+            ?? Get("Ozow:PaymentBaseUrl")
+            ?? "https://stagingapi.ozow.com").TrimEnd('/');
+        var backendUrl = Environment.GetEnvironmentVariable("BACKEND_URL")
+            ?? _configuration["BackendUrl"]
+            ?? "https://api.doforyou.co.za";
+        var notifyUrl = $"{backendUrl.TrimEnd('/')}/api/v1/payment/refund-notify";
+        var reason = refundReason.Length > 500 ? refundReason[..500] : refundReason;
+        var amountText = amount.ToString("F2", CultureInfo.InvariantCulture);
+        var hashInput = transactionId + amountText + reason + notifyUrl + privateKey;
+        var hash = Convert.ToHexString(SHA512.HashData(Encoding.UTF8.GetBytes(hashInput))).ToLowerInvariant();
+
+        var payload = new[]
+        {
+            new
+            {
+                transactionId,
+                amount,
+                refundReason = reason,
+                notifyUrl,
+                hashCheck = hash,
+                isRtc = ParseBool(Get("Ozow:RefundIsRtc"), false)
+            }
+        };
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("OzowPayment");
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/secure/refunds/submit");
+            message.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            message.Content = JsonContent.Create(payload);
+
+            using var response = await client.SendAsync(message, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+                return new OzowRefundResult(false, null, transactionId, null, $"Ozow refund request failed ({(int)response.StatusCode}).");
+
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            var item = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0
+                ? root[0]
+                : root;
+
+            var refundId = ReadString(item, "refundId", "RefundId");
+            var responseTransactionId = ReadString(item, "transactionId", "TransactionId") ?? transactionId;
+            var refundAmountText = ReadString(item, "refundAmount", "RefundAmount");
+            var errors = item.TryGetProperty("errors", out var errorsElement) && errorsElement.ValueKind == JsonValueKind.Array
+                ? string.Join("; ", errorsElement.EnumerateArray().Select(x => x.ToString()))
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(errors))
+                return new OzowRefundResult(false, refundId, responseTransactionId, null, errors);
+
+            if (string.IsNullOrWhiteSpace(refundId))
+                return new OzowRefundResult(false, null, responseTransactionId, null, "Ozow did not return a refund identifier.");
+
+            decimal? refundAmount = decimal.TryParse(refundAmountText, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : amount;
+
+            return new OzowRefundResult(true, refundId, responseTransactionId, refundAmount, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ozow refund submission failed for transaction {TransactionId}", transactionId);
+            return new OzowRefundResult(false, null, transactionId, null, "Unable to submit Ozow refund.");
+        }
+    }
+
     public async Task<OzowTransactionResult> GetTransactionByReferenceAsync(
         string transactionReference,
         CancellationToken cancellationToken = default)
@@ -311,6 +409,30 @@ public sealed class OzowPaymentService : IOzowPaymentService
                 transactionReference,
                 "Unable to verify the Ozow transaction.");
         }
+    }
+
+    public bool VerifyRefundNotificationHash(IReadOnlyDictionary<string, string?> fields)
+    {
+        var privateKey = Get("Ozow:PaymentPrivateKey");
+        if (string.IsNullOrWhiteSpace(privateKey) ||
+            !fields.TryGetValue("Hash", out var suppliedHash) ||
+            string.IsNullOrWhiteSpace(suppliedHash))
+            return false;
+
+        var raw = Value(fields, "RefundId") +
+                  Value(fields, "TransactionId") +
+                  Value(fields, "CurrencyCode") +
+                  Value(fields, "Amount") +
+                  Value(fields, "Status") +
+                  Value(fields, "BankName") +
+                  Value(fields, "AccountNumber") +
+                  Value(fields, "StatusMessage") +
+                  privateKey;
+
+        var calculated = Sha512(raw);
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(calculated.ToLowerInvariant()),
+            Encoding.UTF8.GetBytes(suppliedHash.Trim().ToLowerInvariant()));
     }
 
     public bool VerifyNotificationHash(
