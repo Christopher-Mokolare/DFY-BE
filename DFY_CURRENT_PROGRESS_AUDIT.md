@@ -2,13 +2,13 @@
 
 **Audit date:** 2026-09-18  
 **Repositories:** DFY-BE and DFY-FE  
-**Baseline:** current `main` branches, with open hardening PRs tracked separately.
+**Baseline:** current implementation state as of 2026-09-18, including completed hardening changes made after the original audit.
 
 ## Executive status
 
 DFY is **not yet production-ready E2E**.
 
-The direct-to-bank payout architecture is substantially implemented, but the codebase still contains FE/BE contract discrepancies, legacy wallet architecture, incomplete refund infrastructure, incomplete financial E2E validation, and important hardening changes that currently exist only in open PRs.
+The direct-to-bank payout architecture is substantially implemented. Major financial hardening is now in place: atomic payout claiming, late-provider-status protection, controlled terminal payout retry, Ozow transaction-ID capture in the audit trail, Ozow creator refund submission/webhook handling, refund reporting, and mandatory reasons for privileged admin actions. The system is still not verified production-ready because the latest builds/tests, browser E2E, provider journeys, production configuration and operational validation remain to be confirmed.
 
 ## Status legend
 
@@ -24,17 +24,17 @@ The direct-to-bank payout architecture is substantially implemented, but the cod
 | Area | Status | Current finding |
 |---|---:|---|
 | Repository/codebase integrity | 🟡 | Legacy contracts coexist with the new architecture |
-| FE ↔ BE API contract | 🔴 | Multiple contract mismatches remain |
+| FE ↔ BE API contract | 🟡 | Major mismatches addressed; final E2E contract validation remains |
 | Authentication / registration | 🟢 | Core flow exists; requires complete E2E validation |
-| Authorization / role enforcement | 🟡 | Hardening exists in PR #10, not main |
+| Authorization / role enforcement | 🟢 | Task-detail and admin-action hardening implemented |
 | Creator onboarding | 🟢 | Implemented |
 | Runner onboarding | 🟢 | Implemented |
 | Both-role users | 🟢 | Supported |
 | Profile management | 🟢 | Implemented |
 | User preferences | 🟢 | Implemented |
-| Task creation | 🟡 | TaskName contract is not aligned on main |
-| Task editing | 🟡 | Exists; validation hardening is in PR #10 |
-| Task deletion/cancellation | 🔴 | Admin deletion protection is in PR #11 |
+| Task creation | 🟢 | TaskName persisted and exposed |
+| Task editing | 🟢 | Validation hardening implemented |
+| Task deletion/cancellation | 🟢 | Financially active tasks protected |
 | Task browsing/filtering/search | 🟢 | Implemented |
 | Task claiming | 🟢 | Concurrency protected |
 | Double claiming | 🟢 | Backend protection exists |
@@ -46,15 +46,15 @@ The direct-to-bank payout architecture is substantially implemented, but the cod
 | Payment webhook validation | 🟢 | Site code, hash and amount checks |
 | Payment provider verification | 🟢 | Backend independently verifies completed payments |
 | Payment idempotency | 🟢 | Stable task payment reference |
-| Payment transaction ID persistence | 🔴 | Original Ozow transaction ID is not a first-class persisted record |
+| Ozow transaction ID tracking | 🟡 | Captured in immutable audit trail; dedicated financial column remains a future schema improvement |
 | Escrow hold | 🟢 | Implemented |
 | Escrow expiry/auto-release | 🟢 | Background service exists |
 | Escrow → payout transition | 🟢 | Implemented |
 | Direct runner bank payout | 🟢 | Implemented |
 | Runner wallet architecture | ⚪ | Retired logically; legacy code remains |
-| Payout worker concurrency | 🟢* | Fixed in open PR #12, not main |
-| Duplicate payout protection | 🟢* | Hardened in open payout work |
-| Late Ozow payout status protection | 🟢* | Fixed in open PR #13, not main |
+| Payout worker concurrency | 🟢 | Atomic Pending → Processing claim implemented |
+| Duplicate payout protection | 🟢 | Merchant-reference/idempotency protections present |
+| Late Ozow payout status protection | 🟢 | Terminal payout state protected from stale updates |
 | Ozow payout reconciliation | 🟢* | Implemented and hardened |
 | Payout bank-account verification | 🟢 | Active + verified account required |
 | Ozow BankGroup integration | 🟢 | Implemented |
@@ -62,15 +62,15 @@ The direct-to-bank payout architecture is substantially implemented, but the cod
 | Bank verification | 🟢 | Implemented |
 | Dispute creation | 🟢 | Implemented |
 | Dispute escrow freezing | 🟢 | Implemented |
-| Admin dispute resolution | 🟡 | Release path exists; refund path does not |
-| Ozow creator refunds | ❌ | Not implemented |
-| Refund persistence/state machine | ❌ | Missing |
-| Refund idempotency | ❌ | Missing |
-| Refund reconciliation/webhook | ❌ | Missing |
-| Refund reporting | 🔴 | Refund total is currently hardcoded to zero |
+| Admin dispute resolution | 🟢 | Release and Ozow refund paths implemented |
+| Ozow creator refunds | 🟢 | Legacy Ozow refund submission implemented |
+| Refund state | 🟡 | Provider state is currently correlated through audit events; first-class refund table remains a schema improvement |
+| Refund idempotency | 🟢 | Duplicate submission/completion protections implemented |
+| Refund webhook | 🟢 | Hash/status/amount validation implemented |
+| Refund reporting | 🟢 | Completed refund totals now derived from audit data |
 | Admin dashboard | 🟡 | Core functionality exists; financial controls need hardening |
-| Admin privileged-action reasons | 🟡 | PR #11, not main |
-| Admin destructive-action protection | 🔴 | PR #11, not main |
+| Admin privileged-action reasons | 🟢 | Required and audited |
+| Admin destructive-action protection | 🟢 | Financial history protected |
 | Admin audit logging | 🟢 | Audit system exists |
 | System failure/incident management | ❌ | No dedicated operational failure subsystem |
 | Notifications | 🟢 | Implemented |
@@ -83,16 +83,16 @@ The direct-to-bank payout architecture is substantially implemented, but the cod
 | Withdrawal models/DTOs | ⚪ | Legacy code remains |
 | Wallet transaction model | ⚪ | Legacy code remains |
 | FE legacy wallet types | ⚪ | Legacy types remain |
-| FE payment status types | 🔴 | Do not fully represent backend states |
-| FE task status types | 🔴 | Missing backend states |
-| TaskName FE contract | 🔴 | PR #11 addresses it |
-| TaskName BE contract | 🔴 | PR #10 addresses it |
-| Detailed task privacy | 🔴 | PR #10 addresses participant/admin restriction |
-| FE admin reason handling | 🔴 | PR #12 addresses it |
+| FE payment status types | 🟢 | Expanded to represent backend financial states |
+| FE task status types | 🟢 | Expanded to represent backend lifecycle states |
+| TaskName FE contract | 🟢 | Aligned |
+| TaskName BE contract | 🟢 | Aligned |
+| Detailed task privacy | 🟢 | Participant/admin restriction implemented |
+| FE admin reason handling | 🟢 | Role/dispute/privileged actions require reasons |
 | FE build | 🟢 | CI builds |
 | BE build | 🟢 | CI builds |
 | BE automated tests | 🟢 | xUnit suite exists/runs in CI |
-| FE Playwright in CI | ❌ | Browser tests are not currently executed by FE CI |
+| FE Playwright in CI | 🟡 | CI infrastructure exists; latest full suite result requires confirmation |
 | Real financial E2E | ❌ | Not completed |
 | FE/BE full E2E | ❌ | Not completed |
 | Production environment validation | ❌ | No verified complete production financial journey |
@@ -100,122 +100,36 @@ The direct-to-bank payout architecture is substantially implemented, but the cod
 
 \* Open hardening PRs, not current main.
 
-## Key discrepancies
+## Current remaining gaps
 
-### 1. TaskName contract
+### 1. Dedicated financial records
 
-The Task model has TaskName, but the current main API contract does not consistently accept, persist and expose it. FE work already expects task names.
+Ozow collection and refund identifiers are currently retained through immutable audit events. A mature financial ledger should eventually introduce first-class persisted collection/refund records with provider references, statuses, idempotency keys and reconciliation metadata.
 
-Relevant PRs:
-- BE PR #10
-- FE PR #11
+### 2. Operational failure visibility
 
-### 2. Detailed task authorization
+Audit and provider-processing logs cover core financial events. A dedicated admin operational view for payment, payout, refund and webhook failures remains to be completed.
 
-Sensitive task details need to be restricted to the creator, assigned runner or Admin. The hardening exists in BE PR #10 and is not yet on main.
+### 3. Full E2E verification
 
-### 3. Admin privileged actions
+The application is substantially implemented, but production readiness cannot be claimed until creator, runner, admin, payment, payout, dispute, refund, concurrency and unauthorized-access scenarios are actually executed and pass.
 
-Verification, unverification, bulk verification, force escrow release and user verification changes need mandatory reasons and audit records.
+### 4. Production configuration verification
 
-Relevant PRs:
-- BE PR #11
-- FE PR #12
+Production Ozow credentials/endpoints, webhook URLs, database schema/deployment process, CORS, JWT configuration, secrets, health checks and observability still require explicit validation.
 
-### 4. Admin deletion
+### 5. Legacy wallet cleanup
 
-Financially relevant tasks must not be hard-deleted when payment/escrow/payout/runner activity exists. Users should not be hard-deleted where audit/history must be preserved.
-
-Relevant PR: BE PR #11.
-
-### 5. FE/BE financial state mismatch
-
-Backend uses a broader financial lifecycle than the FE types represent, including:
-
-```text
-Pending
-EscrowHeld
-EscrowReleased
-PayoutPending
-Processing
-RunnerPaid
-PayoutReturned
-PayoutCancelled
-PayoutFailed
-DisputePending
-```
-
-The FE needs one authoritative representation rather than loose strings and aliases.
-
-### 6. Wallet retirement is incomplete at codebase level
-
-The intended architecture is:
-
-```text
-Creator payment
-→ escrow
-→ runner completes
-→ creator confirms
-→ direct Ozow bank payout
-```
-
-Wallet services, models, withdrawal models/DTOs and legacy references remain. They should be cleaned up so the retired architecture cannot accidentally be reused.
-
-### 7. Payment transaction ID persistence
-
-The payment flow receives provider transaction information, but the original Ozow transaction ID is not currently persisted as a first-class DFY financial record. This is needed for robust refunds and reconciliation.
-
-### 8. Refund is incomplete
-
-Current dispute resolution can select refund, but the backend deliberately does not mark the task as refunded.
-
-Required production flow:
-
-```text
-Dispute
-→ admin refund decision
-→ persistent refund record
-→ Ozow refund request
-→ provider response/status
-→ reconciliation/webhook
-→ Refunded
-```
-
-The system must never mark funds refunded before provider confirmation.
-
-### 9. Admin refund reporting
-
-The current admin payment statistics use a hardcoded zero refund total. This must be replaced with persisted refund data.
-
-### 10. Payout concurrency and late-status hardening
-
-- PR #12 atomically claims pending payouts before provider submission.
-- PR #13 prevents late provider notifications from downgrading an already completed/RunnerPaid payout.
-
-These changes should be retained and reconciled into the final production branch after review/testing.
-
-### 11. Legacy E2E scripts
-
-Existing E2E scripts still contain wallet/withdrawal assumptions. They cannot be treated as proof of the current direct-bank architecture.
-
-The replacement suite must test the complete creator → payment → escrow → runner → completion → bank payout → provider notification lifecycle plus all failure, concurrency, dispute and refund scenarios.
-
-### 12. FE Playwright is not currently part of CI
-
-The FE has Playwright infrastructure, but CI currently validates the build rather than executing the browser suite.
+The wallet workflow is retired and endpoints return 410 where applicable. Legacy wallet/withdrawal models and compatibility types remain and should only be removed after historical-data dependencies are confirmed.
 
 ## Required remaining production work
 
 ### P0 — Financial integrity
 
-1. Persist original Ozow payment transaction ID.
-2. Implement persistent refund model/state.
-3. Implement Ozow refund submission.
-4. Implement refund idempotency.
-5. Implement refund provider reconciliation/webhook.
-6. Only mark funds refunded after provider confirmation.
-7. Replace hardcoded refund reporting.
-8. Complete payout failure/returned/retry state-machine review.
+1. Confirm the latest financial implementation with automated tests.
+2. Introduce first-class collection/refund records when migration strategy is confirmed.
+3. Verify refund provider submission, webhook and failure/recovery paths.
+4. Confirm payout failure/returned/retry behavior.
 
 ### P0 — Security / authorization
 
@@ -286,8 +200,8 @@ DFY should only be marked **Production Ready** when all are true:
 
 ## Bottom line
 
-**Current DFY state: 🟡 Production hardening in progress.**
+**Current DFY state: 🟡 Production hardening / verification in progress.**
 
-The direct-to-bank architecture is substantially implemented and important payout concurrency/idempotency protections have been developed. However, the system is not yet coherent enough to declare production-ready because refunds, provider transaction persistence, FE/BE state alignment, authorization/admin hardening, legacy-wallet cleanup, payout edge cases and full E2E validation remain.
+The direct-to-bank architecture is substantially implemented and the major application-layer financial hardening gaps identified in the previous audit have been addressed. Remaining work is primarily verification, provider integration testing, production configuration validation, operational visibility and selective schema modernization.
 
-This document is the baseline audit and should be updated as each production-readiness gate is completed.
+This document is the active audit and should be updated whenever a production-readiness gate is evidenced by an actual test, deployment or configuration verification.
