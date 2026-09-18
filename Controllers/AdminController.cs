@@ -15,11 +15,13 @@ public class AdminController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IEscrowService _escrowService;
+    private readonly IUserPolicyService _userPolicyService;
 
-    public AdminController(AppDbContext context, IEscrowService escrowService)
+    public AdminController(AppDbContext context, IEscrowService escrowService, IUserPolicyService userPolicyService)
     {
         _context = context;
         _escrowService = escrowService;
+        _userPolicyService = userPolicyService;
     }
 
     private int? GetAdminId() =>
@@ -285,26 +287,31 @@ public class AdminController : ControllerBase
         var totalCount = await _context.Users.CountAsync();
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
-        var users = await _context.Users
+        var userRows = await _context.Users
             .OrderByDescending(u => u.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(u => new
-            {
-                id = u.Id,
-                name = $"{u.FirstName} {u.LastName}",
-                email = u.Email,
-                contact = u.PhoneNumber == null ? null : "***",
-                role = u.Roles,
-                isVerified = u.IsVerified,
-                profileCompleted = u.ProfileCompleted,
-                tasksPosted = _context.Tasks.Count(t => t.CreatedByUserId == u.Id),
-                tasksCompleted = u.CompletedTasks,
-                rating = u.Rating,
-                lastLoginAt = u.LastLoginAt,
-                createdAt = u.CreatedAt
-            })
             .ToListAsync();
+
+        var users = userRows.Select(u => new
+        {
+            id = u.Id,
+            name = $"{u.FirstName} {u.LastName}",
+            email = u.Email,
+            contact = u.PhoneNumber == null ? null : "***",
+            role = u.Roles,
+            isVerified = u.IsVerified,
+            profileCompleted = _userPolicyService.IsProfileComplete(u),
+            profileCompletion = _userPolicyService.GetProfileCompletion(u),
+            missingProfileFields = _userPolicyService.GetMissingProfileFields(u),
+            canCreateTasks = _userPolicyService.CanCreateTasks(u),
+            canAcceptTasks = _userPolicyService.CanAcceptTasks(u),
+            tasksPosted = _context.Tasks.Count(t => t.CreatedByUserId == u.Id),
+            tasksCompleted = u.CompletedTasks,
+            rating = u.Rating,
+            lastLoginAt = u.LastLoginAt,
+            createdAt = u.CreatedAt
+        }).ToList();
 
         return Ok(new ApiResponse<object>
         {

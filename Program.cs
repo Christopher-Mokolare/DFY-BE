@@ -109,6 +109,7 @@ builder.Services.AddScoped<IRulesEngine, RulesEngine>();
 builder.Services.AddScoped<IEscrowService, EscrowService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IBankingService, BankingService>();
+builder.Services.AddScoped<IUserPolicyService, UserPolicyService>();
 builder.Services.AddHostedService<EscrowReleaseService>();
 
 // SignalR

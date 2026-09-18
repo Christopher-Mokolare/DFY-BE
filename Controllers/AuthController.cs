@@ -21,13 +21,15 @@ public class AuthController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthController> _logger;
     private readonly INotificationService _notificationService;
+    private readonly IUserPolicyService _userPolicyService;
 
-    public AuthController(AppDbContext context, IConfiguration configuration, ILogger<AuthController> logger, INotificationService notificationService)
+    public AuthController(AppDbContext context, IConfiguration configuration, ILogger<AuthController> logger, INotificationService notificationService, IUserPolicyService userPolicyService)
     {
         _context = context;
         _configuration = configuration;
         _logger = logger;
         _notificationService = notificationService;
+        _userPolicyService = userPolicyService;
     }
 
     [HttpPost("register")]
@@ -84,8 +86,11 @@ public class AuthController : ControllerBase
                 LastName = user.LastName,
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
-                ProfileCompleted = user.ProfileCompleted,
-                ProfileCompletion = CalculateProfileCompletion(user),
+                ProfileCompleted = _userPolicyService.IsProfileComplete(user),
+                ProfileCompletion = _userPolicyService.GetProfileCompletion(user),
+                MissingProfileFields = _userPolicyService.GetMissingProfileFields(user).ToArray(),
+                CanCreateTasks = _userPolicyService.CanCreateTasks(user),
+                CanAcceptTasks = _userPolicyService.CanAcceptTasks(user),
                 Rating = user.Rating,
                 CompletedTasks = user.CompletedTasks,
                 Roles = user.Roles,
@@ -170,7 +175,10 @@ public class AuthController : ControllerBase
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 ProfileCompleted = user.ProfileCompleted,
-                ProfileCompletion = CalculateProfileCompletion(user),
+                ProfileCompletion = _userPolicyService.GetProfileCompletion(user),
+                MissingProfileFields = _userPolicyService.GetMissingProfileFields(user).ToArray(),
+                CanCreateTasks = _userPolicyService.CanCreateTasks(user),
+                CanAcceptTasks = _userPolicyService.CanAcceptTasks(user),
                 Rating = user.Rating,
                 CompletedTasks = user.CompletedTasks,
                 Roles = user.Roles,
@@ -182,48 +190,6 @@ public class AuthController : ControllerBase
             },
             Message = "Login successful"
         });
-    }
-
-    private static int CalculateProfileCompletion(User user)
-    {
-        var fields = new[]
-        {
-            !string.IsNullOrWhiteSpace(user.FirstName),
-            !string.IsNullOrWhiteSpace(user.LastName),
-            new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(user.Email),
-            !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber),
-            !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address),
-            IsValidSouthAfricanId(user.IdNumber),
-            user.DateOfBirth.HasValue,
-            user.UserType is "creator" or "runner" or "both"
-        };
-        return (int)Math.Round(fields.Count(f => f) * 100.0 / fields.Length);
-    }
-
-    private static bool IsValidPhone(string value)
-    {
-        var digits = new string(value.Where(char.IsDigit).ToArray());
-        return (digits.Length == 10 && digits.StartsWith("0")) || (digits.Length == 11 && digits.StartsWith("27"));
-    }
-
-    private static bool IsPlaceholderAddress(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return true;
-        var normalized = value.Trim().ToLowerInvariant();
-        return normalized is "just around" or "near me" or "around" or "n/a" or "na" or "tbc" or "unknown" or "somewhere";
-    }
-
-    private static bool IsValidSouthAfricanId(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Length != 13 || !value.All(char.IsDigit)) return false;
-        var sum = 0;
-        for (var i = 0; i < 13; i++)
-        {
-            var d = value[i] - '0';
-            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
-            sum += d;
-        }
-        return sum % 10 == 0;
     }
 
     private string GenerateJwtToken(User user)

@@ -20,6 +20,7 @@ public class TasksController : ControllerBase
     private readonly INotificationService _notificationService;
     private readonly IConfiguration _configuration;
     private readonly IOzowPaymentService _ozowPaymentService;
+    private readonly IUserPolicyService _userPolicyService;
 
     public TasksController(
         AppDbContext context,
@@ -27,7 +28,8 @@ public class TasksController : ControllerBase
         IEscrowService escrowService,
         INotificationService notificationService,
         IConfiguration configuration,
-        IOzowPaymentService ozowPaymentService)
+        IOzowPaymentService ozowPaymentService,
+        IUserPolicyService userPolicyService)
     {
         _context = context;
         _rulesEngine = rulesEngine;
@@ -35,6 +37,7 @@ public class TasksController : ControllerBase
         _notificationService = notificationService;
         _configuration = configuration;
         _ozowPaymentService = ozowPaymentService;
+        _userPolicyService = userPolicyService;
     }
 
     [HttpPost]
@@ -46,10 +49,10 @@ public class TasksController : ControllerBase
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return Unauthorized();
 
-        if (!user.ProfileCompleted)
+        if (!_userPolicyService.IsProfileComplete(user))
             return Ok(new ApiResponse<object> { Success = false, Message = "Please complete your profile before creating tasks" });
 
-        if (user.UserType is not ("creator" or "both"))
+        if (!_userPolicyService.CanCreateTasks(user))
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiResponse<object> { Success = false, Message = "Only Creators and Both accounts can post tasks." });
 
@@ -158,6 +161,11 @@ public class TasksController : ControllerBase
 
         var totalCount = await query.CountAsync();
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
+        var currentUserId = GetCurrentUserId();
+        User? currentUser = null;
+        if (currentUserId.HasValue)
+            currentUser = await _context.Users.FindAsync(currentUserId.Value);
+
         var tasks = await query.OrderByDescending(t => t.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(t => new TaskDto
             {
@@ -168,6 +176,13 @@ public class TasksController : ControllerBase
                 PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
                 HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
             }).ToListAsync();
+
+        if (currentUser != null)
+        {
+            var canAccept = _userPolicyService.CanAcceptTasks(currentUser);
+            foreach (var availableTask in tasks)
+                availableTask.CanAccept = canAccept && availableTask.CreatedByUserId != currentUser.Id;
+        }
 
         return Ok(new PaginatedResponse<TaskDto> { Success = true, Count = totalCount, Page = page, PageSize = pageSize, TotalPages = totalPages, Tasks = tasks });
     }
@@ -210,10 +225,13 @@ public class TasksController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
-        if (user == null || !user.ProfileCompleted)
+        if (user == null)
+            return Unauthorized();
+
+        if (!_userPolicyService.IsProfileComplete(user))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Please complete your profile before claiming tasks" });
 
-        if (user.UserType is not ("runner" or "both"))
+        if (!_userPolicyService.CanAcceptTasks(user))
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiResponse<bool> { Success = false, Message = "Only Runners and Both accounts can accept tasks." });
 
@@ -277,6 +295,9 @@ public class TasksController : ControllerBase
     [HttpGet("{taskId}")]
     public async Task<ActionResult<ApiResponse<object>>> GetTask(string taskId)
     {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+
         var task = await _context.Tasks.Include(t => t.CreatedByUser).Include(t => t.AcceptedByUser).FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null) return NotFound(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
@@ -295,9 +316,12 @@ public class TasksController : ControllerBase
             runnerContact = task.AcceptedByUser?.PhoneNumber ?? task.AcceptedByUser?.Email,
             runnerId = task.AcceptedByUserId, createdByUserId = task.CreatedByUserId, completedAt = task.CompletedAt,
             notes = task.Notes, progressUpdates = progressUpdates,
-            canEdit = task.TaskStatus == "PendingPayment",
-            canComplete = task.TaskStatus == "Claimed",
-            canCancel = task.TaskStatus == "PendingPayment"
+            canEdit = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
+            canComplete = task.AcceptedByUserId == currentUserId && task.TaskStatus == "Claimed",
+            canCancel = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
+            canConfirm = task.CreatedByUserId == currentUserId && task.TaskStatus == "Completed",
+            canMessage = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId,
+            canDispute = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId
         };
 
         return Ok(new ApiResponse<object> { Success = true, Data = taskDto, Message = "Task retrieved successfully" });

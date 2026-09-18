@@ -4,8 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
+using DoForYou.API.Services;
 using System.Security.Claims;
-using System.ComponentModel.DataAnnotations;
 
 namespace DoForYou.API.Controllers;
 
@@ -15,7 +15,13 @@ namespace DoForYou.API.Controllers;
 public class UserController : ControllerBase
 {
     private readonly AppDbContext _context;
-    public UserController(AppDbContext context) => _context = context;
+    private readonly IUserPolicyService _userPolicyService;
+
+    public UserController(AppDbContext context, IUserPolicyService userPolicyService)
+    {
+        _context = context;
+        _userPolicyService = userPolicyService;
+    }
 
     [HttpGet("profile")]
     public async Task<ActionResult<ApiResponse<object>>> GetProfile()
@@ -31,7 +37,9 @@ public class UserController : ControllerBase
                 id = user.Id, firstName = user.FirstName, lastName = user.LastName, email = user.Email,
                 phoneNumber = user.PhoneNumber, address = user.Address, userType = user.UserType,
                 idNumber = user.IdNumber, dateOfBirth = user.DateOfBirth, username = user.Username,
-                profileCompleted = IsProfileComplete(user), profileCompletion = CalculateProfileCompletion(user),
+                profileCompleted = _userPolicyService.IsProfileComplete(user), profileCompletion = _userPolicyService.GetProfileCompletion(user),
+                missingProfileFields = _userPolicyService.GetMissingProfileFields(user),
+                canCreateTasks = _userPolicyService.CanCreateTasks(user), canAcceptTasks = _userPolicyService.CanAcceptTasks(user),
                 rating = user.Rating, completedTasks = user.CompletedTasks, isVerified = user.IsVerified,
                 emailVerified = user.EmailVerified, phoneVerified = user.PhoneVerified, isAvailable = user.IsAvailable,
                 bio = user.Bio, serviceCategories = user.ServiceCategories, coverageArea = user.CoverageArea,
@@ -52,16 +60,16 @@ public class UserController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FirstName) || string.IsNullOrWhiteSpace(request.LastName))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "First name and last name are required." });
 
-        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && !IsValidPhone(request.PhoneNumber))
+        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && !_userPolicyService.IsValidPhone(request.PhoneNumber))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Enter a valid South African phone number." });
 
-        if (!string.IsNullOrWhiteSpace(request.Address) && IsPlaceholderAddress(request.Address))
+        if (!string.IsNullOrWhiteSpace(request.Address) && _userPolicyService.IsPlaceholderAddress(request.Address))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Please enter a real area or suburb, not a placeholder address." });
 
         if (!string.IsNullOrWhiteSpace(request.IdNumber))
         {
             var id = request.IdNumber.Trim();
-            if (!IsValidSouthAfricanId(id))
+            if (!_userPolicyService.IsValidSouthAfricanId(id))
                 return BadRequest(new ApiResponse<bool> { Success = false, Message = "Enter a valid 13-digit South African ID number." });
             user.IdNumber = id;
         }
@@ -81,7 +89,7 @@ public class UserController : ControllerBase
             user.UserType = type;
         }
 
-        user.ProfileCompleted = IsProfileComplete(user);
+        user.ProfileCompleted = _userPolicyService.IsProfileComplete(user);
         await _context.SaveChangesAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Profile updated successfully" });
     }
@@ -113,7 +121,7 @@ public class UserController : ControllerBase
     [HttpPost("validate-id")]
     public ActionResult<ApiResponse<object>> ValidateId([FromBody] ValidateIdRequest request)
     {
-        var valid = IsValidSouthAfricanId(request.IdNumber);
+        var valid = _userPolicyService.IsValidSouthAfricanId(request.IdNumber);
         return Ok(new ApiResponse<object> { Success = valid, Data = new { valid }, Message = valid ? "Valid ID number" : "Invalid ID number" });
     }
 
@@ -123,12 +131,11 @@ public class UserController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
-        var type = user?.UserType?.ToLowerInvariant() ?? "";
         return Ok(new ApiResponse<object> {
             Success = true,
             Data = new {
-                canCreateTasks = type is "creator" or "both",
-                canAcceptTasks = type is "runner" or "both",
+                canCreateTasks = _userPolicyService.CanCreateTasks(user!),
+                canAcceptTasks = _userPolicyService.CanAcceptTasks(user!),
                 taskCreatorNotifications = true, taskRunnerNotifications = true, paymentNotifications = true,
                 emailNotifications = true, smsNotifications = false, minTaskAmount = 50, maxTaskAmount = 100000,
                 preferredCategories = Array.Empty<string>(), preferredLocations = Array.Empty<string>()
@@ -155,7 +162,7 @@ public class UserController : ControllerBase
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Select Creator, Runner, or Both." });
 
         user.UserType = type;
-        user.ProfileCompleted = IsProfileComplete(user);
+        user.ProfileCompleted = _userPolicyService.IsProfileComplete(user);
         await _context.SaveChangesAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Preferences updated successfully" });
     }
@@ -166,55 +173,6 @@ public class UserController : ControllerBase
         return int.TryParse(value, out var id) ? id : null;
     }
 
-    private static bool IsProfileComplete(User user) =>
-        !string.IsNullOrWhiteSpace(user.FirstName) &&
-        !string.IsNullOrWhiteSpace(user.LastName) &&
-        new EmailAddressAttribute().IsValid(user.Email) &&
-        !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber) &&
-        !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address) &&
-        IsValidSouthAfricanId(user.IdNumber) &&
-        user.DateOfBirth.HasValue &&
-        user.UserType is "creator" or "runner" or "both";
-
-    private static int CalculateProfileCompletion(User user)
-    {
-        var fields = new[] {
-            !string.IsNullOrWhiteSpace(user.FirstName),
-            !string.IsNullOrWhiteSpace(user.LastName),
-            new EmailAddressAttribute().IsValid(user.Email),
-            !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber),
-            !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address),
-            IsValidSouthAfricanId(user.IdNumber),
-            user.DateOfBirth.HasValue,
-            user.UserType is "creator" or "runner" or "both"
-        };
-        return (int)Math.Round(fields.Count(x => x) * 100.0 / fields.Length);
-    }
-
-    private static bool IsValidPhone(string value)
-    {
-        var digits = new string(value.Where(char.IsDigit).ToArray());
-        return (digits.Length == 10 && digits.StartsWith("0")) || (digits.Length == 11 && digits.StartsWith("27"));
-    }
-
-    private static bool IsPlaceholderAddress(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return true;
-        var normalized = value.Trim().ToLowerInvariant();
-        return normalized is "just around" or "near me" or "around" or "n/a" or "na" or "tbc" or "unknown" or "somewhere";
-    }
-
-    private static bool IsValidSouthAfricanId(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Length != 13 || !value.All(char.IsDigit)) return false;
-        var sum = 0;
-        for (var i = 0; i < 13; i++) {
-            var d = value[i] - '0';
-            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
-            sum += d;
-        }
-        return sum % 10 == 0;
-    }
 }
 
 public class UpdateProfileRequest
