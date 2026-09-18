@@ -171,7 +171,7 @@ public class TasksController : ControllerBase
         var tasks = await query.OrderByDescending(t => t.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(t => new TaskDto
             {
-                Id = t.Id, TaskId = t.TaskId,
+                Id = t.Id, TaskId = t.TaskId, TaskName = t.TaskName,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category,
                 Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes,
