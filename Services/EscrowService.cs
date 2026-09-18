@@ -40,8 +40,16 @@ public class EscrowService : IEscrowService
             if (!force && task.EscrowHoldUntil.HasValue && task.EscrowHoldUntil > DateTime.UtcNow)
                 return false;
 
-            var existingPayout = await _context.Payouts.FirstOrDefaultAsync(p => p.TaskId == task.Id && p.Status != "Cancelled");
-            if (existingPayout != null)
+            // Keep active/processing/completed payout records idempotent. A terminal
+            // Failed/Returned payout is historical and may be followed by a new
+            // payout attempt after the underlying issue is corrected.
+            var existingPayout = await _context.Payouts
+                .Where(p => p.TaskId == task.Id)
+                .OrderByDescending(p => p.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (existingPayout != null &&
+                existingPayout.Status is not ("Failed" or "Returned" or "Cancelled"))
             {
                 if (transaction != null) await transaction.CommitAsync();
                 return true;
@@ -55,7 +63,12 @@ public class EscrowService : IEscrowService
                 return false;
             }
 
-            var merchantReference = $"DFY-PAYOUT-{task.TaskId}";
+            // A new provider submission after a terminal payout failure/return
+            // gets a fresh merchant reference so the prior provider transaction
+            // remains immutable and auditable.
+            var merchantReference = existingPayout == null
+                ? $"DFY-PAYOUT-{task.TaskId}"
+                : $"DFY-PAYOUT-{task.TaskId}-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
             var payout = new Payout
             {
                 TaskId = task.Id,
