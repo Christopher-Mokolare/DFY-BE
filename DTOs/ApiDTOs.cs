@@ -300,6 +300,15 @@ public class SubmitRatingRequest
 public class UpdateUserStatusRequest
 {
     public bool IsVerified { get; set; }
+
+    [Required, StringLength(500, MinimumLength = 5)]
+    public string Reason { get; set; } = string.Empty;
+}
+
+public class AdminActionReasonRequest
+{
+    [Required, StringLength(500, MinimumLength = 5)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class UpdateUserRoleRequest
@@ -312,6 +321,9 @@ public class BulkVerifyRequest
 {
     [Required]
     public List<string> TaskIds { get; set; } = new();
+
+    [Required, StringLength(500, MinimumLength = 5)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class CancelTaskRequest
