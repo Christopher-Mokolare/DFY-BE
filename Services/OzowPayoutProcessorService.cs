@@ -159,6 +159,17 @@ public class OzowPayoutProcessorService(
                 }
                 else if (providerStatus == 90)
                 {
+                    // Completed is terminal. Never downgrade a payout after
+                    // DFY has recorded the runner as paid.
+                    if (stale.Status == "Completed" ||
+                        stale.Task.PayoutStatus == "Completed" ||
+                        stale.Task.TaskStatus == "RunnerPaid")
+                    {
+                        stale.UpdatedAt = DateTime.UtcNow;
+                        await context.SaveChangesAsync(cancellationToken);
+                        continue;
+                    }
+
                     // PayoutReturned.
                     stale.Status =
                         "Returned";
@@ -188,6 +199,17 @@ public class OzowPayoutProcessorService(
                 }
                 else if (providerStatus == 99)
                 {
+                    // Completed is terminal. Never downgrade a payout after
+                    // DFY has recorded the runner as paid.
+                    if (stale.Status == "Completed" ||
+                        stale.Task.PayoutStatus == "Completed" ||
+                        stale.Task.TaskStatus == "RunnerPaid")
+                    {
+                        stale.UpdatedAt = DateTime.UtcNow;
+                        await context.SaveChangesAsync(cancellationToken);
+                        continue;
+                    }
+
                     // PayoutCancelled.
                     stale.Status =
                         "Cancelled";
