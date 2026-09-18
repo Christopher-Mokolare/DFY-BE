@@ -141,9 +141,12 @@ public class ClaimTaskRequest
 {
     [Required]
     public string HelperName { get; set; } = string.Empty;
-    
+
     [Required]
     public string HelperContact { get; set; } = string.Empty;
+
+    [Required]
+    public bool TermsAccepted { get; set; }
 }
 
 public class UpdatePaymentStatusRequest
