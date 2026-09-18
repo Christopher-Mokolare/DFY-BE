@@ -170,7 +170,7 @@ public class AdminController : ControllerBase
     }
 
     [HttpPatch("tasks/{taskId}/verify")]
-    public async Task<ActionResult<ApiResponse<bool>>> VerifyTask(string taskId)
+    public async Task<ActionResult<ApiResponse<bool>>> VerifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null)
@@ -181,7 +181,7 @@ public class AdminController : ControllerBase
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
-        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", "Completed");
+        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", $"Completed; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool>
         {
@@ -192,7 +192,7 @@ public class AdminController : ControllerBase
     }
 
     [HttpPatch("tasks/{taskId}/unverify")]
-    public async Task<ActionResult<ApiResponse<bool>>> UnverifyTask(string taskId)
+    public async Task<ActionResult<ApiResponse<bool>>> UnverifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null)
@@ -203,7 +203,7 @@ public class AdminController : ControllerBase
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
-        await WriteAuditAsync("UnverifyPayment", "Task", task.Id, "Completed", "Pending");
+        await WriteAuditAsync("UnverifyPayment", "Task", task.Id, "Completed", $"Pending; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool>
         {
@@ -337,7 +337,7 @@ public class AdminController : ControllerBase
         var old = user.IsVerified;
         user.IsVerified = request.IsVerified;
         await _context.SaveChangesAsync();
-        await WriteAuditAsync(request.IsVerified ? "VerifyUser" : "UnverifyUser", "User", userId, old.ToString(), request.IsVerified.ToString());
+        await WriteAuditAsync(request.IsVerified ? "VerifyUser" : "UnverifyUser", "User", userId, old.ToString(), $"{request.IsVerified}; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User status updated" });
     }
@@ -403,12 +403,15 @@ public class AdminController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        foreach (var task in tasks)
+            await WriteAuditAsync("BulkVerifyPayment", "Task", task.Id, "PendingPayment", $"Completed; reason={request.Reason.Trim()}");
+
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{tasks.Count} tasks verified" });
     }
 
 
     [HttpPatch("tasks/{taskId}/force-release-escrow")]
-    public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId)
+    public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId, [FromBody] AdminActionReasonRequest request)
     {
         var task = await _context.Tasks
             .FirstOrDefaultAsync(t => t.TaskId == taskId);
@@ -467,7 +470,7 @@ public class AdminController : ControllerBase
             "Task",
             task.Id,
             null,
-            "PayoutPending");
+            $"PayoutPending; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool>
         {
@@ -485,10 +488,28 @@ public class AdminController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
 
-        _context.Tasks.Remove(task);
-        await _context.SaveChangesAsync();
+        var hasFinancialActivity =
+            task.PaymentStatus != "Pending" ||
+            task.EscrowStatus != "pending" ||
+            task.PayoutReference != null ||
+            task.PayoutInitiatedAt.HasValue ||
+            task.PayoutCompletedAt.HasValue ||
+            task.PaidToRunnerAt.HasValue ||
+            task.AcceptedByUserId.HasValue ||
+            await _context.Payouts.AnyAsync(p => p.TaskId == task.Id) ||
+            await _context.Disputes.AnyAsync(d => d.TaskId == task.Id);
 
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task deleted" });
+        if (hasFinancialActivity)
+            return Conflict(new ApiResponse<bool> { Success = false, Data = false, Message = "Financially active tasks cannot be hard-deleted. Retain the record for audit and financial reconciliation." });
+
+        task.IsDeleted = true;
+        task.DeletedAt = DateTime.UtcNow;
+        task.TaskStatus = "Cancelled";
+        task.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        await WriteAuditAsync("SoftDeleteTask", "Task", task.Id, "Active", "Cancelled; admin deletion requested");
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task archived" });
     }
 
     [HttpDelete("users/{userId}")]
@@ -498,10 +519,15 @@ public class AdminController : ControllerBase
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
-        _context.Users.Remove(user);
-        await _context.SaveChangesAsync();
+        var hasUserFinancialActivity =
+            user.WalletBalance != 0 ||
+            await _context.Tasks.AnyAsync(t => t.CreatedByUserId == userId || t.AcceptedByUserId == userId) ||
+            await _context.Payouts.AnyAsync(p => p.RunnerId == userId);
 
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User deleted" });
+        if (hasUserFinancialActivity)
+            return Conflict(new ApiResponse<bool> { Success = false, Data = false, Message = "Users with task or financial history cannot be hard-deleted. Deactivate or suspend the account instead." });
+
+        return Conflict(new ApiResponse<bool> { Success = false, Data = false, Message = "User deletion is disabled to preserve audit history." });
     }
 
     [HttpGet("audit-logs")]
