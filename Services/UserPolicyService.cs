@@ -59,10 +59,10 @@ public sealed class UserPolicyService : IUserPolicyService
     }
 
     public bool CanCreateTasks(User user) =>
-        IsProfileComplete(user) && user.UserType is "creator" or "both";
+        IsProfileComplete(user) && (user.UserType is "creator" or "both");
 
     public bool CanAcceptTasks(User user) =>
-        IsProfileComplete(user) && user.UserType is "runner" or "both";
+        IsProfileComplete(user) && (user.UserType is "runner" or "both");
 
     private static bool IsValidPhone(string value)
     {
