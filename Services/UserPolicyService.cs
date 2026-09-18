@@ -15,6 +15,9 @@ public interface IUserPolicyService
     IReadOnlyList<string> GetMissingProfileFields(User user);
     bool CanCreateTasks(User user);
     bool CanAcceptTasks(User user);
+    bool IsValidPhone(string value);
+    bool IsPlaceholderAddress(string? value);
+    bool IsValidSouthAfricanId(string? value);
 }
 
 public sealed class UserPolicyService : IUserPolicyService
@@ -64,20 +67,20 @@ public sealed class UserPolicyService : IUserPolicyService
     public bool CanAcceptTasks(User user) =>
         IsProfileComplete(user) && (user.UserType is "runner" or "both");
 
-    private static bool IsValidPhone(string value)
+    public bool IsValidPhone(string value)
     {
         var digits = new string(value.Where(char.IsDigit).ToArray());
         return (digits.Length == 10 && digits.StartsWith("0")) ||
                (digits.Length == 11 && digits.StartsWith("27"));
     }
 
-    private static bool IsPlaceholderAddress(string? value)
+    public bool IsPlaceholderAddress(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return true;
         return PlaceholderAddresses.Contains(value.Trim().ToLowerInvariant());
     }
 
-    private static bool IsValidSouthAfricanId(string? value)
+    public bool IsValidSouthAfricanId(string? value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length != 13 || !value.All(char.IsDigit))
             return false;
