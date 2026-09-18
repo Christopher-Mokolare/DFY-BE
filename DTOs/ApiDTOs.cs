@@ -4,6 +4,9 @@ namespace DoForYou.API.DTOs;
 
 public class CreateTaskRequest : IValidatableObject
 {
+    [Required]
+    [StringLength(60)]
+    public string TaskName { get; set; } = string.Empty;
 
     [Required]
     [StringLength(500, MinimumLength = 20, ErrorMessage = "Task description must be between 20 and 500 characters.")]
@@ -31,6 +34,15 @@ public class CreateTaskRequest : IValidatableObject
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         var errors = new List<ValidationResult>();
+
+        if (string.IsNullOrWhiteSpace(TaskName))
+        {
+            errors.Add(new ValidationResult("Task name is required."));
+        }
+        else if (TaskName.Trim().Length > 60)
+        {
+            errors.Add(new ValidationResult("Task name must be 60 characters or less."));
+        }
 
         if (string.IsNullOrWhiteSpace(TaskDescription))
         {
@@ -112,6 +124,7 @@ public class TaskDto
 {
     public int Id { get; set; }
     public string TaskId { get; set; } = string.Empty;
+    public string TaskName { get; set; } = string.Empty;
     public string UserName { get; set; } = string.Empty;
     public string UserContact { get; set; } = string.Empty;
     public int CreatedByUserId { get; set; }
