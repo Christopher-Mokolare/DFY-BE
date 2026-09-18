@@ -135,6 +135,23 @@ public class OzowPayoutController(
         payout.Task.PayoutReference = request.PayoutId;
         payout.Task.UpdatedAt = DateTime.UtcNow;
 
+        // A completed payout is terminal. Late provider notifications
+        // must never downgrade a financially completed payout to Returned,
+        // Cancelled, Failed, or Processing.
+        if (payout.Status == "Completed" &&
+            status != 5)
+        {
+            logger.LogWarning(
+                "Ignoring late Ozow status {Status}/{SubStatus} for completed payout {PayoutId}.",
+                status,
+                subStatus,
+                payout.Id);
+
+            payout.UpdatedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync(cancellationToken);
+            return Ok();
+        }
+
         if (status == 5)
         {
             if (payout.Status != "Completed")
