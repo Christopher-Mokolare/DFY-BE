@@ -20,6 +20,7 @@ public class TasksController : ControllerBase
     private readonly INotificationService _notificationService;
     private readonly IConfiguration _configuration;
     private readonly IOzowPaymentService _ozowPaymentService;
+    private readonly IUserPolicyService _userPolicyService;
 
     public TasksController(
         AppDbContext context,
@@ -27,7 +28,8 @@ public class TasksController : ControllerBase
         IEscrowService escrowService,
         INotificationService notificationService,
         IConfiguration configuration,
-        IOzowPaymentService ozowPaymentService)
+        IOzowPaymentService ozowPaymentService,
+        IUserPolicyService userPolicyService)
     {
         _context = context;
         _rulesEngine = rulesEngine;
@@ -35,6 +37,7 @@ public class TasksController : ControllerBase
         _notificationService = notificationService;
         _configuration = configuration;
         _ozowPaymentService = ozowPaymentService;
+        _userPolicyService = userPolicyService;
     }
 
     [HttpPost]
@@ -46,10 +49,10 @@ public class TasksController : ControllerBase
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return Unauthorized();
 
-        if (!user.ProfileCompleted)
+        if (!_userPolicyService.IsProfileComplete(user))
             return Ok(new ApiResponse<object> { Success = false, Message = "Please complete your profile before creating tasks" });
 
-        if (user.UserType is not ("creator" or "both"))
+        if (!_userPolicyService.CanCreateTasks(user))
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiResponse<object> { Success = false, Message = "Only Creators and Both accounts can post tasks." });
 
@@ -210,10 +213,13 @@ public class TasksController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
-        if (user == null || !user.ProfileCompleted)
+        if (user == null)
+            return Unauthorized();
+
+        if (!_userPolicyService.IsProfileComplete(user))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Please complete your profile before claiming tasks" });
 
-        if (user.UserType is not ("runner" or "both"))
+        if (!_userPolicyService.CanAcceptTasks(user))
             return StatusCode(StatusCodes.Status403Forbidden,
                 new ApiResponse<bool> { Success = false, Message = "Only Runners and Both accounts can accept tasks." });
 
