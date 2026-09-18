@@ -194,14 +194,84 @@ public class DisputesController : ControllerBase
         }
         else if (action == "refund_creator")
         {
-            // Refund provider integration is not yet implemented. Do not mark a task as
-            // financially refunded when no provider-side refund has been confirmed.
-            return StatusCode(StatusCodes.Status501NotImplemented,
-                new ApiResponse<bool>
-                {
-                    Success = false,
-                    Message = "Creator refunds require the Ozow refund integration and cannot be marked refunded yet."
-                });
+            if (task.TaskStatus == "RunnerPaid" ||
+                task.EscrowStatus == "released" ||
+                task.EscrowStatus == "refunded")
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
+
+            var activePayout = await _context.Payouts.AnyAsync(p =>
+                p.TaskId == task.Id &&
+                (p.Status == "Processing" || p.Status == "Completed"));
+            if (activePayout)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "A runner payout is already processing or completed for this task." });
+
+            var paymentVerification = await _context.AuditLogs
+                .Where(a =>
+                    a.EntityType == "Task" &&
+                    a.EntityId == task.Id &&
+                    a.Action == "OzowPaymentVerified" &&
+                    a.NewValues != null)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            var transactionId = ExtractAuditValue(paymentVerification?.NewValues, "transactionId");
+            if (string.IsNullOrWhiteSpace(transactionId))
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "Original Ozow transaction ID is not available; refund cannot be safely submitted." });
+
+            var existingRefund = await _context.AuditLogs
+                .Where(a =>
+                    a.EntityType == "Task" &&
+                    a.EntityId == task.Id &&
+                    a.Action == "OzowRefundSubmitted" &&
+                    a.NewValues != null)
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            var existingRefundId = ExtractAuditValue(existingRefund?.NewValues, "refundId");
+            if (!string.IsNullOrWhiteSpace(existingRefundId))
+                return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Ozow confirmation." });
+
+            var refund = await _ozowPaymentService.SubmitRefundAsync(
+                transactionId,
+                task.Budget,
+                resolution,
+                HttpContext.RequestAborted);
+
+            if (!refund.Success || string.IsNullOrWhiteSpace(refund.RefundId))
+                return StatusCode(StatusCodes.Status502BadGateway,
+                    new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Ozow refund." });
+
+            task.PaymentStatus = "RefundPending";
+            task.TaskStatus = "RefundPending";
+            task.EscrowStatus = "refund_pending";
+            task.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            await _context.AuditLogs.AddAsync(new Models.AuditLog
+            {
+                UserId = GetCurrentUserId(),
+                Action = "OzowRefundSubmitted",
+                EntityType = "Task",
+                EntityId = task.Id,
+                NewValues = $"refundId={refund.RefundId}; transactionId={transactionId}; amount={task.Budget:F2}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            await _context.SaveChangesAsync();
+
+            dispute.Status = "RefundPending";
+            dispute.Resolution = resolution;
+            dispute.ResolvedAt = null;
+            await _context.SaveChangesAsync();
+
+            await _notificationService.CreateNotificationAsync(
+                task.CreatedByUserId,
+                "refund_pending",
+                "Refund Submitted",
+                $"Your refund for task {task.TaskId} has been submitted to Ozow and is awaiting confirmation.",
+                task.Id);
+
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Refund submitted to Ozow and is awaiting provider confirmation." });
         }
         else
         {
@@ -248,6 +318,17 @@ public class DisputesController : ControllerBase
         }
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });
+    }
+
+    private static string? ExtractAuditValue(string? values, string key)
+    {
+        if (string.IsNullOrWhiteSpace(values)) return null;
+        var prefix = key + "=";
+        var start = values.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += prefix.Length;
+        var end = values.IndexOf(';', start);
+        return (end >= 0 ? values[start..end] : values[start..]).Trim();
     }
 
     private int? GetCurrentUserId()
