@@ -198,6 +198,34 @@ public class PaymentController : ControllerBase
                     return BadRequest();
                 }
 
+                // Persist the verified provider transaction identifier in the immutable audit trail.
+                // The current production schema has no dedicated payment transaction column.
+                var transactionId = GetField(fields, "TransactionId");
+                if (string.IsNullOrWhiteSpace(transactionId))
+                    transactionId = verified.TransactionId;
+
+                var existingVerification = !string.IsNullOrWhiteSpace(transactionId) &&
+                    await _context.AuditLogs.AnyAsync(audit =>
+                        audit.EntityType == "Task" &&
+                        audit.EntityId == task.Id &&
+                        audit.Action == "OzowPaymentVerified" &&
+                        audit.NewValues != null &&
+                        audit.NewValues.Contains($"transactionId={transactionId}"));
+
+                if (!existingVerification)
+                {
+                    _context.AuditLogs.Add(new Models.AuditLog
+                    {
+                        UserId = null,
+                        Action = "OzowPaymentVerified",
+                        EntityType = "Task",
+                        EntityId = task.Id,
+                        NewValues = $"transactionId={transactionId}; transactionReference={transactionReference}; amount={task.Budget:F2}",
+                        IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                        UserAgent = Request.Headers.UserAgent.ToString()
+                    });
+                }
+
                 // Idempotent transition.
                 if (task.PaymentStatus != "EscrowHeld" ||
                     task.TaskStatus == "PendingPayment")
@@ -206,10 +234,9 @@ public class PaymentController : ControllerBase
                     task.TaskStatus = "Posted";
                     task.EscrowStatus = "held";
                     task.UpdatedAt = DateTime.UtcNow;
-
-                    await _context.SaveChangesAsync();
                 }
 
+                await _context.SaveChangesAsync();
                 return Ok();
             }
 
