@@ -5,7 +5,6 @@ using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using System.Security.Claims;
-using System.ComponentModel.DataAnnotations;
 
 namespace DoForYou.API.Controllers;
 
@@ -15,7 +14,13 @@ namespace DoForYou.API.Controllers;
 public class UserController : ControllerBase
 {
     private readonly AppDbContext _context;
-    public UserController(AppDbContext context) => _context = context;
+    private readonly IUserPolicyService _userPolicyService;
+
+    public UserController(AppDbContext context, IUserPolicyService userPolicyService)
+    {
+        _context = context;
+        _userPolicyService = userPolicyService;
+    }
 
     [HttpGet("profile")]
     public async Task<ActionResult<ApiResponse<object>>> GetProfile()
@@ -31,7 +36,9 @@ public class UserController : ControllerBase
                 id = user.Id, firstName = user.FirstName, lastName = user.LastName, email = user.Email,
                 phoneNumber = user.PhoneNumber, address = user.Address, userType = user.UserType,
                 idNumber = user.IdNumber, dateOfBirth = user.DateOfBirth, username = user.Username,
-                profileCompleted = IsProfileComplete(user), profileCompletion = CalculateProfileCompletion(user),
+                profileCompleted = _userPolicyService.IsProfileComplete(user), profileCompletion = _userPolicyService.GetProfileCompletion(user),
+                missingProfileFields = _userPolicyService.GetMissingProfileFields(user),
+                canCreateTasks = _userPolicyService.CanCreateTasks(user), canAcceptTasks = _userPolicyService.CanAcceptTasks(user),
                 rating = user.Rating, completedTasks = user.CompletedTasks, isVerified = user.IsVerified,
                 emailVerified = user.EmailVerified, phoneVerified = user.PhoneVerified, isAvailable = user.IsAvailable,
                 bio = user.Bio, serviceCategories = user.ServiceCategories, coverageArea = user.CoverageArea,
@@ -81,7 +88,7 @@ public class UserController : ControllerBase
             user.UserType = type;
         }
 
-        user.ProfileCompleted = IsProfileComplete(user);
+        user.ProfileCompleted = _userPolicyService.IsProfileComplete(user);
         await _context.SaveChangesAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Profile updated successfully" });
     }
@@ -127,8 +134,8 @@ public class UserController : ControllerBase
         return Ok(new ApiResponse<object> {
             Success = true,
             Data = new {
-                canCreateTasks = type is "creator" or "both",
-                canAcceptTasks = type is "runner" or "both",
+                canCreateTasks = _userPolicyService.CanCreateTasks(user!),
+                canAcceptTasks = _userPolicyService.CanAcceptTasks(user!),
                 taskCreatorNotifications = true, taskRunnerNotifications = true, paymentNotifications = true,
                 emailNotifications = true, smsNotifications = false, minTaskAmount = 50, maxTaskAmount = 100000,
                 preferredCategories = Array.Empty<string>(), preferredLocations = Array.Empty<string>()
@@ -155,7 +162,7 @@ public class UserController : ControllerBase
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Select Creator, Runner, or Both." });
 
         user.UserType = type;
-        user.ProfileCompleted = IsProfileComplete(user);
+        user.ProfileCompleted = _userPolicyService.IsProfileComplete(user);
         await _context.SaveChangesAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Preferences updated successfully" });
     }
@@ -166,55 +173,6 @@ public class UserController : ControllerBase
         return int.TryParse(value, out var id) ? id : null;
     }
 
-    private static bool IsProfileComplete(User user) =>
-        !string.IsNullOrWhiteSpace(user.FirstName) &&
-        !string.IsNullOrWhiteSpace(user.LastName) &&
-        new EmailAddressAttribute().IsValid(user.Email) &&
-        !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber) &&
-        !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address) &&
-        IsValidSouthAfricanId(user.IdNumber) &&
-        user.DateOfBirth.HasValue &&
-        user.UserType is "creator" or "runner" or "both";
-
-    private static int CalculateProfileCompletion(User user)
-    {
-        var fields = new[] {
-            !string.IsNullOrWhiteSpace(user.FirstName),
-            !string.IsNullOrWhiteSpace(user.LastName),
-            new EmailAddressAttribute().IsValid(user.Email),
-            !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber),
-            !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address),
-            IsValidSouthAfricanId(user.IdNumber),
-            user.DateOfBirth.HasValue,
-            user.UserType is "creator" or "runner" or "both"
-        };
-        return (int)Math.Round(fields.Count(x => x) * 100.0 / fields.Length);
-    }
-
-    private static bool IsValidPhone(string value)
-    {
-        var digits = new string(value.Where(char.IsDigit).ToArray());
-        return (digits.Length == 10 && digits.StartsWith("0")) || (digits.Length == 11 && digits.StartsWith("27"));
-    }
-
-    private static bool IsPlaceholderAddress(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return true;
-        var normalized = value.Trim().ToLowerInvariant();
-        return normalized is "just around" or "near me" or "around" or "n/a" or "na" or "tbc" or "unknown" or "somewhere";
-    }
-
-    private static bool IsValidSouthAfricanId(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Length != 13 || !value.All(char.IsDigit)) return false;
-        var sum = 0;
-        for (var i = 0; i < 13; i++) {
-            var d = value[i] - '0';
-            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
-            sum += d;
-        }
-        return sum % 10 == 0;
-    }
 }
 
 public class UpdateProfileRequest
