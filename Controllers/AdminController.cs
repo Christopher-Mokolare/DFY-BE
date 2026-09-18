@@ -5,6 +5,7 @@ using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Services;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace DoForYou.API.Controllers;
 
@@ -343,16 +344,33 @@ public class AdminController : ControllerBase
     }
 
     [HttpPatch("users/{userId}/role")]
-    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] UpdateUserRoleRequest request)
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] JsonElement request)
     {
         var user = await _context.Users.FindAsync(userId);
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
+        var role = request.TryGetProperty("role", out var roleElement)
+            ? roleElement.GetString()?.Trim()
+            : null;
+        var reason = request.TryGetProperty("reason", out var reasonElement)
+            ? reasonElement.GetString()?.Trim()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(role) ||
+            (role != "User" && role != "Admin" && role != "Admin,User"))
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A valid role is required." });
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
+
         var oldRole = user.Roles;
-        user.Roles = request.Role;
+        if (string.Equals(oldRole, role, StringComparison.Ordinal))
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role unchanged." });
+
+        user.Roles = role;
         await _context.SaveChangesAsync();
-        await WriteAuditAsync("UpdateUserRole", "User", userId, oldRole, request.Role);
+        await WriteAuditAsync("UpdateUserRole", "User", userId, oldRole, $"{role}; reason={reason}");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role updated" });
     }
