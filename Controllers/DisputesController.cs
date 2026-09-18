@@ -5,6 +5,7 @@ using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Services;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace DoForYou.API.Controllers;
 
@@ -151,8 +152,19 @@ public class DisputesController : ControllerBase
 
     [HttpPatch("{id}/resolve")]
     [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] ResolveDisputeRequest request)
+    public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] JsonElement request)
     {
+        var action = request.TryGetProperty("action", out var actionElement) ? actionElement.GetString()?.Trim() : null;
+        var resolution = request.TryGetProperty("resolution", out var resolutionElement) ? resolutionElement.GetString()?.Trim() : null;
+        var reason = request.TryGetProperty("reason", out var reasonElement) ? reasonElement.GetString()?.Trim() : null;
+
+        if (string.IsNullOrWhiteSpace(action) ||
+            string.IsNullOrWhiteSpace(resolution) ||
+            string.IsNullOrWhiteSpace(reason) ||
+            reason.Length < 5 ||
+            reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "Action, resolution and a reason between 5 and 500 characters are required." });
+
         var dispute = await _context.Disputes
             .Include(d => d.Task)
             .FirstOrDefaultAsync(d => d.Id == id);
@@ -165,7 +177,7 @@ public class DisputesController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute task not found" });
 
-        if (request.Action == "release_to_runner")
+        if (action == "release_to_runner")
         {
             // Re-open the escrow hold for the release service, then create the normal
             // idempotent Ozow payout. The payout processor will only mark the runner paid
@@ -180,7 +192,7 @@ public class DisputesController : ControllerBase
             if (!released)
                 return Ok(new ApiResponse<bool> { Success = false, Message = "Unable to release escrow into the Ozow payout flow" });
         }
-        else if (request.Action == "refund_creator")
+        else if (action == "refund_creator")
         {
             // Refund provider integration is not yet implemented. Do not mark a task as
             // financially refunded when no provider-side refund has been confirmed.
@@ -197,12 +209,12 @@ public class DisputesController : ControllerBase
         }
 
         dispute.Status = "Resolved";
-        dispute.Resolution = request.Resolution;
+        dispute.Resolution = resolution;
         dispute.ResolvedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
         // Notify the participants about the administrative resolution.
-        var message = request.Action == "release_to_runner"
+        var message = action == "release_to_runner"
             ? $"Your dispute for task {task.TaskId} was resolved and the runner payout is being processed through Ozow."
             : $"Your dispute for task {task.TaskId} was resolved.";
 
@@ -212,6 +224,18 @@ public class DisputesController : ControllerBase
             "Dispute Resolved",
             message,
             task.Id);
+
+        await _context.AuditLogs.AddAsync(new Models.AuditLog
+        {
+            UserId = GetCurrentUserId(),
+            Action = "ResolveDispute",
+            EntityType = "Dispute",
+            EntityId = dispute.Id,
+            NewValues = $"action={action}; resolution={resolution}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
 
         if (task.AcceptedByUserId.HasValue)
         {
