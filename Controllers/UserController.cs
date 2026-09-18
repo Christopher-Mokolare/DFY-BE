@@ -130,7 +130,6 @@ public class UserController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
         var user = await _context.Users.FindAsync(userId);
-        var type = user?.UserType?.ToLowerInvariant() ?? "";
         return Ok(new ApiResponse<object> {
             Success = true,
             Data = new {
