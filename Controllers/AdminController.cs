@@ -417,7 +417,7 @@ public class AdminController : ControllerBase
             Success = true,
             Data = new
             {
-                user = new { user.Id, user.WalletBalance, user.Rating, user.CompletedTasks },
+                user = new { user.Id, user.Rating, user.CompletedTasks },
                 postedTasks,
                 acceptedTasks
             }
