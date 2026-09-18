@@ -60,16 +60,16 @@ public class UserController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.FirstName) || string.IsNullOrWhiteSpace(request.LastName))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "First name and last name are required." });
 
-        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && !IsValidPhone(request.PhoneNumber))
+        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && !_userPolicyService.IsValidPhone(request.PhoneNumber))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Enter a valid South African phone number." });
 
-        if (!string.IsNullOrWhiteSpace(request.Address) && IsPlaceholderAddress(request.Address))
+        if (!string.IsNullOrWhiteSpace(request.Address) && _userPolicyService.IsPlaceholderAddress(request.Address))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Please enter a real area or suburb, not a placeholder address." });
 
         if (!string.IsNullOrWhiteSpace(request.IdNumber))
         {
             var id = request.IdNumber.Trim();
-            if (!IsValidSouthAfricanId(id))
+            if (!_userPolicyService.IsValidSouthAfricanId(id))
                 return BadRequest(new ApiResponse<bool> { Success = false, Message = "Enter a valid 13-digit South African ID number." });
             user.IdNumber = id;
         }
@@ -121,7 +121,7 @@ public class UserController : ControllerBase
     [HttpPost("validate-id")]
     public ActionResult<ApiResponse<object>> ValidateId([FromBody] ValidateIdRequest request)
     {
-        var valid = IsValidSouthAfricanId(request.IdNumber);
+        var valid = _userPolicyService.IsValidSouthAfricanId(request.IdNumber);
         return Ok(new ApiResponse<object> { Success = valid, Data = new { valid }, Message = valid ? "Valid ID number" : "Invalid ID number" });
     }
 
