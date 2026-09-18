@@ -120,6 +120,7 @@ public class TaskDto
     public string Area { get; set; } = string.Empty;
     public DateTime DateNeeded { get; set; }
     public decimal Budget { get; set; }
+    public decimal PayoutAmount { get; set; }
     public string? Notes { get; set; }
     public string PaymentStatus { get; set; } = string.Empty;
     public string TaskStatus { get; set; } = string.Empty;
@@ -141,9 +142,12 @@ public class ClaimTaskRequest
 {
     [Required]
     public string HelperName { get; set; } = string.Empty;
-    
+
     [Required]
     public string HelperContact { get; set; } = string.Empty;
+
+    [Required]
+    public bool TermsAccepted { get; set; }
 }
 
 public class UpdatePaymentStatusRequest

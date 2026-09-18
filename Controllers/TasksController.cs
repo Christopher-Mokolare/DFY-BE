@@ -49,8 +49,9 @@ public class TasksController : ControllerBase
         if (!user.ProfileCompleted)
             return Ok(new ApiResponse<object> { Success = false, Message = "Please complete your profile before creating tasks" });
 
-        if (user.UserType == "runner")
-            return StatusCode(403, new ApiResponse<object> { Success = false, Message = "Forbidden: Runners cannot post tasks." });
+        if (user.UserType is not ("creator" or "both"))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<object> { Success = false, Message = "Only Creators and Both accounts can post tasks." });
 
         var ruleContext = new RuleContext { CurrentUser = user, Action = "CreateTask" };
         var canCreate = await _rulesEngine.CanPerformActionAsync("User", "CreateTask", ruleContext);
@@ -122,6 +123,7 @@ public class TasksController : ControllerBase
             Area = task.Area,
             DateNeeded = task.DateNeeded,
             Budget = task.Budget,
+            PayoutAmount = task.PayoutAmount,
             Notes = task.Notes,
             PaymentStatus = task.PaymentStatus,
             TaskStatus = task.TaskStatus,
@@ -162,7 +164,7 @@ public class TasksController : ControllerBase
                 Id = t.Id, TaskId = t.TaskId,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category,
-                Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, Notes = t.Notes,
+                Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes,
                 PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
                 HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
             }).ToListAsync();
@@ -182,7 +184,7 @@ public class TasksController : ControllerBase
                 Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
                 UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email, CreatedByUserId = t.CreatedByUserId,
                 TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
-                Budget = t.Budget, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus,
+                Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus,
                 HelperName = t.HelperName, HelperContact = t.HelperContact, Priority = t.Priority,
                 CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
             }).ToListAsync();
@@ -211,21 +213,33 @@ public class TasksController : ControllerBase
         if (user == null || !user.ProfileCompleted)
             return Ok(new ApiResponse<bool> { Success = false, Message = "Please complete your profile before claiming tasks" });
 
+        if (user.UserType is not ("runner" or "both"))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<bool> { Success = false, Message = "Only Runners and Both accounts can accept tasks." });
+
+        if (!request.TermsAccepted)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "You must accept the runner terms before accepting a task." });
+
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
-        if (task == null || task.CreatedByUserId == userId || task.TaskStatus != "Posted")
+        if (task == null || task.CreatedByUserId == userId || task.TaskStatus != "Posted" || task.PaymentStatus != "EscrowHeld")
             return Ok(new ApiResponse<bool> { Success = false, Message = "Task not available" });
 
-        var taskToClaim = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == task.Id && t.TaskStatus == "Posted" && t.AcceptedByUserId == null);
-        if (taskToClaim == null) return Ok(new ApiResponse<bool> { Success = false, Message = "Task not available" });
+        // Atomic claim: exactly one runner can transition the posted task to Claimed.
+        var claimedAt = DateTime.UtcNow;
+        var affected = await _context.Tasks
+            .Where(t => t.Id == task.Id && t.TaskStatus == "Posted" && t.PaymentStatus == "EscrowHeld" && t.AcceptedByUserId == null)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.AcceptedByUserId, userId.Value)
+                .SetProperty(t => t.HelperName, request.HelperName.Trim())
+                .SetProperty(t => t.HelperContact, request.HelperContact.Trim())
+                .SetProperty(t => t.TaskStatus, "Claimed")
+                .SetProperty(t => t.UpdatedAt, claimedAt));
 
-        taskToClaim.AcceptedByUserId = userId;
-        taskToClaim.HelperName = request.HelperName;
-        taskToClaim.HelperContact = request.HelperContact;
-        taskToClaim.TaskStatus = "Claimed";
-        taskToClaim.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-        await _notificationService.NotifyTaskClaimedAsync(task.CreatedByUserId, task.TaskDescription, request.HelperName);
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task claimed successfully!" });
+        if (affected != 1)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Task was just accepted by another runner." });
+
+        await _notificationService.NotifyTaskClaimedAsync(task.CreatedByUserId, task.TaskDescription, request.HelperName.Trim());
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task accepted successfully." });
     }
 
     [HttpPut("{taskId}/payment-status")]
@@ -351,7 +365,7 @@ public class TasksController : ControllerBase
         {
             Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
             CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
-            Budget = t.Budget, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
+            Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
             HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
         }).ToListAsync();
         return Ok(new PaginatedResponse<TaskDto> { Success = true, Count = totalCount, Page = page, PageSize = pageSize, TotalPages = totalPages, Tasks = tasks });

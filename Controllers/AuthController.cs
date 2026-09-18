@@ -54,10 +54,10 @@ public class AuthController : ControllerBase
             DateOfBirth = ConvertToUtc(request.DateOfBirth),
             Username = request.Username,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            IsVerified = true,
-            ProfileCompleted = true,
-            EmailVerified = true,
-            PhoneVerified = true,
+            IsVerified = false,
+            ProfileCompleted = false,
+            EmailVerified = false,
+            PhoneVerified = false,
             Roles = "User",
             CreatedAt = DateTime.UtcNow
         };
@@ -108,6 +108,9 @@ public class AuthController : ControllerBase
 
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return Unauthorized();
+
+        if (string.Equals(request.CurrentPassword, request.NewPassword, StringComparison.Ordinal))
+            return Ok(new ApiResponse<bool> { Success = false, Message = "New password must be different from the current password" });
 
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Current password is incorrect" });
@@ -185,15 +188,42 @@ public class AuthController : ControllerBase
     {
         var fields = new[]
         {
-            !string.IsNullOrEmpty(user.FirstName),
-            !string.IsNullOrEmpty(user.LastName),
-            !string.IsNullOrEmpty(user.PhoneNumber),
-            !string.IsNullOrEmpty(user.Address),
-            !string.IsNullOrEmpty(user.IdNumber),
-            !string.IsNullOrEmpty(user.UserType),
-            user.DateOfBirth.HasValue
+            !string.IsNullOrWhiteSpace(user.FirstName),
+            !string.IsNullOrWhiteSpace(user.LastName),
+            new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(user.Email),
+            !string.IsNullOrWhiteSpace(user.PhoneNumber) && IsValidPhone(user.PhoneNumber),
+            !string.IsNullOrWhiteSpace(user.Address) && !IsPlaceholderAddress(user.Address),
+            IsValidSouthAfricanId(user.IdNumber),
+            user.DateOfBirth.HasValue,
+            user.UserType is "creator" or "runner" or "both"
         };
-        return (int)Math.Round((double)fields.Count(f => f) / fields.Length * 100);
+        return (int)Math.Round(fields.Count(f => f) * 100.0 / fields.Length);
+    }
+
+    private static bool IsValidPhone(string value)
+    {
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        return (digits.Length == 10 && digits.StartsWith("0")) || (digits.Length == 11 && digits.StartsWith("27"));
+    }
+
+    private static bool IsPlaceholderAddress(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return true;
+        var normalized = value.Trim().ToLowerInvariant();
+        return normalized is "just around" or "near me" or "around" or "n/a" or "na" or "tbc" or "unknown" or "somewhere";
+    }
+
+    private static bool IsValidSouthAfricanId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length != 13 || !value.All(char.IsDigit)) return false;
+        var sum = 0;
+        for (var i = 0; i < 13; i++)
+        {
+            var d = value[i] - '0';
+            if (i % 2 == 1) { d *= 2; if (d > 9) d -= 9; }
+            sum += d;
+        }
+        return sum % 10 == 0;
     }
 
     private string GenerateJwtToken(User user)
