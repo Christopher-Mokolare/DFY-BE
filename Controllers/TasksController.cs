@@ -75,7 +75,8 @@ public class TasksController : ControllerBase
         var task = new Models.Task
         {
             TaskId = taskId,
-            TaskDescription = request.TaskDescription,
+            TaskName = request.TaskName.Trim(),
+            TaskDescription = request.TaskDescription.Trim(),
             Category = request.Category,
             Area = request.Area,
             DateNeeded = DateTime.SpecifyKind(request.DateNeeded, DateTimeKind.Utc),
@@ -118,6 +119,7 @@ public class TasksController : ControllerBase
         {
             Id = task.Id,
             TaskId = task.TaskId,
+            TaskName = task.TaskName,
             UserName = $"{user.FirstName} {user.LastName}",
             UserContact = user.PhoneNumber ?? user.Email,
             CreatedByUserId = task.CreatedByUserId,
@@ -169,7 +171,7 @@ public class TasksController : ControllerBase
         var tasks = await query.OrderByDescending(t => t.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(t => new TaskDto
             {
-                Id = t.Id, TaskId = t.TaskId,
+                Id = t.Id, TaskId = t.TaskId, TaskName = t.TaskName,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category,
                 Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes,
@@ -196,7 +198,7 @@ public class TasksController : ControllerBase
         var tasks = await _context.Tasks.Include(t => t.CreatedByUser).Where(t => t.CreatedByUserId == userId).OrderByDescending(t => t.CreatedAt)
             .Select(t => new TaskDto
             {
-                Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
+                Id = t.Id, TaskId = t.TaskId, TaskName = t.TaskName, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
                 UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email, CreatedByUserId = t.CreatedByUserId,
                 TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
                 Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus,
@@ -301,6 +303,14 @@ public class TasksController : ControllerBase
         var task = await _context.Tasks.Include(t => t.CreatedByUser).Include(t => t.AcceptedByUser).FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null) return NotFound(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
+        // Detailed task views may contain participant contact details. Only the creator,
+        // assigned runner, or an administrator may access them.
+        var isAdmin = User.IsInRole("Admin");
+        var isParticipant = task.CreatedByUserId == currentUserId ||
+                            task.AcceptedByUserId == currentUserId;
+        if (!isAdmin && !isParticipant)
+            return Forbid();
+
         var progressUpdates = await _context.TaskProgressUpdates.Include(p => p.User).Where(p => p.TaskId == task.Id).OrderByDescending(p => p.CreatedAt)
             .Select(p => new { id = p.Id, message = p.Message, timestamp = p.CreatedAt, userId = p.UserId, userName = $"{p.User.FirstName} {p.User.LastName}" }).ToListAsync();
 
@@ -387,7 +397,7 @@ public class TasksController : ControllerBase
         var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
         var tasks = await query.OrderByDescending(t => t.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).Select(t => new TaskDto
         {
-            Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
+            Id = t.Id, TaskId = t.TaskId, TaskName = t.TaskName, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
             CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
             Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
             HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
@@ -404,12 +414,18 @@ public class TasksController : ControllerBase
         if (task == null) return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
         if (task.TaskStatus != "PendingPayment") return Ok(new ApiResponse<object> { Success = false, Message = "Only pending payment tasks can be edited" });
 
-        if (!string.IsNullOrEmpty(request.TaskDescription)) task.TaskDescription = request.TaskDescription;
-        if (!string.IsNullOrEmpty(request.Category)) task.Category = request.Category;
-        if (!string.IsNullOrEmpty(request.Area)) task.Area = request.Area;
-        if (!string.IsNullOrEmpty(request.Priority)) task.Priority = request.Priority;
-        if (!string.IsNullOrEmpty(request.Notes)) task.Notes = request.Notes;
-        if (request.DateNeeded.HasValue) task.DateNeeded = DateTime.SpecifyKind(request.DateNeeded.Value, DateTimeKind.Utc);
+        if (!string.IsNullOrWhiteSpace(request.TaskDescription)) task.TaskDescription = request.TaskDescription.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Category)) task.Category = request.Category.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Area)) task.Area = request.Area.Trim();
+        if (!string.IsNullOrWhiteSpace(request.Priority)) task.Priority = request.Priority.Trim();
+        if (request.Notes != null) task.Notes = request.Notes.Trim();
+        if (request.DateNeeded.HasValue)
+        {
+            var dateNeeded = DateTime.SpecifyKind(request.DateNeeded.Value, DateTimeKind.Utc);
+            if (dateNeeded <= DateTime.UtcNow.AddMinutes(30) || dateNeeded > DateTime.UtcNow.AddDays(365))
+                return Ok(new ApiResponse<object> { Success = false, Message = "Date needed must be more than 30 minutes and no more than 365 days in the future." });
+            task.DateNeeded = dateNeeded;
+        }
         if (request.Budget.HasValue && request.Budget.Value >= 50)
         {
             task.Budget = request.Budget.Value;
