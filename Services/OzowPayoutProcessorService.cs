@@ -443,20 +443,38 @@ public class OzowPayoutProcessorService(
                 continue;
             }
 
-            payout.Status = "Processing";
-            payout.ProcessingAt = DateTime.UtcNow;
-            payout.LastAttemptAt = DateTime.UtcNow;
-            payout.AttemptCount++;
-            payout.UpdatedAt = DateTime.UtcNow;
+            // Claim the payout atomically before calling Ozow.
+            // Multiple API instances may run this hosted service at the
+            // same time; only the instance that successfully changes the
+            // row from Pending -> Processing may submit the payout.
+            var now = DateTime.UtcNow;
+            var claimed = await context.Payouts
+                .Where(p =>
+                    p.Id == payout.Id &&
+                    p.Status == "Pending" &&
+                    p.Task.PayoutStatus == "Pending" &&
+                    (p.NextAttemptAt == null || p.NextAttemptAt <= now))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(p => p.Status, "Processing")
+                    .SetProperty(p => p.ProcessingAt, now)
+                    .SetProperty(p => p.LastAttemptAt, now)
+                    .SetProperty(p => p.AttemptCount, p => p.AttemptCount + 1)
+                    .SetProperty(p => p.UpdatedAt, now), cancellationToken);
 
-            payout.Task.PayoutStatus =
-                "Processing";
+            if (claimed != 1)
+            {
+                // Another processor instance claimed this payout.
+                continue;
+            }
 
-            payout.Task.UpdatedAt =
-                DateTime.UtcNow;
+            // Refresh the task state after the atomic claim so this
+            // processor does not rely on stale tracked values.
+            await context.Entry(payout).ReloadAsync(cancellationToken);
+            await context.Entry(payout.Task).ReloadAsync(cancellationToken);
 
-            await context.SaveChangesAsync(
-                cancellationToken);
+            payout.Task.PayoutStatus = "Processing";
+            payout.Task.UpdatedAt = now;
+            await context.SaveChangesAsync(cancellationToken);
 
             var result =
                 await payoutService.RequestPayoutAsync(
