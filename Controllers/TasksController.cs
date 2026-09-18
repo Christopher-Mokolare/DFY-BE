@@ -123,6 +123,7 @@ public class TasksController : ControllerBase
             Area = task.Area,
             DateNeeded = task.DateNeeded,
             Budget = task.Budget,
+            PayoutAmount = task.PayoutAmount,
             Notes = task.Notes,
             PaymentStatus = task.PaymentStatus,
             TaskStatus = task.TaskStatus,
@@ -163,7 +164,7 @@ public class TasksController : ControllerBase
                 Id = t.Id, TaskId = t.TaskId,
                 UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = string.Empty,
                 CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category,
-                Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, Notes = t.Notes,
+                Area = t.Area, DateNeeded = t.DateNeeded, Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes,
                 PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
                 HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
             }).ToListAsync();
@@ -183,7 +184,7 @@ public class TasksController : ControllerBase
                 Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}",
                 UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email, CreatedByUserId = t.CreatedByUserId,
                 TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
-                Budget = t.Budget, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus,
+                Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus,
                 HelperName = t.HelperName, HelperContact = t.HelperContact, Priority = t.Priority,
                 CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
             }).ToListAsync();
@@ -364,7 +365,7 @@ public class TasksController : ControllerBase
         {
             Id = t.Id, TaskId = t.TaskId, UserName = $"{t.CreatedByUser.FirstName} {t.CreatedByUser.LastName}", UserContact = t.CreatedByUser.PhoneNumber ?? t.CreatedByUser.Email,
             CreatedByUserId = t.CreatedByUserId, TaskDescription = t.TaskDescription, Category = t.Category, Area = t.Area, DateNeeded = t.DateNeeded,
-            Budget = t.Budget, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
+            Budget = t.Budget, PayoutAmount = t.PayoutAmount, Notes = t.Notes, PaymentStatus = t.PaymentStatus, TaskStatus = t.TaskStatus, HelperName = t.HelperName,
             HelperContact = t.HelperContact, Priority = t.Priority, CreatedAt = t.CreatedAt, CompletedAt = t.CompletedAt
         }).ToListAsync();
         return Ok(new PaginatedResponse<TaskDto> { Success = true, Count = totalCount, Page = page, PageSize = pageSize, TotalPages = totalPages, Tasks = tasks });
