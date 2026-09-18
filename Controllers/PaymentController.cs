@@ -277,6 +277,158 @@ public class PaymentController : ControllerBase
         }
     }
 
+    [HttpPost("refund-notify")]
+    [AllowAnonymous]
+    [IgnoreAntiforgeryToken]
+    [Consumes("application/x-www-form-urlencoded", "application/json")]
+    public async Task<IActionResult> OzowRefundNotify()
+    {
+        try
+        {
+            var fields = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+            if (Request.HasFormContentType)
+            {
+                var form = await Request.ReadFormAsync();
+                foreach (var item in form)
+                    fields[item.Key] = item.Value.ToString();
+            }
+            else
+            {
+                var body = await Request.ReadFromJsonAsync<Dictionary<string, object?>>();
+                if (body != null)
+                    foreach (var item in body)
+                        fields[item.Key] = item.Value?.ToString();
+            }
+
+            var refundId = GetField(fields, "RefundId");
+            var transactionId = GetField(fields, "TransactionId");
+            var status = GetField(fields, "Status");
+            var amountText = GetField(fields, "Amount");
+
+            if (string.IsNullOrWhiteSpace(refundId) ||
+                string.IsNullOrWhiteSpace(transactionId) ||
+                string.IsNullOrWhiteSpace(status) ||
+                string.IsNullOrWhiteSpace(amountText))
+                return BadRequest();
+
+            if (!_ozowPaymentService.VerifyRefundNotificationHash(fields))
+                return BadRequest();
+
+            if (!decimal.TryParse(amountText,
+                    System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var amount))
+                return BadRequest();
+
+            var submission = await _context.AuditLogs
+                .Where(a =>
+                    a.EntityType == "Task" &&
+                    a.Action == "OzowRefundSubmitted" &&
+                    a.NewValues != null &&
+                    a.NewValues.Contains($"refundId={refundId}"))
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (submission?.EntityId == null)
+                return NotFound();
+
+            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == submission.EntityId.Value);
+            if (task == null)
+                return NotFound();
+
+            if (amount != task.Budget)
+                return BadRequest();
+
+            var existingComplete = await _context.AuditLogs.AnyAsync(a =>
+                a.EntityType == "Task" &&
+                a.EntityId == task.Id &&
+                a.Action == "OzowRefundCompleted" &&
+                a.NewValues != null &&
+                a.NewValues.Contains($"refundId={refundId}"));
+
+            if (existingComplete)
+                return Ok();
+
+            if (string.Equals(status, "Complete", StringComparison.OrdinalIgnoreCase))
+            {
+                task.PaymentStatus = "Refunded";
+                task.TaskStatus = "Cancelled";
+                task.EscrowStatus = "refunded";
+                task.PayoutStatus = "NotStarted";
+                task.PayoutReference = null;
+                task.PayoutInitiatedAt = null;
+                task.PayoutCompletedAt = null;
+                task.PaidToRunnerAt = null;
+                task.UpdatedAt = DateTime.UtcNow;
+
+                var disputes = await _context.Disputes
+                    .Where(d => d.TaskId == task.Id && d.Status == "RefundPending")
+                    .ToListAsync();
+
+                foreach (var dispute in disputes)
+                {
+                    dispute.Status = "Resolved";
+                    dispute.ResolvedAt = DateTime.UtcNow;
+                }
+
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = null,
+                    Action = "OzowRefundCompleted",
+                    EntityType = "Task",
+                    EntityId = task.Id,
+                    NewValues = $"refundId={refundId}; transactionId={transactionId}; amount={amount:F2}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+
+                await _context.SaveChangesAsync();
+                return Ok();
+            }
+
+            if (string.Equals(status, "Failed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+            {
+                task.PaymentStatus = "DisputePending";
+                task.TaskStatus = "Completed";
+                task.EscrowStatus = "disputed";
+                task.UpdatedAt = DateTime.UtcNow;
+
+                var disputes = await _context.Disputes
+                    .Where(d => d.TaskId == task.Id && d.Status == "RefundPending")
+                    .ToListAsync();
+
+                foreach (var dispute in disputes)
+                    dispute.Status = "Open";
+
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = null,
+                    Action = "OzowRefundFailed",
+                    EntityType = "Task",
+                    EntityId = task.Id,
+                    NewValues = $"refundId={refundId}; transactionId={transactionId}; status={status}; amount={amount:F2}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+
+                await _context.SaveChangesAsync();
+            }
+
+            // Pending/Submitted/other non-terminal statuses are intentionally retained
+            // as RefundPending until a terminal provider notification arrives.
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ozow refund notification processing failed.");
+            return StatusCode(StatusCodes.Status500InternalServerError);
+        }
+    }
+
     [HttpGet("return")]
     [AllowAnonymous]
     public IActionResult PaymentReturn([FromQuery] string? taskId = null)
