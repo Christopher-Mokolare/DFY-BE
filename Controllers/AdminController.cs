@@ -496,8 +496,7 @@ public class AdminController : ControllerBase
             task.PayoutCompletedAt.HasValue ||
             task.PaidToRunnerAt.HasValue ||
             task.AcceptedByUserId.HasValue ||
-            await _context.Payouts.AnyAsync(p => p.TaskId == task.Id) ||
-            await _context.Disputes.AnyAsync(d => d.TaskId == task.Id);
+            await _context.Payouts.AnyAsync(p => p.TaskId == task.Id);
 
         if (hasFinancialActivity)
             return Conflict(new ApiResponse<bool> { Success = false, Data = false, Message = "Financially active tasks cannot be hard-deleted. Retain the record for audit and financial reconciliation." });
