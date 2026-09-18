@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
+using DoForYou.API.Services;
 using System.Security.Claims;
 
 namespace DoForYou.API.Controllers;
