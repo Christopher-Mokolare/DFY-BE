@@ -303,6 +303,14 @@ public class TasksController : ControllerBase
         var task = await _context.Tasks.Include(t => t.CreatedByUser).Include(t => t.AcceptedByUser).FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null) return NotFound(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
+        // Detailed task views may contain participant contact details. Only the creator,
+        // assigned runner, or an administrator may access them.
+        var isAdmin = User.IsInRole("Admin");
+        var isParticipant = task.CreatedByUserId == currentUserId ||
+                            task.AcceptedByUserId == currentUserId;
+        if (!isAdmin && !isParticipant)
+            return Forbid();
+
         var progressUpdates = await _context.TaskProgressUpdates.Include(p => p.User).Where(p => p.TaskId == task.Id).OrderByDescending(p => p.CreatedAt)
             .Select(p => new { id = p.Id, message = p.Message, timestamp = p.CreatedAt, userId = p.UserId, userName = $"{p.User.FirstName} {p.User.LastName}" }).ToListAsync();
 
