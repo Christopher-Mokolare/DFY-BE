@@ -17,12 +17,14 @@ public class DisputesController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IEscrowService _escrowService;
     private readonly INotificationService _notificationService;
+    private readonly IOzowPaymentService _ozowPaymentService;
 
-    public DisputesController(AppDbContext context, IEscrowService escrowService, INotificationService notificationService)
+    public DisputesController(AppDbContext context, IEscrowService escrowService, INotificationService notificationService, IOzowPaymentService ozowPaymentService)
     {
         _context = context;
         _escrowService = escrowService;
         _notificationService = notificationService;
+        _ozowPaymentService = ozowPaymentService;
     }
 
     [HttpPost]
