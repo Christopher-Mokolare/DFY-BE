@@ -18,7 +18,7 @@ public class PublicStatsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<object>>> Get()
+    public async Task<ActionResult<object>> Get()
     {
         // A task is counted as completed only after the runner has been paid.
         // The Tasks query filter also excludes deleted tasks.
@@ -46,10 +46,10 @@ public class PublicStatsController : ControllerBase
             ? 0m
             : Math.Round(ratedUsers.Average(), 2, MidpointRounding.AwayFromZero);
 
-        return Ok(new ApiResponse<object>
+        return Ok(new
         {
-            Success = true,
-            Data = new
+            success = true,
+            data = new
             {
                 tasksCompleted,
                 activeRunners,
