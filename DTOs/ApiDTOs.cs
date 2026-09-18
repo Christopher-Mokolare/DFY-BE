@@ -233,6 +233,9 @@ public class UserDto
     public string Contact => PhoneNumber ?? Email; // Computed field for frontend
     public bool ProfileCompleted { get; set; }
     public int ProfileCompletion { get; set; }
+    public string[] MissingProfileFields { get; set; } = Array.Empty<string>();
+    public bool CanCreateTasks { get; set; }
+    public bool CanAcceptTasks { get; set; }
     public decimal Rating { get; set; }
     public int CompletedTasks { get; set; }
     public string? Roles { get; set; }
