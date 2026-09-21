@@ -21,6 +21,7 @@ public class AppDbContext : DbContext
     public DbSet<BankAccount> BankAccounts { get; set; }
     public DbSet<WithdrawalRequest> WithdrawalRequests { get; set; }
     public DbSet<Payout> Payouts { get; set; } = null!;
+    public DbSet<Refund> Refunds { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<SupportTicket> SupportTickets { get; set; }
 
@@ -68,6 +69,20 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Payout>()
             .HasIndex(p => p.MerchantReference)
             .IsUnique();
+
+        modelBuilder.Entity<Refund>()
+            .HasIndex(r => r.TaskId)
+            .IsUnique();
+
+        modelBuilder.Entity<Refund>()
+            .HasIndex(r => r.RefundId)
+            .IsUnique();
+
+        modelBuilder.Entity<Refund>()
+            .HasOne(r => r.Task)
+            .WithMany()
+            .HasForeignKey(r => r.TaskId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<Payout>()
             .HasIndex(p => p.ProviderReference)
