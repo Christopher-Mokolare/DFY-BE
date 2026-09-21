@@ -405,9 +405,19 @@ public class TasksController : ControllerBase
         task.CompletedAt = DateTime.UtcNow;
         task.EscrowHoldUntil = DateTime.UtcNow.AddHours(48);
         task.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
 
         var runner = await _context.Users.FindAsync(userId.Value);
+        _context.TaskMessages.Add(new TaskMessage
+        {
+            TaskId = task.Id,
+            SenderId = userId.Value,
+            Content = "[SYSTEM] The runner marked this task as completed. Please review the work and confirm the task.",
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync();
+
         await _notificationService.NotifyTaskCompletedAsync(task.CreatedByUserId, task.TaskDescription, $"{runner?.FirstName} {runner?.LastName}");
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task completed! Payment will be released after confirmation." });
     }
@@ -425,6 +435,17 @@ public class TasksController : ControllerBase
 
         var released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
         if (!released) return Ok(new ApiResponse<bool> { Success = false, Message = "Failed to release payment" });
+
+        _context.TaskMessages.Add(new TaskMessage
+        {
+            TaskId = task.Id,
+            SenderId = userId.Value,
+            Content = "[SYSTEM] This task has been confirmed complete. The conversation is now closed.",
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        });
+        await _context.SaveChangesAsync();
+
         await _notificationService.NotifyPaymentReleasedAsync(task.AcceptedByUserId!.Value, task.TaskDescription, task.PayoutAmount);
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task confirmed and payout initiated!" });
     }
