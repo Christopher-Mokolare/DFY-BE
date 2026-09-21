@@ -220,28 +220,102 @@ public class DisputesController : ControllerBase
             if (string.IsNullOrWhiteSpace(transactionId))
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "Original Ozow transaction ID is not available; refund cannot be safely submitted." });
 
-            var existingRefund = await _context.AuditLogs
-                .Where(a =>
-                    a.EntityType == "Task" &&
-                    a.EntityId == task.Id &&
-                    a.Action == "OzowRefundSubmitted" &&
-                    a.NewValues != null)
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync();
+            var existingRefund = await _context.Refunds
+                .FirstOrDefaultAsync(r => r.TaskId == task.Id);
 
-            var existingRefundId = ExtractAuditValue(existingRefund?.NewValues, "refundId");
-            if (!string.IsNullOrWhiteSpace(existingRefundId))
+            if (existingRefund != null && existingRefund.Status == "Complete")
+                return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund has already completed." });
+
+            if (existingRefund != null && !string.IsNullOrWhiteSpace(existingRefund.RefundId) &&
+                existingRefund.Status is "Pending" or "Submitted" or "PendingInvestigation")
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Ozow confirmation." });
 
+            // Create the unique refund record before calling Ozow. TaskId is unique,
+            // so concurrent admin requests cannot create two DFY refund records.
+            var refundRecord = existingRefund ?? new Models.Refund
+            {
+                TaskId = task.Id,
+                RefundId = string.Empty,
+                TransactionId = transactionId,
+                Amount = task.Budget,
+                Reason = resolution,
+                Status = "Pending",
+                Provider = "Ozow"
+            };
+
+            if (existingRefund == null)
+            {
+                _context.Refunds.Add(refundRecord);
+                try
+                {
+                    await _context.SaveChangesAsync();
+                }
+                catch (DbUpdateException)
+                {
+                    refundRecord = await _context.Refunds.FirstAsync(r => r.TaskId == task.Id);
+                    if (!string.IsNullOrWhiteSpace(refundRecord.RefundId))
+                        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Ozow confirmation." });
+                }
+            }
+
+            // If a previous attempt has a provider record, reconcile it before resubmitting.
+            var providerRefunds = await _ozowPaymentService.GetRefundsByTransactionIdAsync(
+                refundRecord.TransactionId,
+                HttpContext.RequestAborted);
+            var matchingProviderRefund = providerRefunds
+                .Where(r => r.Amount == refundRecord.Amount)
+                .OrderByDescending(r => r.Status == 1)
+                .FirstOrDefault();
+
+            if (matchingProviderRefund != null)
+            {
+                refundRecord.RefundId = matchingProviderRefund.RefundId;
+                refundRecord.Status = matchingProviderRefund.Status switch
+                {
+                    1 => "Complete",
+                    3 => "Failed",
+                    4 => "Cancelled",
+                    5 => "Returned",
+                    -1 => "Invalid",
+                    -2 => "PendingInvestigation",
+                    -3 => "Error",
+                    _ => "Submitted"
+                };
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                if (matchingProviderRefund.Status == 1)
+                    refundRecord.CompletedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+
+                if (matchingProviderRefund.Status == 1)
+                    return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund was confirmed with Ozow." });
+
+                if (matchingProviderRefund.Status is 3 or 4 or 5 or -1 or -3)
+                    return Conflict(new ApiResponse<bool> { Success = false, Message = $"Ozow reports the existing refund as {refundRecord.Status}." });
+
+                return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already with Ozow and awaiting completion." });
+            }
+
             var refund = await _ozowPaymentService.SubmitRefundAsync(
-                transactionId,
-                task.Budget,
-                resolution,
+                refundRecord.TransactionId,
+                refundRecord.Amount,
+                refundRecord.Reason,
                 HttpContext.RequestAborted);
 
             if (!refund.Success || string.IsNullOrWhiteSpace(refund.RefundId))
+            {
+                refundRecord.Status = "Failed";
+                refundRecord.FailureReason = refund.Error;
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
                 return StatusCode(StatusCodes.Status502BadGateway,
                     new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Ozow refund." });
+            }
+
+            refundRecord.RefundId = refund.RefundId;
+            refundRecord.Status = "Submitted";
+            refundRecord.SubmittedAt = DateTime.UtcNow;
+            refundRecord.FailureReason = null;
+            await _context.SaveChangesAsync();
 
             task.PaymentStatus = "RefundPending";
             task.TaskStatus = "RefundPending";
