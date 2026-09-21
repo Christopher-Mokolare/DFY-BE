@@ -198,11 +198,20 @@ public class PaymentController : ControllerBase
                     return BadRequest();
                 }
 
-                // Persist the verified provider transaction identifier in the immutable audit trail.
-                // The current production schema has no dedicated payment transaction column.
+                // Persist the provider transaction identifier in the first-class Payment
+                // record as well as the immutable audit trail.
                 var transactionId = GetField(fields, "TransactionId");
                 if (string.IsNullOrWhiteSpace(transactionId))
                     transactionId = verified.TransactionId;
+
+                var payment = await _context.Payments
+                    .FirstOrDefaultAsync(p => p.TaskId == task.Id);
+                if (payment != null)
+                {
+                    payment.TransactionId = transactionId;
+                    payment.Status = "Completed";
+                    payment.CompletedAt ??= DateTime.UtcNow;
+                }
 
                 var existingVerification = !string.IsNullOrWhiteSpace(transactionId) &&
                     await _context.AuditLogs.AnyAsync(audit =>
@@ -321,37 +330,28 @@ public class PaymentController : ControllerBase
                     out var amount))
                 return BadRequest();
 
-            var submission = await _context.AuditLogs
-                .Where(a =>
-                    a.EntityType == "Task" &&
-                    a.Action == "OzowRefundSubmitted" &&
-                    a.NewValues != null &&
-                    a.NewValues.Contains($"refundId={refundId}"))
-                .OrderByDescending(a => a.CreatedAt)
-                .FirstOrDefaultAsync();
+            var refund = await _context.Refunds
+                .FirstOrDefaultAsync(r => r.RefundId == refundId);
 
-            if (submission?.EntityId == null)
+            if (refund == null)
                 return NotFound();
 
-            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == submission.EntityId.Value);
+            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == refund.TaskId);
             if (task == null)
                 return NotFound();
 
             if (amount != task.Budget)
                 return BadRequest();
 
-            var existingComplete = await _context.AuditLogs.AnyAsync(a =>
-                a.EntityType == "Task" &&
-                a.EntityId == task.Id &&
-                a.Action == "OzowRefundCompleted" &&
-                a.NewValues != null &&
-                a.NewValues.Contains($"refundId={refundId}"));
-
-            if (existingComplete)
+            if (refund.Status == "Complete")
                 return Ok();
 
             if (string.Equals(status, "Complete", StringComparison.OrdinalIgnoreCase))
             {
+                refund.Status = "Complete";
+                refund.CompletedAt = DateTime.UtcNow;
+                refund.LastReconciledAt = DateTime.UtcNow;
+
                 task.PaymentStatus = "Refunded";
                 task.TaskStatus = "Cancelled";
                 task.EscrowStatus = "refunded";
@@ -392,6 +392,10 @@ public class PaymentController : ControllerBase
                 string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
             {
+                refund.Status = status;
+                refund.FailureReason = GetField(fields, "StatusMessage");
+                refund.LastReconciledAt = DateTime.UtcNow;
+
                 task.PaymentStatus = "DisputePending";
                 task.TaskStatus = "Completed";
                 task.EscrowStatus = "disputed";
