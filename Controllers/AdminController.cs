@@ -17,12 +17,14 @@ public class AdminController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IEscrowService _escrowService;
     private readonly IUserPolicyService _userPolicyService;
+    private readonly IOzowPaymentService _ozowPaymentService;
 
-    public AdminController(AppDbContext context, IEscrowService escrowService, IUserPolicyService userPolicyService)
+    public AdminController(AppDbContext context, IEscrowService escrowService, IUserPolicyService userPolicyService, IOzowPaymentService ozowPaymentService)
     {
         _context = context;
         _escrowService = escrowService;
         _userPolicyService = userPolicyService;
+        _ozowPaymentService = ozowPaymentService;
     }
 
     private int? GetAdminId() =>
@@ -625,6 +627,109 @@ public class AdminController : ControllerBase
             .ToListAsync();
 
         return Ok(new ApiResponse<List<object>> { Success = true, Data = messages });
+    }
+
+    [HttpGet("refunds")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRefunds([FromQuery] string? status = null)
+    {
+        var query = _context.Refunds
+            .Include(r => r.Task)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(status))
+            query = query.Where(r => r.Status == status);
+
+        var refunds = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                id = r.Id,
+                taskId = r.Task.TaskId,
+                refundId = r.RefundId,
+                transactionId = r.TransactionId,
+                amount = r.Amount,
+                reason = r.Reason,
+                status = r.Status,
+                provider = r.Provider,
+                failureReason = r.FailureReason,
+                createdAt = r.CreatedAt,
+                submittedAt = r.SubmittedAt,
+                completedAt = r.CompletedAt,
+                lastReconciledAt = r.LastReconciledAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object> { Success = true, Data = refunds });
+    }
+
+    [HttpPost("refunds/reconcile")]
+    public async Task<ActionResult<ApiResponse<object>>> ReconcileRefunds()
+    {
+        var pending = await _context.Refunds
+            .Where(r => r.Status == "Pending" || r.Status == "Submitted" || r.Status == "PendingInvestigation")
+            .ToListAsync();
+
+        var reconciled = 0;
+        foreach (var refund in pending)
+        {
+            var providerRefunds = await _ozowPaymentService.GetRefundsByTransactionIdAsync(
+                refund.TransactionId,
+                HttpContext.RequestAborted);
+
+            var match = providerRefunds
+                .Where(r => r.Amount == refund.Amount)
+                .OrderByDescending(r => r.Status == 1)
+                .FirstOrDefault();
+
+            if (match == null)
+            {
+                refund.LastReconciledAt = DateTime.UtcNow;
+                continue;
+            }
+
+            refund.RefundId = match.RefundId;
+            refund.Status = match.Status switch
+            {
+                0 => "Pending",
+                1 => "Complete",
+                2 => "Submitted",
+                3 => "Failed",
+                4 => "Cancelled",
+                5 => "Returned",
+                -1 => "Invalid",
+                -2 => "PendingInvestigation",
+                -3 => "Error",
+                _ => "Pending"
+            };
+            refund.LastReconciledAt = DateTime.UtcNow;
+            if (match.Status == 1)
+                refund.CompletedAt ??= DateTime.UtcNow;
+
+            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == refund.TaskId);
+            if (task != null && match.Status == 1)
+            {
+                task.PaymentStatus = "Refunded";
+                task.TaskStatus = "Cancelled";
+                task.EscrowStatus = "refunded";
+                task.PayoutStatus = "NotStarted";
+                task.PayoutReference = null;
+                task.PayoutInitiatedAt = null;
+                task.PayoutCompletedAt = null;
+                task.PaidToRunnerAt = null;
+                task.UpdatedAt = DateTime.UtcNow;
+            }
+            reconciled++;
+        }
+
+        await _context.SaveChangesAsync();
+        await WriteAuditAsync("ReconcileRefunds", "Refund", null, null, $"reconciled={reconciled}");
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { scanned = pending.Count, reconciled },
+            Message = "Refund reconciliation completed."
+        });
     }
 
     [HttpGet("withdrawal-requests")]
