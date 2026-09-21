@@ -1,0 +1,35 @@
+name: Database Migration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore DoForYou.API.csproj
+
+      - name: Install EF Core CLI
+        run: dotnet tool install --global dotnet-ef --version 9.0.4
+
+      - name: Apply migrations
+        env:
+          ConnectionStrings__DefaultConnection: ${{ secrets.DFY_DATABASE_CONNECTION_STRING }}
+          Jwt__Key: ${{ secrets.DFY_MIGRATION_JWT_KEY }}
+        run: |
+          test -n "$ConnectionStrings__DefaultConnection" || { echo "DFY_DATABASE_CONNECTION_STRING is required"; exit 1; }
+          test -n "$Jwt__Key" || { echo "DFY_MIGRATION_JWT_KEY is required"; exit 1; }
+          dotnet ef database update --project DoForYou.API.csproj --no-build
