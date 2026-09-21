@@ -98,7 +98,7 @@ public class MessagesController : ControllerBase
             return Ok(new ApiResponse<bool> { Success = false, Message = "This conversation is closed." });
 
         var content = request.Content?.Trim();
-        if (string.IsNullOrWhiteSpace(content) || content.Length > 1000)
+        if (string.IsNullOrWhiteSpace(content) || content.Length > 1000 || content.StartsWith("[SYSTEM]", StringComparison.OrdinalIgnoreCase))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Message must contain between 1 and 1000 characters." });
 
         var message = new TaskMessage
@@ -174,10 +174,11 @@ public class MessagesController : ControllerBase
                 taskId = task.TaskId,
                 senderId = m.SenderId,
                 senderName = $"{m.Sender.FirstName} {m.Sender.LastName}",
-                content = m.Content,
+                content = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal) ? m.Content.Substring(8).Trim() : m.Content,
                 timestamp = m.CreatedAt,
                 isRead = m.IsRead,
-                isCurrentUser = m.SenderId == userId
+                isCurrentUser = m.SenderId == userId,
+                isSystem = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal)
             })
             .Cast<object>()
             .ToListAsync();
