@@ -53,7 +53,7 @@ public class ChatHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"task-{taskId}");
     }
 
-    private async Task<Models.DoForYou.API.Models.Task> EnsureTaskMember(int taskId)
+    private async Task<DoForYou.API.Models.Task> EnsureTaskMember(int taskId)
     {
         if (!int.TryParse(Context.User?.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
             throw new HubException("Unauthorized.");
