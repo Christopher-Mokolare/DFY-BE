@@ -241,23 +241,9 @@ public class AdminController : ControllerBase
             .Where(t => t.TaskStatus == "Completed" && t.EscrowStatus == "held")
             .SumAsync(t => t.PayoutAmount);
 
-        var refundAuditRows = await _context.AuditLogs
-            .Where(a => a.Action == "OzowRefundCompleted" && a.NewValues != null)
-            .Select(a => a.NewValues!)
-            .ToListAsync();
-
-        var totalRefunded = refundAuditRows.Sum(value =>
-        {
-            var marker = "amount=";
-            var start = value.IndexOf(marker, StringComparison.Ordinal);
-            if (start < 0) return 0m;
-            start += marker.Length;
-            var end = value.IndexOf(';', start);
-            var amountText = (end >= 0 ? value[start..end] : value[start..]).Trim();
-            return decimal.TryParse(amountText, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var amount)
-                ? amount
-                : 0m;
-        });
+        var totalRefunded = await _context.Refunds
+            .Where(r => r.Status == "Complete")
+            .SumAsync(r => r.Amount);
 
         var recentPayments = await _context.Tasks
             .Include(t => t.CreatedByUser)
