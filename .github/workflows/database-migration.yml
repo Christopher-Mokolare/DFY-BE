@@ -32,4 +32,5 @@ jobs:
         run: |
           test -n "$ConnectionStrings__DefaultConnection" || { echo "DFY_DATABASE_CONNECTION_STRING is required"; exit 1; }
           test -n "$Jwt__Key" || { echo "DFY_MIGRATION_JWT_KEY is required"; exit 1; }
-          dotnet ef database update --project DoForYou.API.csproj --no-build
+          dotnet build DoForYou.API.csproj --configuration Release
+          dotnet ef database update --project DoForYou.API.csproj --configuration Release
