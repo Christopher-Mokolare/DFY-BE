@@ -28,7 +28,7 @@ public class ChatHub : Hub
     public async Task SendMessage(int taskId, string message)
     {
         await EnsureTaskMember(taskId);
-        if (string.IsNullOrWhiteSpace(message) || message.Length > 4000)
+        if (string.IsNullOrWhiteSpace(message) || message.Length > 1000)
             throw new HubException("Invalid message.");
         var userId = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         await Clients.Group($"task-{taskId}").SendAsync("ReceiveMessage", new
@@ -55,8 +55,11 @@ public class ChatHub : Hub
     {
         if (!int.TryParse(Context.User?.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
             throw new HubException("Unauthorized.");
-        var allowed = await _context.Tasks.AnyAsync(t => t.Id == taskId &&
-            (t.CreatedByUserId == userId || t.AcceptedByUserId == userId));
-        if (!allowed) throw new HubException("You are not a member of this task.");
+        var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == taskId);
+        if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
+            throw new HubException("You are not a member of this task.");
+
+        if (task.TaskStatus == "RunnerPaid" || task.TaskStatus == "Cancelled")
+            throw new HubException("This conversation is closed.");
     }
 }
