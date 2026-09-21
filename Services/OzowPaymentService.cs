@@ -19,6 +19,12 @@ public record OzowRefundResult(
     decimal? Amount,
     string? Error);
 
+public record OzowRefundLookup(
+    string RefundId,
+    string TransactionId,
+    decimal Amount,
+    int Status);
+
 public interface IOzowPaymentService
 {
     Task<OzowPaymentResult> CreatePaymentAsync(
@@ -30,6 +36,10 @@ public interface IOzowPaymentService
         string transactionId,
         decimal amount,
         string refundReason,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<OzowRefundLookup>> GetRefundsByTransactionIdAsync(
+        string transactionId,
         CancellationToken cancellationToken = default);
 
     Task<OzowTransactionResult> GetTransactionByReferenceAsync(
@@ -282,6 +292,65 @@ public sealed class OzowPaymentService : IOzowPaymentService
         {
             _logger.LogError(ex, "Ozow refund submission failed for transaction {TransactionId}", transactionId);
             return new OzowRefundResult(false, null, transactionId, null, "Unable to submit Ozow refund.");
+        }
+    }
+
+    public async Task<IReadOnlyList<OzowRefundLookup>> GetRefundsByTransactionIdAsync(
+        string transactionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(transactionId))
+            return Array.Empty<OzowRefundLookup>();
+
+        var accessToken = Get("Ozow:AccessToken");
+        if (string.IsNullOrWhiteSpace(accessToken))
+            return Array.Empty<OzowRefundLookup>();
+
+        var baseUrl = (Get("Ozow:RefundBaseUrl")
+            ?? Get("Ozow:PaymentBaseUrl")
+            ?? "https://api.ozow.com").TrimEnd('/');
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("OzowPayment");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{baseUrl}/secure/refunds/getrefundsbytransactionid?transactionId={Uri.EscapeDataString(transactionId)}");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Ozow refund lookup returned HTTP {StatusCode} for transaction {TransactionId}.", (int)response.StatusCode, transactionId);
+                return Array.Empty<OzowRefundLookup>();
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return Array.Empty<OzowRefundLookup>();
+
+            var results = new List<OzowRefundLookup>();
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                var id = ReadString(item, "id", "refundId", "RefundId");
+                var tx = ReadString(item, "transactionId", "TransactionId") ?? transactionId;
+                var amountText = ReadString(item, "amount", "Amount");
+                var statusText = ReadString(item, "status", "Status");
+                if (string.IsNullOrWhiteSpace(id) ||
+                    !decimal.TryParse(amountText, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount) ||
+                    !int.TryParse(statusText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var status))
+                    continue;
+
+                results.Add(new OzowRefundLookup(id, tx, amount, status));
+            }
+
+            return results;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ozow refund lookup failed for transaction {TransactionId}.", transactionId);
+            return Array.Empty<OzowRefundLookup>();
         }
     }
 
