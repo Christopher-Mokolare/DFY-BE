@@ -113,6 +113,25 @@ public class TasksController : ControllerBase
         }
 
         task.PaymentReference = payment.TransactionReference;
+        var paymentRecord = await _context.Payments.FirstOrDefaultAsync(p => p.TaskId == task.Id);
+        if (paymentRecord == null)
+        {
+            _context.Payments.Add(new Payment
+            {
+                PaymentId = $"DFY-PAY-{task.TaskId}",
+                TaskId = task.Id,
+                Amount = task.Budget,
+                PaymentMethod = "Ozow",
+                Status = "Pending",
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            paymentRecord.Amount = task.Budget;
+            paymentRecord.PaymentMethod = "Ozow";
+            paymentRecord.Status = "Pending";
+        }
         await _context.SaveChangesAsync();
 
         var taskDto = new TaskDto
@@ -305,6 +324,25 @@ public class TasksController : ControllerBase
             return StatusCode(StatusCodes.Status502BadGateway, new ApiResponse<object> { Success = false, Message = payment.Error ?? "Unable to create Ozow payment request." });
 
         task.PaymentReference = payment.TransactionReference;
+        var paymentRecord = await _context.Payments.FirstOrDefaultAsync(p => p.TaskId == task.Id);
+        if (paymentRecord == null)
+        {
+            _context.Payments.Add(new Payment
+            {
+                PaymentId = $"DFY-PAY-{task.TaskId}",
+                TaskId = task.Id,
+                Amount = task.Budget,
+                PaymentMethod = "Ozow",
+                Status = "Pending",
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            paymentRecord.Amount = task.Budget;
+            paymentRecord.PaymentMethod = "Ozow";
+            paymentRecord.Status = "Pending";
+        }
         await _context.SaveChangesAsync();
         return Ok(new ApiResponse<object> { Success = true, Data = new { paymentUrl = payment.PaymentUrl }, Message = "Payment URL generated successfully" });
     }
