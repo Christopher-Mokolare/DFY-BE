@@ -27,6 +27,57 @@ public class MessagesController : ControllerBase
         _notificationService = notificationService;
     }
 
+    [HttpGet("/api/v1/messages/conversations")]
+    public async Task<ActionResult<ApiResponse<List<object>>>> GetConversations()
+    {
+        var userId = GetCurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var tasks = await _context.Tasks
+            .Include(t => t.CreatedByUser)
+            .Include(t => t.AcceptedByUser)
+            .Where(t => t.CreatedByUserId == userId || t.AcceptedByUserId == userId)
+            .OrderByDescending(t => t.UpdatedAt)
+            .ToListAsync();
+
+        var taskIds = tasks.Select(t => t.Id).ToList();
+        var messages = await _context.TaskMessages
+            .Include(m => m.Sender)
+            .Where(m => taskIds.Contains(m.TaskId))
+            .OrderByDescending(m => m.CreatedAt)
+            .ToListAsync();
+
+        var conversations = tasks.Select(task =>
+        {
+            var latest = messages.FirstOrDefault(m => m.TaskId == task.Id);
+            var unread = messages.Count(m => m.TaskId == task.Id && m.SenderId != userId && !m.IsRead);
+            var other = task.CreatedByUserId == userId ? task.AcceptedByUser : task.CreatedByUser;
+            var closed = task.TaskStatus == "RunnerPaid" || task.TaskStatus == "Cancelled";
+            return (object)new
+            {
+                id = task.Id,
+                taskId = task.TaskId,
+                title = task.TaskName,
+                description = task.TaskDescription,
+                taskStatus = task.TaskStatus,
+                chatClosed = closed,
+                completedAt = task.CompletedAt,
+                participantName = other == null ? "DoForYou" : $"{other.FirstName} {other.LastName}".Trim(),
+                participantId = other?.Id,
+                lastMessage = latest?.Content,
+                lastMessageAt = latest?.CreatedAt,
+                unreadCount = unread
+            };
+        }).ToList();
+
+        return Ok(new ApiResponse<List<object>>
+        {
+            Success = true,
+            Data = conversations,
+            Message = "Conversations retrieved successfully"
+        });
+    }
+
     [HttpPost("{taskId}/messages")]
     public async Task<ActionResult<ApiResponse<bool>>> SendMessage(string taskId, [FromBody] SendMessageRequest request)
     {
@@ -43,11 +94,18 @@ public class MessagesController : ControllerBase
         if (task == null || (task.CreatedByUserId != userId && task.AcceptedByUserId != userId))
             return Ok(new ApiResponse<bool> { Success = false, Message = "Access denied" });
 
+        if (task.TaskStatus == "RunnerPaid" || task.TaskStatus == "Cancelled")
+            return Ok(new ApiResponse<bool> { Success = false, Message = "This conversation is closed." });
+
+        var content = request.Content?.Trim();
+        if (string.IsNullOrWhiteSpace(content) || content.Length > 1000)
+            return Ok(new ApiResponse<bool> { Success = false, Message = "Message must contain between 1 and 1000 characters." });
+
         var message = new TaskMessage
         {
             TaskId = task.Id,
             SenderId = userId.Value,
-            Content = request.Content,
+            Content = content!,
             IsRead = false,
             CreatedAt = DateTime.UtcNow
         };
