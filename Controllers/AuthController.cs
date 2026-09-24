@@ -104,6 +104,45 @@ public class AuthController : ControllerBase
         });
     }
 
+    [HttpPost("refresh")]
+    [Authorize]
+    public async Task<ActionResult<AuthResponse>> Refresh()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out var userId)) return Unauthorized();
+
+        var user = await _context.Users.FindAsync(userId);
+        if (user == null) return Unauthorized();
+
+        return Ok(new AuthResponse
+        {
+            Success = true,
+            Token = GenerateJwtToken(user),
+            User = new UserDto
+            {
+                Id = user.Id,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Email = user.Email,
+                PhoneNumber = user.PhoneNumber,
+                ProfileCompleted = user.ProfileCompleted,
+                ProfileCompletion = _userPolicyService.GetProfileCompletion(user),
+                MissingProfileFields = _userPolicyService.GetMissingProfileFields(user).ToArray(),
+                CanCreateTasks = _userPolicyService.CanCreateTasks(user),
+                CanAcceptTasks = _userPolicyService.CanAcceptTasks(user),
+                Rating = user.Rating,
+                CompletedTasks = user.CompletedTasks,
+                Roles = user.Roles,
+                IsAdmin = user.Roles?.Contains("Admin") == true,
+                UserType = user.UserType,
+                CreatedAt = user.CreatedAt,
+                LastLoginAt = user.LastLoginAt,
+                IsVerified = user.IsVerified
+            },
+            Message = "Session refreshed"
+        });
+    }
+
     [HttpPost("change-password")]
     [Authorize]
     public async Task<ActionResult<ApiResponse<bool>>> ChangePassword([FromBody] ChangePasswordRequest request)
@@ -220,7 +259,7 @@ public class AuthController : ControllerBase
             issuer: _configuration["Jwt:Issuer"] ?? "DoForYou",
             audience: _configuration["Jwt:Audience"] ?? "DoForYou",
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(7),
+            expires: DateTime.UtcNow.AddMinutes(30),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
