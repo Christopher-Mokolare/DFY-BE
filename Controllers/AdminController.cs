@@ -179,12 +179,13 @@ public class AdminController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
 
-        task.PaymentStatus = "Completed";
+        task.PaymentStatus = "EscrowHeld";
         task.TaskStatus = "Posted";
+        task.EscrowStatus = "held";
         task.UpdatedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
-        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", $"Completed; reason={request.Reason.Trim()}");
+        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", $"EscrowHeld; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool>
         {
@@ -421,15 +422,16 @@ public class AdminController : ControllerBase
 
         foreach (var task in tasks)
         {
-            task.PaymentStatus = "Completed";
+            task.PaymentStatus = "EscrowHeld";
             task.TaskStatus = "Posted";
+            task.EscrowStatus = "held";
             task.UpdatedAt = DateTime.UtcNow;
         }
 
         await _context.SaveChangesAsync();
 
         foreach (var task in tasks)
-            await WriteAuditAsync("BulkVerifyPayment", "Task", task.Id, "PendingPayment", $"Completed; reason={request.Reason.Trim()}");
+            await WriteAuditAsync("BulkVerifyPayment", "Task", task.Id, "PendingPayment", $"EscrowHeld; reason={request.Reason.Trim()}");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{tasks.Count} tasks verified" });
     }
