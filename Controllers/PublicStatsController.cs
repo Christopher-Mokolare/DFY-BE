@@ -25,6 +25,14 @@ public class PublicStatsController : ControllerBase
         var tasksCompleted = await _context.Tasks
             .CountAsync(t => t.TaskStatus == "RunnerPaid");
 
+        // "Task creators" counts distinct users who have posted at least one
+        // non-deleted task. This is independent of runner availability/type.
+        var taskCreators = await _context.Tasks
+            .Where(t => !t.IsDeleted)
+            .Select(t => t.CreatedByUserId)
+            .Distinct()
+            .CountAsync();
+
         // "Active runners" means verified, completed profiles that are currently
         // available and have a runner-capable user type.
         var activeRunners = await _context.Users
@@ -52,6 +60,7 @@ public class PublicStatsController : ControllerBase
             data = new
             {
                 tasksCompleted,
+                taskCreators,
                 activeRunners,
                 averageRating
             }
