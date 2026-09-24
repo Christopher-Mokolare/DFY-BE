@@ -128,7 +128,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "DoForYou",
             ValidAudience = builder.Configuration["Jwt:Audience"] ?? "DoForYou",
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(jwtKey ?? "development-only-key-change-me-32chars"))
+                Encoding.UTF8.GetBytes(jwtKey ?? "development-only-key-change-me-32chars")),
+            ClockSkew = TimeSpan.Zero
         };
         // Allow SignalR to receive JWT from query string (required for WebSocket handshake)
         options.Events = new JwtBearerEvents
