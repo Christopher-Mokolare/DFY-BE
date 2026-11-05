@@ -51,14 +51,24 @@ public sealed class PayoutProcessorService(
         var provider = scope.ServiceProvider.GetRequiredService<IPayoutProvider>();
         var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
+        // Runner transfers are manual by default while DFY validates its payout
+        // operations and dispute handling. Explicitly opt in to automatic transfers
+        // with PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED=true. Existing Processing transfers
+        // are still reconciled below so a transfer already sent to Paystack can reach
+        // a final state; Pending/AwaitingFunds records are never submitted by default.
+        var automaticPayoutsEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
         var payouts = await context.Payouts
             .Include(p => p.BankAccount)
             .Include(p => p.Task)
             .Where(p =>
                 p.Provider == "Paystack" &&
-                (p.Status == "Pending" ||
-                 p.Status == "Processing" ||
-                 p.Status == "AwaitingFunds") &&
+                (p.Status == "Processing" ||
+                 (automaticPayoutsEnabled &&
+                  (p.Status == "Pending" || p.Status == "AwaitingFunds"))) &&
                 (p.NextAttemptAt == null || p.NextAttemptAt <= DateTime.UtcNow))
             .OrderBy(p => p.CreatedAt)
             .Take(25)
