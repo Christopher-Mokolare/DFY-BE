@@ -65,8 +65,12 @@ public class TasksController : ControllerBase
             return Ok(new ApiResponse<object> { Success = false, Message = errorMessage });
         }
 
-        if (request.Budget < 50)
-            return Ok(new ApiResponse<object> { Success = false, Message = "validation failed: minimum budget is R50" });
+        if (!TaskBudgetLimits.IsValid(request.Budget))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}."
+            });
 
         var budget = decimal.Round(request.Budget, 2, MidpointRounding.AwayFromZero);
         var taskId = GenerateTaskId();
@@ -744,7 +748,14 @@ public class TasksController : ControllerBase
                 return Ok(new ApiResponse<object> { Success = false, Message = "Date needed must be more than 30 minutes and no more than 365 days in the future." });
             task.DateNeeded = dateNeeded;
         }
-        if (request.Budget.HasValue && request.Budget.Value >= 50)
+        if (request.Budget.HasValue && !TaskBudgetLimits.IsValid(request.Budget.Value))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}."
+            });
+
+        if (request.Budget.HasValue)
         {
             task.Budget = decimal.Round(request.Budget.Value, 2, MidpointRounding.AwayFromZero);
             var commission = _escrowService.CalculateCommission(task.Budget);
