@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using DoForYou.API.Models;
 
 namespace DoForYou.API.DTOs;
 
@@ -22,7 +23,7 @@ public class CreateTaskRequest : IValidatableObject
     public DateTime DateNeeded { get; set; }
 
     [Required]
-    [Range(50, 100000, ErrorMessage = "Budget must be between R50 and R100000.")]
+    [Range((double)TaskBudgetLimits.Minimum, (double)TaskBudgetLimits.Maximum, ErrorMessage = "Budget must be between R50 and R100000.")]
     public decimal Budget { get; set; }
 
     public string? Notes { get; set; }
@@ -85,7 +86,7 @@ public class CreateTaskRequest : IValidatableObject
             errors.Add(new ValidationResult("Date needed cannot be more than 365 days in the future."));
         }
 
-        if (Budget < 50 || Budget > 100000)
+        if (!TaskBudgetLimits.IsValid(Budget))
         {
             errors.Add(new ValidationResult("Budget must be between R50 and R100000."));
         }
@@ -109,7 +110,7 @@ public class CreateTaskRequest : IValidatableObject
     }
 }
 
-public class UpdateTaskRequest
+public class UpdateTaskRequest : IValidatableObject
 {
     [StringLength(60, MinimumLength = 1)]
     public string? TaskName { get; set; }
@@ -120,6 +121,23 @@ public class UpdateTaskRequest
     public decimal? Budget { get; set; }
     public string? Notes { get; set; }
     public string? Priority { get; set; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Budget.HasValue && !TaskBudgetLimits.IsValid(Budget.Value))
+        {
+            yield return new ValidationResult(
+                $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}.",
+                new[] { nameof(Budget) });
+        }
+    }
+}
+
+public class TaskBudgetLimitsDto
+{
+    public decimal MinimumBudget { get; set; }
+    public decimal MaximumBudget { get; set; }
+    public string Currency { get; set; } = "ZAR";
 }
 
 public class TaskDto

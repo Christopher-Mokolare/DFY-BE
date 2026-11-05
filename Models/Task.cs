@@ -12,7 +12,7 @@ public class Task
     public string Area { get; set; } = string.Empty;
     public DateTime DateNeeded { get; set; }
     [Required]
-    [Range(50, 10000)]
+    [Range((double)TaskBudgetLimits.Minimum, (double)TaskBudgetLimits.Maximum)]
     public decimal Budget { get; set; }
     public string? Notes { get; set; }
     public string PaymentStatus { get; set; } = "Pending";
