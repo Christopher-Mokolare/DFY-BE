@@ -42,10 +42,27 @@ jobs:
           dotnet tool install --global dotnet-ef --version 9.0.4
           export PATH="$PATH:$HOME/.dotnet/tools"
           dotnet ef migrations add DiagnosePendingModelChanges --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --output-dir /tmp/diagnostic-migrations --no-build --configuration Release
-          echo "=== GENERATED MIGRATION ==="
-          cat /tmp/diagnostic-migrations/*_DiagnosePendingModelChanges.cs
-          echo "=== GENERATED MODEL SNAPSHOT DIFF ==="
-          git diff -- Migrations/AppDbContextModelSnapshot.cs
+          dotnet ef migrations has-pending-model-changes --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --no-build --configuration Release
+          cp Migrations/AppDbContextModelSnapshot.cs /tmp/generated-model-snapshot.cs
+
+      - name: Sync generated EF model snapshot to target branch
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          TARGET_BRANCH: ${{ github.head_ref }}
+        run: |
+          git restore --source=HEAD --worktree Migrations/AppDbContextModelSnapshot.cs
+          git fetch origin "$TARGET_BRANCH"
+          git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+          cp /tmp/generated-model-snapshot.cs Migrations/AppDbContextModelSnapshot.cs
+          git add Migrations/AppDbContextModelSnapshot.cs
+          if git diff --cached --quiet; then
+            echo "Generated EF model snapshot is already current."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(db): sync generated EF model snapshot"
+            git push origin "$TARGET_BRANCH"
+          fi
       - name: Test
         run: dotnet test DoForYou.Tests/DoForYou.Tests.csproj --no-restore --configuration Release --verbosity normal
 
