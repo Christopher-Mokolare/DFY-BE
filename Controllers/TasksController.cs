@@ -55,8 +55,12 @@ public class TasksController : ControllerBase
 
         // Keep critical financial/time boundaries enforced in the action as well as
         // DTO validation, so background callers and direct controller tests cannot bypass them.
-        if (request.Budget < 50m || request.Budget > 100000m)
-            return BadRequest(new ApiResponse<object> { Success = false, Error = "INVALID_TASK_BUDGET", Message = "Budget must be between R50 and R100,000." });
+        if (!TaskBudgetLimits.IsValid(request.Budget))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}."
+            });
 
         var nowUtc = DateTime.UtcNow;
         if (request.DateNeeded <= nowUtc.AddMinutes(30) || request.DateNeeded > nowUtc.AddDays(365))
@@ -750,8 +754,12 @@ public class TasksController : ControllerBase
         }
         if (request.Budget.HasValue)
         {
-            if (request.Budget.Value < 50 || request.Budget.Value > 100000)
-                return BadRequest(new ApiResponse<object> { Success = false, Message = "Budget must be between R50 and R100,000." });
+            if (!TaskBudgetLimits.IsValid(request.Budget.Value))
+                return BadRequest(new ApiResponse<object>
+                {
+                    Success = false,
+                    Message = $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}."
+                });
 
             var hasPaymentAttempt = await _context.PaymentAttempts.AnyAsync(p => p.TaskId == task.Id);
             if (hasPaymentAttempt)

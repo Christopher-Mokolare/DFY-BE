@@ -52,16 +52,22 @@ public sealed class PayoutProcessorService(
         var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
         var userPolicy = scope.ServiceProvider.GetRequiredService<IUserPolicyService>();
 
+        var automaticPayoutsEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
         var payouts = await context.Payouts
             .Include(p => p.BankAccount)
             .Include(p => p.Runner)
             .Include(p => p.Task)
             .Where(p =>
                 p.Provider == "Paystack" &&
-                (p.Status == "Pending" ||
-                 p.Status == "Processing" ||
-                 p.Status == "AwaitingFunds" ||
-                 p.Status == "AwaitingEligibility") &&
+                (p.Status == "Processing" ||
+                 (automaticPayoutsEnabled &&
+                  (p.Status == "Pending" ||
+                   p.Status == "AwaitingFunds" ||
+                   p.Status == "AwaitingEligibility"))) &&
                 (p.NextAttemptAt == null || p.NextAttemptAt <= DateTime.UtcNow))
             .OrderBy(p => p.CreatedAt)
             .Take(25)
@@ -93,6 +99,7 @@ public sealed class PayoutProcessorService(
                     provider,
                     notifications,
                     payout,
+                    automaticPayoutsEnabled,
                     cancellationToken);
         }
     }
@@ -279,6 +286,7 @@ public sealed class PayoutProcessorService(
         IPayoutProvider provider,
         INotificationService notifications,
         Payout payout,
+        bool automaticPayoutsEnabled,
         CancellationToken cancellationToken)
     {
         var result = await provider.GetPayoutStatusAsync(
@@ -296,13 +304,18 @@ public sealed class PayoutProcessorService(
 
         if (!result.Found)
         {
-            // Paystack recommends reusing the same reference when a transfer request
-            // is non-conclusive. Returning to Pending is safe because CreatePayoutAsync
-            // sends the exact same reference.
-            payout.Status = "Pending";
+            // Keep submitted transfers in reconciliation while automatic submissions are disabled.
+            // Returning to Pending would strand them because Pending rows are not submitted by default.
+            payout.Status = automaticPayoutsEnabled ? "Pending" : "Processing";
             payout.ProcessingError = null;
             payout.NextAttemptAt = DateTime.UtcNow.AddMinutes(2);
             payout.UpdatedAt = DateTime.UtcNow;
+            if (!automaticPayoutsEnabled)
+            {
+                payout.Task.PayoutStatus = "Processing";
+                payout.Task.TaskStatus = "PayoutPending";
+                payout.Task.UpdatedAt = DateTime.UtcNow;
+            }
             await context.SaveChangesAsync(cancellationToken);
             return;
         }
