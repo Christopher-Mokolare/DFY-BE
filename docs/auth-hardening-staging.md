@@ -78,3 +78,11 @@ Verification/reset tokens are hashed at rest and consumed with conditional datab
 ## Do not announce completion based only on green CI
 
 CI proves that the code built and the automated tests included in those jobs passed. It does not prove that Render secrets exist, migrations will apply to the actual staging data, Google OAuth clients are configured, SMTP delivers, an identity provider is integrated, or real Paystack callbacks and payouts reconcile.
+
+## Staging baseline reconciliation (5 November 2026)
+
+This branch now includes the current `staging` baseline, including the canonical task-budget policy and the payout automation opt-in guard. The authentication changes must preserve both controls:
+
+- Task create/update validation uses the shared `TaskBudgetLimits` policy (R50–R100,000 ZAR).
+- Paystack automatic runner transfers remain disabled unless `PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED=true`; already-submitted transfers continue to be reconciled.
+- Sumsub identity verification remains an integration requiring provider credentials, operational review and an approved manual-review/appeal process before launch. A successful CI run does not constitute that approval.
