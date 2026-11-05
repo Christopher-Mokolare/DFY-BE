@@ -553,13 +553,13 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": { }
             },
             "text/json": {
-              "schema": {}
+              "schema": { }
             },
             "application/*+json": {
-              "schema": {}
+              "schema": { }
             }
           }
         },
@@ -2794,13 +2794,13 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": { }
             },
             "text/json": {
-              "schema": {}
+              "schema": { }
             },
             "application/*+json": {
-              "schema": {}
+              "schema": { }
             }
           }
         },
@@ -4427,6 +4427,35 @@
         }
       }
     },
+    "/api/v1/config/task-limits": {
+      "get": {
+        "tags": [
+          "TaskConfiguration"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks": {
       "post": {
         "tags": [
@@ -5402,13 +5431,13 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": { }
             },
             "text/json": {
-              "schema": {}
+              "schema": { }
             },
             "application/*+json": {
-              "schema": {}
+              "schema": { }
             }
           }
         },
@@ -6321,35 +6350,6 @@
           }
         }
       }
-    },
-    "/api/v1/config/task-limits": {
-      "get": {
-        "tags": [
-          "TaskConfiguration"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
-                }
-              },
-              "text/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskBudgetLimitsDtoApiResponse"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -7031,7 +7031,7 @@
           },
           "data": {
             "type": "array",
-            "items": {},
+            "items": { },
             "nullable": true
           },
           "message": {
@@ -7082,7 +7082,7 @@
             "type": "string",
             "nullable": true
           },
-          "payoutStatus": {},
+          "payoutStatus": { },
           "payoutSubStatus": {
             "type": "integer",
             "format": "int32",
@@ -7369,6 +7369,44 @@
             "format": "int32"
           },
           "review": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskBudgetLimitsDto": {
+        "type": "object",
+        "properties": {
+          "minimumBudget": {
+            "type": "number",
+            "format": "double"
+          },
+          "maximumBudget": {
+            "type": "number",
+            "format": "double"
+          },
+          "currency": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskBudgetLimitsDtoApiResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TaskBudgetLimitsDto"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
             "type": "string",
             "nullable": true
           }
@@ -7892,44 +7930,6 @@
             "maxLength": 200,
             "minLength": 0,
             "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "TaskBudgetLimitsDto": {
-        "type": "object",
-        "properties": {
-          "minimumBudget": {
-            "type": "number",
-            "format": "double"
-          },
-          "maximumBudget": {
-            "type": "number",
-            "format": "double"
-          },
-          "currency": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "additionalProperties": false
-      },
-      "TaskBudgetLimitsDtoApiResponse": {
-        "type": "object",
-        "properties": {
-          "success": {
-            "type": "boolean"
-          },
-          "data": {
-            "$ref": "#/components/schemas/TaskBudgetLimitsDto"
-          },
-          "message": {
-            "type": "string",
-            "nullable": true
-          },
-          "error": {
-            "type": "string",
-            "nullable": true
           }
         },
         "additionalProperties": false
