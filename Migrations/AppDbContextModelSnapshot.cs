@@ -924,6 +924,9 @@ namespace DoForYou.API.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("GoogleSubject")
+                        .HasColumnType("text");
+
                     b.Property<DateTime?>("EmailVerificationExpiry")
                         .HasColumnType("timestamp with time zone");
 
