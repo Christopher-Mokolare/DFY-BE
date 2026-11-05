@@ -41,7 +41,7 @@ jobs:
         run: |
           dotnet tool install --global dotnet-ef --version 9.0.4
           export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet ef migrations add DiagnosePendingModelChanges --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --output-dir /tmp/diagnostic-migrations --no-build
+          dotnet ef migrations add DiagnosePendingModelChanges --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --output-dir /tmp/diagnostic-migrations --no-build --configuration Release
           echo "=== GENERATED MIGRATION ==="
           cat /tmp/diagnostic-migrations/*_DiagnosePendingModelChanges.cs
           echo "=== GENERATED MODEL SNAPSHOT DIFF ==="
