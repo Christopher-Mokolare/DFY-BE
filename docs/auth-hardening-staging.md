@@ -22,13 +22,14 @@ This is an engineering record, not legal advice. Obtain qualified advice on appl
 Set secrets only in Render's **staging API** service. Never commit keys or put them in frontend/mobile source:
 
 - DFY_PUBLIC_URL=https://dfy-fe-staging.onrender.com
-- SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM, SMTP_ENABLE_SSL
+- BREVO_API_KEY (preferred on Render Free; transactional email uses HTTPS on port 443)
+- SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM, SMTP_ENABLE_SSL (fallback for hosts that permit SMTP)
 - GOOGLE_CLIENT_IDS: comma- or semicolon-separated IDs for the actual configured web, iOS and Android Google OAuth clients. Do not invent client IDs; each client ID must be created in the correct Google Cloud OAuth client type and approved origins/package/bundle identities must match the clients.
 - DFY_TOTP_ENCRYPTION_KEY: base64 encoding of a random 32-byte (256-bit) key used to encrypt TOTP secrets. Store and back it up in the secret manager; do not rotate it without a tested re-encryption/recovery procedure for existing authenticator secrets.
 - DFY_TRUST_MANAGED_INGRESS=true only if the service is reachable publicly through the managed Render ingress, which supplies trusted forwarded headers. The API uses one forwarded hop for client IP and scheme. Do not enable this behind a client-reachable or untrusted proxy.
 - AUTO_MIGRATE=true only for a reviewed staging rollout. This applies pending EF migrations at startup. Recheck schema/history and disable it after the reviewed rollout.
 
-SMTP sender authorization, link delivery, link host and spam placement must be tested with a dedicated staging inbox. Auth email send failures do not roll back signup; operators must observe logs/alerts without exposing tokens or email bodies.
+Render Free web services block outbound SMTP on ports 25, 465, and 587. Configure BREVO_API_KEY and verify SMTP_FROM as a Brevo sender to deliver mail through Brevo's HTTPS API; SMTP settings are only a fallback for hosts that permit SMTP. Sender authorization, link delivery, link host and spam placement must be tested with a dedicated staging inbox. Auth email send failures do not roll back signup; operators must observe logs/alerts without exposing tokens or email bodies.
 
 ## Authentication endpoints in the current branch
 
@@ -57,7 +58,7 @@ Verification/reset tokens are hashed at rest and consumed with conditional datab
 
 1. Inspect staging data without modifying it: count normalized email duplicates, confirm migration history versus actual schema, determine whether the deployment database contains production personal data, and verify the migration's abort behavior in a safe copy. **BLOCKED until verified.**
 2. Confirm terms-v1, privacy-v1, and marketing-v1 correspond to approved text. Confirm consent retention/access rules.
-3. Configure SMTP, Google client IDs and the TOTP encryption key in the Render staging API secret configuration. Never paste secret values into GitHub, this PR, build logs or client bundles.
+3. Configure BREVO_API_KEY and a verified SMTP_FROM sender for transactional email, Google client IDs and the TOTP encryption key in the Render staging API secret configuration. Never paste secret values into GitHub, this PR, build logs or client bundles.
 4. Set proxy-aware forwarding only after verifying the service is behind the managed Render ingress. Test that spoofed X-Forwarded-For values do not control the IP limiter; test the actual forwarded client IP.
 5. Deploy the API/migrations first in staging, then smoke test /health, schema/migration state, email links, Google login and TOTP setup. Verify TOTP time-step replay is rejected. If a required migration fails, roll back the deploy and do not start the clients.
 6. Register with a dedicated test inbox. Exercise existing/unknown-account neutral responses, resend cooldown/quota, used/expired/tampered tokens, multibyte password byte boundaries, lockouts and revocation.
