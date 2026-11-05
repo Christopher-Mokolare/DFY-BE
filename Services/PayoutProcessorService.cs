@@ -50,12 +50,8 @@ public sealed class PayoutProcessorService(
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var provider = scope.ServiceProvider.GetRequiredService<IPayoutProvider>();
         var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
+        var userPolicy = scope.ServiceProvider.GetRequiredService<IUserPolicyService>();
 
-        // Runner transfers are manual by default while DFY validates its payout
-        // operations and dispute handling. Explicitly opt in to automatic transfers
-        // with PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED=true. Existing Processing transfers
-        // are still reconciled below so a transfer already sent to Paystack can reach
-        // a final state; Pending/AwaitingFunds records are never submitted by default.
         var automaticPayoutsEnabled = string.Equals(
             Environment.GetEnvironmentVariable("PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED"),
             "true",
@@ -63,12 +59,15 @@ public sealed class PayoutProcessorService(
 
         var payouts = await context.Payouts
             .Include(p => p.BankAccount)
+            .Include(p => p.Runner)
             .Include(p => p.Task)
             .Where(p =>
                 p.Provider == "Paystack" &&
                 (p.Status == "Processing" ||
                  (automaticPayoutsEnabled &&
-                  (p.Status == "Pending" || p.Status == "AwaitingFunds"))) &&
+                  (p.Status == "Pending" ||
+                   p.Status == "AwaitingFunds" ||
+                   p.Status == "AwaitingEligibility"))) &&
                 (p.NextAttemptAt == null || p.NextAttemptAt <= DateTime.UtcNow))
             .OrderBy(p => p.CreatedAt)
             .Take(25)
@@ -79,12 +78,21 @@ public sealed class PayoutProcessorService(
             if (cancellationToken.IsCancellationRequested)
                 break;
 
-            if (payout.Status is "Pending" or "AwaitingFunds")
+            if (payout.Status is "Pending" or "AwaitingFunds" or "AwaitingEligibility")
+            {
+                if (payout.Runner == null || !userPolicy.CanReceivePayout(payout.Runner))
+                {
+                    await HoldForEligibility(context, payout, cancellationToken);
+                    continue;
+                }
+
                 await SubmitPendingPayout(
                     context,
                     provider,
+                    userPolicy,
                     payout,
                     cancellationToken);
+            }
             else
                 await ReconcilePayout(
                     context,
@@ -99,12 +107,13 @@ public sealed class PayoutProcessorService(
     private async Task SubmitPendingPayout(
         AppDbContext context,
         IPayoutProvider provider,
+        IUserPolicyService userPolicy,
         Payout payout,
         CancellationToken cancellationToken)
     {
         var claimed = await context.Payouts
             .Where(p => p.Id == payout.Id &&
-                        (p.Status == "Pending" || p.Status == "AwaitingFunds"))
+                        (p.Status == "Pending" || p.Status == "AwaitingFunds" || p.Status == "AwaitingEligibility"))
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(p => p.Status, "Processing")
                 .SetProperty(p => p.ProcessingAt, DateTime.UtcNow)
@@ -118,13 +127,42 @@ public sealed class PayoutProcessorService(
 
         context.ChangeTracker.Clear();
 
-        payout = await context.Payouts
+        var refreshedPayout = await context.Payouts
             .Include(p => p.BankAccount)
+            .Include(p => p.Runner)
             .Include(p => p.Task)
             .FirstOrDefaultAsync(p => p.Id == payout.Id, cancellationToken);
 
-        if (payout == null)
+        if (refreshedPayout == null)
             return;
+
+        payout = refreshedPayout;
+
+        // Re-check after atomically claiming the queue row. If eligibility changed
+        // between queue selection and this point, no provider request is made.
+        if (payout.Runner == null || !userPolicy.CanReceivePayout(payout.Runner))
+        {
+            payout.Status = "AwaitingEligibility";
+            payout.FailureReason = "Runner eligibility requires review before payout submission.";
+            payout.ProcessingError = null;
+            payout.NextAttemptAt = DateTime.UtcNow.AddMinutes(5);
+            payout.Task.PayoutStatus = "AwaitingEligibility";
+            payout.Task.TaskStatus = "PayoutPending";
+            payout.UpdatedAt = DateTime.UtcNow;
+            payout.Task.UpdatedAt = DateTime.UtcNow;
+            context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = payout.RunnerId,
+                Action = "PayoutHeldForEligibility",
+                EntityType = "Payout",
+                EntityId = payout.Id,
+                NewValues = "status=AwaitingEligibility; reason=RunnerEligibilityMissing",
+                IpAddress = "background-service",
+                UserAgent = "PayoutProcessorService"
+            });
+            await context.SaveChangesAsync(cancellationToken);
+            return;
+        }
 
         if (!payout.BankAccount.IsVerified ||
             !payout.BankAccount.IsActive)
@@ -195,6 +233,54 @@ public sealed class PayoutProcessorService(
         await context.SaveChangesAsync(cancellationToken);
     }
 
+    private static async Task HoldForEligibility(
+        AppDbContext context,
+        Payout payout,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        // Persist a retry time so an ineligible row is not selected every poll cycle.
+        // Use a conditional update so another worker's transition is not overwritten.
+        var affected = await context.Payouts
+            .Where(p => p.Id == payout.Id &&
+                        (p.Status == "Pending" ||
+                         p.Status == "AwaitingFunds" ||
+                         p.Status == "AwaitingEligibility"))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(p => p.Status, "AwaitingEligibility")
+                .SetProperty(p => p.FailureReason, "Runner eligibility requires review before payout submission.")
+                .SetProperty(p => p.NextAttemptAt, now.AddMinutes(5))
+                .SetProperty(p => p.UpdatedAt, now),
+                cancellationToken);
+
+        if (affected != 1)
+            return;
+
+        context.ChangeTracker.Clear();
+        if (!string.Equals(payout.Status, "AwaitingEligibility", StringComparison.Ordinal))
+        {
+            context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = payout.RunnerId,
+                Action = "PayoutHeldForEligibility",
+                EntityType = "Payout",
+                EntityId = payout.Id,
+                NewValues = "status=AwaitingEligibility; reason=RunnerEligibilityMissing",
+                IpAddress = "background-service",
+                UserAgent = "PayoutProcessorService"
+            });
+        }
+
+        var task = await context.Tasks.FirstOrDefaultAsync(t => t.Id == payout.TaskId, cancellationToken);
+        if (task != null)
+        {
+            task.PayoutStatus = "AwaitingEligibility";
+            task.TaskStatus = "PayoutPending";
+            task.UpdatedAt = now;
+        }
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task ReconcilePayout(
         AppDbContext context,
         IPayoutProvider provider,
@@ -218,11 +304,8 @@ public sealed class PayoutProcessorService(
 
         if (!result.Found)
         {
-            // With automatic payouts disabled, keep an already-submitted transfer in
-            // Processing so reconciliation continues on the next cycle. Moving it to
-            // Pending would remove it from the reconciliation query and strand it.
-            // When automatic payouts are enabled, Pending allows a safe retry using
-            // the same merchant reference.
+            // Keep submitted transfers in reconciliation while automatic submissions are disabled.
+            // Returning to Pending would strand them because Pending rows are not submitted by default.
             payout.Status = automaticPayoutsEnabled ? "Pending" : "Processing";
             payout.ProcessingError = null;
             payout.NextAttemptAt = DateTime.UtcNow.AddMinutes(2);
