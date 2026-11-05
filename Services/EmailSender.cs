@@ -43,9 +43,12 @@ public sealed class SmtpEmailSender : IEmailSender
             EnableSsl = !string.Equals(sslText, "false", StringComparison.OrdinalIgnoreCase),
             DeliveryMethod = SmtpDeliveryMethod.Network,
             UseDefaultCredentials = false,
-            Credentials = new NetworkCredential(username, password)
+            Credentials = new NetworkCredential(username, password),
+            Timeout = 15000,
         };
         cancellationToken.ThrowIfCancellationRequested();
-        await client.SendMailAsync(message);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(20));
+        await client.SendMailAsync(message, cts.Token);
     }
 }
