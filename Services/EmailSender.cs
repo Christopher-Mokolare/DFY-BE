@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Mail;
+using System.Net.Http.Json;
 
 namespace DoForYou.API.Services;
 
@@ -12,10 +13,23 @@ public interface IEmailSender
 public sealed class SmtpEmailSender : IEmailSender
 {
     private readonly IConfiguration _configuration;
-    public SmtpEmailSender(IConfiguration configuration) => _configuration = configuration;
+    private readonly IHttpClientFactory _httpClientFactory;
+
+    public SmtpEmailSender(IConfiguration configuration, IHttpClientFactory httpClientFactory)
+    {
+        _configuration = configuration;
+        _httpClientFactory = httpClientFactory;
+    }
 
     public async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken = default)
     {
+        var brevoApiKey = Environment.GetEnvironmentVariable("BREVO_API_KEY") ?? _configuration["Email:BrevoApiKey"];
+        if (!string.IsNullOrWhiteSpace(brevoApiKey))
+        {
+            await SendWithBrevoApiAsync(brevoApiKey, recipient, subject, body, cancellationToken);
+            return;
+        }
+
         var host = Environment.GetEnvironmentVariable("SMTP_HOST") ?? _configuration["Email:SmtpHost"];
         var portText = Environment.GetEnvironmentVariable("SMTP_PORT") ?? _configuration["Email:SmtpPort"];
         var username = Environment.GetEnvironmentVariable("SMTP_USERNAME") ?? _configuration["Email:SmtpUsername"];
@@ -50,5 +64,35 @@ public sealed class SmtpEmailSender : IEmailSender
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(TimeSpan.FromSeconds(20));
         await client.SendMailAsync(message, cts.Token);
+    }
+
+    private async Task SendWithBrevoApiAsync(
+        string apiKey,
+        string recipient,
+        string subject,
+        string body,
+        CancellationToken cancellationToken)
+    {
+        var from = Environment.GetEnvironmentVariable("SMTP_FROM") ?? _configuration["Email:From"];
+        if (string.IsNullOrWhiteSpace(from))
+            throw new InvalidOperationException("SMTP_FROM (or Email:From) must contain a verified Brevo sender address.");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.brevo.com/v3/smtp/email");
+        request.Headers.TryAddWithoutValidation("api-key", apiKey);
+        request.Content = JsonContent.Create(new
+        {
+            sender = new { name = "DoForYou", email = from },
+            to = new[] { new { email = recipient } },
+            subject,
+            textContent = body
+        });
+
+        var httpClient = _httpClientFactory.CreateClient("Brevo");
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"Brevo transactional email request failed with HTTP {(int)response.StatusCode}.",
+                null,
+                response.StatusCode);
     }
 }

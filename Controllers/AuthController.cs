@@ -341,7 +341,7 @@ public class AuthController : ControllerBase
             if (sent)
             {
                 try { await SendVerificationEmailAsync(user.Email, token, HttpContext.RequestAborted); }
-                catch (Exception) { _logger.LogWarning("Verification resend failed for user {UserId}", user.Id); }
+                catch (Exception ex) { _logger.LogError(ex, "Verification resend failed for user {UserId}", user.Id); }
             }
         }
 
