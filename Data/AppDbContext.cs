@@ -77,6 +77,12 @@ public class AppDbContext : DbContext
             .IsUnique()
             .HasDatabaseName("IX_Users_GoogleSubject");
 
+        modelBuilder.Entity<User>()
+            .HasIndex(user => user.IdentityVerificationExternalUserId)
+            .IsUnique()
+            .HasFilter("\"IdentityVerificationExternalUserId\" IS NOT NULL")
+            .HasDatabaseName("IX_Users_IdentityVerificationExternalUserId");
+
         modelBuilder.Entity<UserConsentEvent>()
             .HasIndex(e => new { e.UserId, e.ConsentType, e.RecordedAt })
             .HasDatabaseName("IX_UserConsentEvents_UserId_ConsentType_RecordedAt");

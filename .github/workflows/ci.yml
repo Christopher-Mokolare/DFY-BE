@@ -32,6 +32,17 @@ jobs:
       - name: Build API
         run: dotnet build DoForYou.API.csproj --no-restore --configuration Release
 
+      - name: Verify EF Core model snapshot
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          JWT_KEY: dfy-model-check-only-key-32-characters-minimum
+          ConnectionStrings__DefaultConnection: Host=localhost;Database=dfy_model_check;Username=postgres;Password=postgres
+          AUTO_MIGRATE: 'false'
+        run: |
+          dotnet tool install --global dotnet-ef --version 9.0.4
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet ef migrations has-pending-model-changes --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --no-build --configuration Release
+
       - name: Test
         run: dotnet test DoForYou.Tests/DoForYou.Tests.csproj --no-restore --configuration Release --verbosity normal
 
