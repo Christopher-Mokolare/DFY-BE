@@ -59,6 +59,7 @@ public class TasksController : ControllerBase
             return BadRequest(new ApiResponse<object>
             {
                 Success = false,
+                Error = "INVALID_TASK_BUDGET",
                 Message = $"Budget must be between R{TaskBudgetLimits.Minimum:N0} and R{TaskBudgetLimits.Maximum:N0}."
             });
 
