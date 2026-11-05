@@ -91,6 +91,7 @@ public sealed class PayoutProcessorService(
                     provider,
                     notifications,
                     payout,
+                    automaticPayoutsEnabled,
                     cancellationToken);
         }
     }
@@ -199,6 +200,7 @@ public sealed class PayoutProcessorService(
         IPayoutProvider provider,
         INotificationService notifications,
         Payout payout,
+        bool automaticPayoutsEnabled,
         CancellationToken cancellationToken)
     {
         var result = await provider.GetPayoutStatusAsync(
@@ -216,13 +218,21 @@ public sealed class PayoutProcessorService(
 
         if (!result.Found)
         {
-            // Paystack recommends reusing the same reference when a transfer request
-            // is non-conclusive. Returning to Pending is safe because CreatePayoutAsync
-            // sends the exact same reference.
-            payout.Status = "Pending";
+            // With automatic payouts disabled, keep an already-submitted transfer in
+            // Processing so reconciliation continues on the next cycle. Moving it to
+            // Pending would remove it from the reconciliation query and strand it.
+            // When automatic payouts are enabled, Pending allows a safe retry using
+            // the same merchant reference.
+            payout.Status = automaticPayoutsEnabled ? "Pending" : "Processing";
             payout.ProcessingError = null;
             payout.NextAttemptAt = DateTime.UtcNow.AddMinutes(2);
             payout.UpdatedAt = DateTime.UtcNow;
+            if (!automaticPayoutsEnabled)
+            {
+                payout.Task.PayoutStatus = "Processing";
+                payout.Task.TaskStatus = "PayoutPending";
+                payout.Task.UpdatedAt = DateTime.UtcNow;
+            }
             await context.SaveChangesAsync(cancellationToken);
             return;
         }
