@@ -604,10 +604,6 @@ namespace DoForYou.API.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<string>("NormalizedEmail")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.Property<string>("GoogleSubject")
                         .HasColumnType("text");
 
