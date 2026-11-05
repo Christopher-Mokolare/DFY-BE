@@ -51,14 +51,24 @@ public sealed class PayoutProcessorService(
         var provider = scope.ServiceProvider.GetRequiredService<IPayoutProvider>();
         var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
+        // Runner transfers are manual by default while DFY validates its payout
+        // operations and dispute handling. Explicitly opt in to automatic transfers
+        // with PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED=true. Existing Processing transfers
+        // are still reconciled below so a transfer already sent to Paystack can reach
+        // a final state; Pending/AwaitingFunds records are never submitted by default.
+        var automaticPayoutsEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
         var payouts = await context.Payouts
             .Include(p => p.BankAccount)
             .Include(p => p.Task)
             .Where(p =>
                 p.Provider == "Paystack" &&
-                (p.Status == "Pending" ||
-                 p.Status == "Processing" ||
-                 p.Status == "AwaitingFunds") &&
+                (p.Status == "Processing" ||
+                 (automaticPayoutsEnabled &&
+                  (p.Status == "Pending" || p.Status == "AwaitingFunds"))) &&
                 (p.NextAttemptAt == null || p.NextAttemptAt <= DateTime.UtcNow))
             .OrderBy(p => p.CreatedAt)
             .Take(25)
@@ -81,6 +91,7 @@ public sealed class PayoutProcessorService(
                     provider,
                     notifications,
                     payout,
+                    automaticPayoutsEnabled,
                     cancellationToken);
         }
     }
@@ -189,6 +200,7 @@ public sealed class PayoutProcessorService(
         IPayoutProvider provider,
         INotificationService notifications,
         Payout payout,
+        bool automaticPayoutsEnabled,
         CancellationToken cancellationToken)
     {
         var result = await provider.GetPayoutStatusAsync(
@@ -206,13 +218,21 @@ public sealed class PayoutProcessorService(
 
         if (!result.Found)
         {
-            // Paystack recommends reusing the same reference when a transfer request
-            // is non-conclusive. Returning to Pending is safe because CreatePayoutAsync
-            // sends the exact same reference.
-            payout.Status = "Pending";
+            // With automatic payouts disabled, keep an already-submitted transfer in
+            // Processing so reconciliation continues on the next cycle. Moving it to
+            // Pending would remove it from the reconciliation query and strand it.
+            // When automatic payouts are enabled, Pending allows a safe retry using
+            // the same merchant reference.
+            payout.Status = automaticPayoutsEnabled ? "Pending" : "Processing";
             payout.ProcessingError = null;
             payout.NextAttemptAt = DateTime.UtcNow.AddMinutes(2);
             payout.UpdatedAt = DateTime.UtcNow;
+            if (!automaticPayoutsEnabled)
+            {
+                payout.Task.PayoutStatus = "Processing";
+                payout.Task.TaskStatus = "PayoutPending";
+                payout.Task.UpdatedAt = DateTime.UtcNow;
+            }
             await context.SaveChangesAsync(cancellationToken);
             return;
         }
