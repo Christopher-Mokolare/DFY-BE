@@ -151,9 +151,11 @@ public class AuthController : ControllerBase
         {
             await SendVerificationEmailAsync(user.Email, verificationToken, HttpContext.RequestAborted);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            _logger.LogWarning("Registration verification email could not be sent for user {UserId}", user.Id);
+            // Keep the verification token and recipient out of logs, but retain
+            // the SMTP/provider exception so staging delivery failures are diagnosable.
+            _logger.LogError(ex, "Registration verification email could not be sent for user {UserId}", user.Id);
         }
 
         // Do not fire-and-forget work that uses the request-scoped DbContext.
