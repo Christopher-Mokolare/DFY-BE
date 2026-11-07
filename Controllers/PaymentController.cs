@@ -88,7 +88,7 @@ public class PaymentController : ControllerBase
                 return await HandleChargeSuccess(root);
             }
 
-            if (eventName is "refund.processed" or "refund.failed" or "refund.pending" or "refund.processing")
+            if (eventName is "refund.processed" or "refund.failed" or "refund.pending" or "refund.processing" or "refund.needs-attention")
             {
                 return await HandleRefundEvent(root, eventName);
             }
@@ -322,7 +322,9 @@ public class PaymentController : ControllerBase
         // events must not undo a failure that is already awaiting reconciliation.
         if (string.Equals(refund.Status, "Complete", StringComparison.OrdinalIgnoreCase) ||
             (string.Equals(refund.Status, "Failed", StringComparison.OrdinalIgnoreCase) &&
-             eventName is "refund.failed" or "refund.pending" or "refund.processing"))
+             eventName is "refund.failed" or "refund.pending" or "refund.processing" or "refund.needs-attention") ||
+            (string.Equals(refund.Status, "PendingInvestigation", StringComparison.OrdinalIgnoreCase) &&
+             eventName is "refund.pending" or "refund.processing"))
             return Ok();
 
         refund.LastReconciledAt = DateTime.UtcNow;
@@ -381,6 +383,23 @@ public class PaymentController : ControllerBase
 
             foreach (var dispute in disputes)
                 dispute.Status = "Open";
+        }
+        else if (eventName == "refund.needs-attention" ||
+                 string.Equals(providerStatus, "needs-attention", StringComparison.OrdinalIgnoreCase))
+        {
+            refund.Status = "PendingInvestigation";
+            refund.FailureReason = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold until the provider confirms the outcome.";
+            task.PaymentStatus = "RefundPending";
+            task.TaskStatus = "RefundPending";
+            task.EscrowStatus = "refund_pending";
+            task.UpdatedAt = DateTime.UtcNow;
+
+            var disputes = await _context.Disputes
+                .Where(d => d.TaskId == task.Id && d.Status != "Resolved")
+                .ToListAsync();
+
+            foreach (var dispute in disputes)
+                dispute.Status = "RefundPending";
         }
         else
         {
