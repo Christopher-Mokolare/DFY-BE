@@ -58,13 +58,21 @@ public sealed class BankingService(
             var payouts = await context.Payouts
                 .Include(p => p.Task)
                 .Where(p =>
-                    p.BankAccountId == bankAccount.Id &&
+                    p.RunnerId == user.Id &&
                     (p.Status == "Failed" || p.Status == "AwaitingBankDetails") &&
-                    p.FailureReason == "Runner bank account is missing its Paystack recipient reference.")
+                    (
+                        (p.BankAccountId == bankAccount.Id &&
+                         p.FailureReason == "Runner bank account is missing its Paystack recipient reference.") ||
+                        (p.BankAccountId == null &&
+                         p.FailureReason == "Runner has no active verified Paystack bank account.") ||
+                        p.FailureReason == "Runner bank account is no longer verified or active."
+                    ))
                 .ToListAsync(cancellationToken);
 
             foreach (var payout in payouts)
             {
+                payout.BankAccountId = bankAccount.Id;
+                payout.BankAccount = bankAccount;
                 payout.Status = "Pending";
                 payout.FailureReason = null;
                 payout.ProcessingError = null;
