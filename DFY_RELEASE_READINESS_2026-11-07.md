@@ -31,12 +31,13 @@ These counts are point-in-time observations and must be refreshed before any bra
 |---|---|---|
 | [DFY-BE #81](https://github.com/DoForYou-ZA/DFY-BE/pull/81) | Retire unsafe legacy Ozow payout callbacks and correct Paystack provider defaults | Draft; workflow is `action_required`. Hold until live staging configuration and historical callback dependencies are inspected. |
 | [DFY-BE #82](https://github.com/DoForYou-ZA/DFY-BE/pull/82) | Guard payout/refund races, handle `refund.needs-attention`, resolve refund webhooks by payment reference, and add a guarded staging Test Mode transfer opt-in | Latest backend CI run #520 passed. |
-| [DFY-BE #83](https://github.com/DoForYou-ZA/DFY-BE/pull/83) | Verify timestamped `Paystack-Signature`, retain safe legacy fallback, and verify transaction identity/currency | Latest backend CI run #521 is still in progress; build and EF snapshot checks passed, tests were running at report time. |
+| [DFY-BE #83](https://github.com/DoForYou-ZA/DFY-BE/pull/83) | Verify timestamped `Paystack-Signature`, retain safe legacy fallback, and verify transaction identity/currency | Latest backend CI run #521 passed, including build, EF snapshot verification and tests. |
 | [DFY-BE #84](https://github.com/DoForYou-ZA/DFY-BE/pull/84) | Allow escrow release and payout queueing before runner bank setup is complete | Latest backend CI run #507 passed, including EF model snapshot verification and tests. |
+| [DFY-BE #85](https://github.com/DoForYou-ZA/DFY-BE/pull/85) | Refresh this release-readiness report and README link | Documentation-only; no code workflow run was triggered at the time of the report. |
 | [DFY-FE #86](https://github.com/DoForYou-ZA/DFY-FE/pull/86) | Make the staging Docker build use the current staging-branch APK release | Latest frontend CI run #709 passed. Depends on the mobile staging release being published first. |
 | [dfy-mobile #26](https://github.com/DoForYou-ZA/dfy-mobile/pull/26) | Publish a rolling staging-branch APK and pass Google OAuth client IDs into the build | Latest mobile CI run #287 passed; Android artifact uploaded. Release publication is intentionally skipped on a pull-request run. |
 
-All six PRs are draft. CI success does not authorise merging or deploying. Coordinate merge order: BE #83 before BE #82 (the latter also changes the payment webhook controller); BE #82 before BE #84 (both touch the escrow-release notification); mobile #26 before FE #86. Keep BE #81 on hold until its Render configuration check is complete.
+All seven PRs are draft, including this documentation update. CI success does not authorise merging or deploying. Coordinate merge order: BE #83 before BE #82 (the latter also changes the payment webhook controller); BE #82 before BE #84 (both touch the escrow-release notification); mobile #26 before FE #86. Keep BE #81 on hold until its Render configuration check is complete.
 
 ## 4. Verified backend financial rules and findings
 
