@@ -389,7 +389,7 @@ public class PaymentController : ControllerBase
                 Action = "PaystackRefundCompleted",
                 EntityType = "Task",
                 EntityId = task.Id,
-                NewValues = $"refundId={refundId}; transactionId={transaction}; amount={(amountMinor ?? 0m) / 100m:F2}",
+                NewValues = $"refundId={refundId}; transactionId={transactionId}; transactionReference={transactionReference}; amount={(amountMinor ?? 0m) / 100m:F2}",
                 IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                 UserAgent = Request.Headers.UserAgent.ToString()
             });
