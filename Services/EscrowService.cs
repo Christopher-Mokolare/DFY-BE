@@ -105,12 +105,10 @@ public class EscrowService : IEscrowService
                 .ThenBy(b => b.CreatedAt)
                 .ThenBy(b => b.Id)
                 .FirstOrDefaultAsync();
-            if (bankAccount == null)
-            {
-                if (transaction != null) await transaction.RollbackAsync();
-                _logger.LogWarning("Cannot release task {TaskId}: runner {RunnerId} has no active verified bank account.", task.TaskId, task.AcceptedByUserId.Value);
-                return false;
-            }
+            var payoutStatus = bankAccount == null ? "AwaitingBankDetails" : "Pending";
+            var payoutFailureReason = bankAccount == null
+                ? "Runner has no active verified Paystack bank account."
+                : null;
 
             // A new provider submission after a terminal payout failure/return
             // gets a fresh merchant reference so the prior provider transaction
@@ -122,10 +120,11 @@ public class EscrowService : IEscrowService
             {
                 TaskId = task.Id,
                 RunnerId = task.AcceptedByUserId.Value,
-                BankAccountId = bankAccount.Id,
+                BankAccountId = bankAccount?.Id,
                 Amount = task.PayoutAmount,
-                Status = "Pending",
+                Status = payoutStatus,
                 Provider = "Paystack",
+                FailureReason = payoutFailureReason,
                 MerchantReference = merchantReference,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -135,7 +134,7 @@ public class EscrowService : IEscrowService
             task.EscrowStatus = "released";
             task.PaymentStatus = "EscrowReleased";
             task.TaskStatus = "PayoutPending";
-            task.PayoutStatus = "Pending";
+            task.PayoutStatus = payoutStatus;
             task.PayoutReference = merchantReference;
             task.PayoutInitiatedAt = DateTime.UtcNow;
             task.PaidToRunnerAt = null;
