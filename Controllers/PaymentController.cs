@@ -164,6 +164,7 @@ public class PaymentController : ControllerBase
             !verified.Found ||
             !string.Equals(verified.Status, "success", StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(verified.TransactionReference, reference, StringComparison.Ordinal) ||
+            !string.Equals(verified.Currency, "ZAR", StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(verified.TransactionId) ||
             !verified.Amount.HasValue ||
             verified.Amount.Value != expectedAmount)
