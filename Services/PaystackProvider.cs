@@ -148,8 +148,9 @@ public sealed class PaystackProvider(
                 GetString(data, "id"),
                 GetString(data, "status"),
                 amountMinor.HasValue ? amountMinor.Value / 100m : null,
-                GetString(data, "reference") ?? transactionReference,
-                null);
+                GetString(data, "reference"),
+                null,
+                GetString(data, "currency"));
         }
         catch (Exception ex)
         {
