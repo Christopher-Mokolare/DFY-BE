@@ -16,8 +16,8 @@ public record PaymentVerificationResult(
     string? Status,
     decimal? Amount,
     string? TransactionReference,
-    string? Error,);
-    string? Currency = null;
+    string? Error,
+    string? Currency = null);
 
 public record RefundResult(
     bool Success,
