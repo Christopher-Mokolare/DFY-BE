@@ -843,6 +843,56 @@ public class ScenarioTests
         Assert.Equal("Cancelled", task.TaskStatus);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task EscrowRelease_QueuesPayoutWithoutVerifiedBankAccount()
+    {
+        using var context = CreateContext(nameof(EscrowRelease_QueuesPayoutWithoutVerifiedBankAccount));
+        var creator = CreateUser(21, "creator", true, "escrow-no-bank-creator@test.com");
+        var runner = CreateUser(22, "runner", true, "escrow-no-bank-runner@test.com");
+        context.Users.AddRange(creator, runner);
+
+        var task = new TaskEntity
+        {
+            Id = 8892,
+            TaskId = "DFY-ESCROW-NO-BANK",
+            TaskDescription = "Escrow release must not wait for bank setup",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "EscrowHeld",
+            EscrowStatus = "held",
+            TaskStatus = "AwaitingConfirmation",
+            PayoutStatus = "NotStarted",
+            EscrowHoldUntil = DateTime.UtcNow.AddHours(-1),
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var escrowService = new EscrowService(context, NullLogger<EscrowService>.Instance);
+        var released = await escrowService.ReleaseEscrowAsync(task.Id, force: true);
+
+        Assert.True(released);
+        var persistedTask = await context.Tasks.SingleAsync(t => t.Id == task.Id);
+        Assert.Equal("released", persistedTask.EscrowStatus);
+        Assert.Equal("EscrowReleased", persistedTask.PaymentStatus);
+        Assert.Equal("PayoutPending", persistedTask.TaskStatus);
+        Assert.Equal("AwaitingBankDetails", persistedTask.PayoutStatus);
+        Assert.Null(persistedTask.PayoutInitiatedAt);
+
+        var payout = Assert.Single(await context.Payouts.ToListAsync());
+        Assert.Null(payout.BankAccountId);
+        Assert.Equal("AwaitingBankDetails", payout.Status);
+        Assert.Equal("Runner has no active verified Paystack bank account.", payout.FailureReason);
+        Assert.Equal(170m, payout.Amount);
+    }
+
     private static PaymentController CreatePaymentController(AppDbContext context)
     {
         var configuration = new ConfigurationBuilder()
