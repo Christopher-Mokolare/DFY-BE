@@ -136,7 +136,7 @@ public class EscrowService : IEscrowService
             task.TaskStatus = "PayoutPending";
             task.PayoutStatus = payoutStatus;
             task.PayoutReference = merchantReference;
-            task.PayoutInitiatedAt = DateTime.UtcNow;
+            task.PayoutInitiatedAt = null;
             task.PaidToRunnerAt = null;
             task.UpdatedAt = DateTime.UtcNow;
 
