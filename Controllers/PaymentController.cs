@@ -163,6 +163,8 @@ public class PaymentController : ControllerBase
         if (!verified.Success ||
             !verified.Found ||
             !string.Equals(verified.Status, "success", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(verified.TransactionReference, reference, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(verified.TransactionId) ||
             !verified.Amount.HasValue ||
             verified.Amount.Value != expectedAmount)
         {
@@ -170,7 +172,9 @@ public class PaymentController : ControllerBase
             return BadRequest();
         }
 
-        var tx = transactionId ?? verified.TransactionId;
+        // Persist the transaction ID returned by Paystack's independent lookup,
+        // never an unverified ID copied from the webhook body.
+        var tx = verified.TransactionId;
 
         if (paymentAttempt != null)
         {
