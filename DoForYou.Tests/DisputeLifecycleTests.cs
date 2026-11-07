@@ -199,7 +199,7 @@ public class DisputeLifecycleTests
             CancellationToken cancellationToken = default) =>
             System.Threading.Tasks.Task.FromResult<IReadOnlyList<RefundStatusResult>>(Array.Empty<RefundStatusResult>());
 
-        public bool VerifyWebhookSignature(string rawBody, string? signature) => true;
+        public bool VerifyWebhookSignature(string rawBody, string? signature, bool isTimestampedSignature = false) => true;
     }
 
     private sealed class NoOpNotificationService : INotificationService
