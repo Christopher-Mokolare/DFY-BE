@@ -152,34 +152,37 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-// Forward only the headers that are needed for scheme and client-IP handling.
-// Enable this only when the API is behind the managed Render ingress proxy. Render must
-// be the public ingress; ForwardLimit=1 uses the nearest forwarded hop and prevents a
-// client-supplied leftmost X-Forwarded-For value from being used for the limiter.
+// Trust Render's managed Cloudflare ingress only when explicitly enabled.
+// Render routes public web-service traffic through Cloudflare. Cloudflare supplies
+// CF-Connecting-IP as a single visitor address; unlike X-Forwarded-For, it avoids
+// parsing a chain that can contain client-supplied values. The resolver uses this
+// header only when this deployment is explicitly configured for Render ingress.
 var trustManagedIngress = string.Equals(
     builder.Configuration["DFY_TRUST_MANAGED_INGRESS"],
     "true",
     StringComparison.OrdinalIgnoreCase);
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Only use forwarded proto here. Client-IP resolution for auth throttling is
+    // handled separately from Cloudflare's single-address CF-Connecting-IP header.
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
     options.ForwardLimit = 1;
     if (trustManagedIngress)
     {
-        // Render's ingress IPs are managed and can change. Do not enable this flag for
+        // Render's managed ingress addresses can change. Do not enable this flag for
         // deployments directly exposed to clients or behind an untrusted proxy.
         options.KnownNetworks.Clear();
         options.KnownProxies.Clear();
     }
 });
 
-// Per-IP throttling for public authentication endpoints. Request IP uses the forwarded
-// client address only when DFY_TRUST_MANAGED_INGRESS=true for the managed Render ingress.
+// Per-IP throttling for public authentication endpoints. On Render, use the
+// Cloudflare-provided visitor IP only when managed ingress trust is explicitly enabled.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
-        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        ClientIpAddressResolver.GetRateLimitPartitionKey(context, trustManagedIngress),
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 20,
