@@ -365,7 +365,7 @@ public class DisputesController : ControllerBase
                     dispute.Resolution = resolution;
                     dispute.ResolvedAt = DateTime.UtcNow;
                 }
-                else if (refundRecord.Status is "Failed" or "PendingInvestigation")
+                else if (refundRecord.Status == "Failed")
                 {
                     task.PaymentStatus = "DisputePending";
                     task.TaskStatus = priorTaskStatus;
@@ -375,6 +375,8 @@ public class DisputesController : ControllerBase
                 }
                 else
                 {
+                    // A needs-attention refund is still outstanding, not failed.
+                    // Keep the task frozen until Paystack confirms the outcome.
                     dispute.Status = "RefundPending";
                     dispute.Resolution = resolution;
                     dispute.ResolvedAt = null;
@@ -385,8 +387,11 @@ public class DisputesController : ControllerBase
                 if (refundRecord.Status == "Complete")
                     return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund was confirmed with Paystack." });
 
-                if (refundRecord.Status is "Failed" or "PendingInvestigation")
-                    return Conflict(new ApiResponse<bool> { Success = false, Message = $"Paystack reports the existing refund as {refundRecord.Status}." });
+                if (refundRecord.Status == "Failed")
+                    return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack reports the existing refund as failed; the dispute is reopened for review." });
+
+                if (refundRecord.Status == "PendingInvestigation")
+                    return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
 
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already with Paystack and awaiting completion." });
             }
