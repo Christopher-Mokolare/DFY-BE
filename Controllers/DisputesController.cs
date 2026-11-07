@@ -185,6 +185,7 @@ public class DisputesController : ControllerBase
             // after Paystack confirms a successful transfer.
             task.EscrowStatus = "held";
             task.PaymentStatus = "EscrowHeld";
+            task.TaskStatus = "AwaitingConfirmation";
             task.EscrowHoldUntil = DateTime.UtcNow.AddSeconds(-1);
             task.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
@@ -199,12 +200,6 @@ public class DisputesController : ControllerBase
                 task.EscrowStatus == "released" ||
                 task.EscrowStatus == "refunded")
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
-
-            var activePayout = await _context.Payouts.AnyAsync(p =>
-                p.TaskId == task.Id &&
-                (p.Status == "Processing" || p.Status == "Completed"));
-            if (activePayout)
-                return Conflict(new ApiResponse<bool> { Success = false, Message = "A runner payout is already processing or completed for this task." });
 
             // Use the immutable payment-attempt record as the source of truth for
             // refunds. Audit logs remain a backward-compatible fallback for older tasks.
@@ -240,6 +235,70 @@ public class DisputesController : ControllerBase
             if (existingRefund != null && !string.IsNullOrWhiteSpace(existingRefund.RefundId) &&
                 existingRefund.Status is "Pending" or "Submitted" or "PendingInvestigation")
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Paystack confirmation." });
+
+            // Atomically reserve the disputed task for refund before calling Paystack.
+            // The payout worker only submits rows whose task remains EscrowReleased /
+            // PayoutPending, so this state transition and payout claim cannot both win.
+            var priorTaskStatus = task.TaskStatus;
+            var reservationQuery = _context.Tasks.Where(t =>
+                t.Id == task.Id &&
+                t.PaymentStatus == "DisputePending" &&
+                t.EscrowStatus == "disputed" &&
+                (t.TaskStatus == "AwaitingConfirmation" || t.TaskStatus == "Completed"));
+
+            var reservedPayout = 0;
+            if (_context.Database.IsRelational())
+            {
+                reservationQuery = reservationQuery.Where(t => !_context.Payouts.Any(p =>
+                    p.TaskId == t.Id &&
+                    (p.Status == "Pending" ||
+                     p.Status == "Processing" ||
+                     p.Status == "AwaitingFunds" ||
+                     p.Status == "AwaitingEligibility" ||
+                     p.Status == "AwaitingBankDetails" ||
+                     p.Status == "Queued" ||
+                     p.Status == "Initiated" ||
+                     p.Status == "Completed")));
+
+                reservedPayout = await reservationQuery.ExecuteUpdateAsync(setters => setters
+                    .SetProperty(t => t.PaymentStatus, "RefundPending")
+                    .SetProperty(t => t.TaskStatus, "RefundPending")
+                    .SetProperty(t => t.EscrowStatus, "refund_pending")
+                    .SetProperty(t => t.UpdatedAt, DateTime.UtcNow),
+                    HttpContext.RequestAborted);
+            }
+            else
+            {
+                var activePayout = await _context.Payouts.AnyAsync(p =>
+                    p.TaskId == task.Id &&
+                    (p.Status == "Pending" ||
+                     p.Status == "Processing" ||
+                     p.Status == "AwaitingFunds" ||
+                     p.Status == "AwaitingEligibility" ||
+                     p.Status == "AwaitingBankDetails" ||
+                     p.Status == "Queued" ||
+                     p.Status == "Initiated" ||
+                     p.Status == "Completed"));
+
+                var reservableTask = activePayout ? null : await reservationQuery.FirstOrDefaultAsync();
+                if (reservableTask != null)
+                {
+                    reservableTask.PaymentStatus = "RefundPending";
+                    reservableTask.TaskStatus = "RefundPending";
+                    reservableTask.EscrowStatus = "refund_pending";
+                    reservableTask.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    reservedPayout = 1;
+                }
+            }
+
+            if (reservedPayout != 1)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer held for dispute resolution or a runner payout is already queued/processing." });
+
+            task.PaymentStatus = "RefundPending";
+            task.TaskStatus = "RefundPending";
+            task.EscrowStatus = "refund_pending";
+            task.UpdatedAt = DateTime.UtcNow;
 
             // Create the unique refund record before calling Paystack. TaskId is unique,
             // so concurrent admin requests cannot create two DFY refund records.
@@ -292,6 +351,35 @@ public class DisputesController : ControllerBase
                 refundRecord.LastReconciledAt = DateTime.UtcNow;
                 if (refundRecord.Status == "Complete")
                     refundRecord.CompletedAt = DateTime.UtcNow;
+                if (refundRecord.Status == "Complete")
+                {
+                    task.PaymentStatus = "Refunded";
+                    task.TaskStatus = "Cancelled";
+                    task.EscrowStatus = "refunded";
+                    task.PayoutStatus = "NotStarted";
+                    task.PayoutReference = null;
+                    task.PayoutInitiatedAt = null;
+                    task.PayoutCompletedAt = null;
+                    task.PaidToRunnerAt = null;
+                    dispute.Status = "Resolved";
+                    dispute.Resolution = resolution;
+                    dispute.ResolvedAt = DateTime.UtcNow;
+                }
+                else if (refundRecord.Status is "Failed" or "PendingInvestigation")
+                {
+                    task.PaymentStatus = "DisputePending";
+                    task.TaskStatus = priorTaskStatus;
+                    task.EscrowStatus = "disputed";
+                    dispute.Status = "Open";
+                    dispute.ResolvedAt = null;
+                }
+                else
+                {
+                    dispute.Status = "RefundPending";
+                    dispute.Resolution = resolution;
+                    dispute.ResolvedAt = null;
+                }
+
                 await _context.SaveChangesAsync();
 
                 if (refundRecord.Status == "Complete")
@@ -314,6 +402,11 @@ public class DisputesController : ControllerBase
                 refundRecord.Status = "Failed";
                 refundRecord.FailureReason = refund.Error;
                 refundRecord.LastReconciledAt = DateTime.UtcNow;
+                task.PaymentStatus = "DisputePending";
+                task.TaskStatus = priorTaskStatus;
+                task.EscrowStatus = "disputed";
+                dispute.Status = "Open";
+                dispute.ResolvedAt = null;
                 await _context.SaveChangesAsync();
                 return StatusCode(StatusCodes.Status502BadGateway,
                     new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Paystack refund." });
