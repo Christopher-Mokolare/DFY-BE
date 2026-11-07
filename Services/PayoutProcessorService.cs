@@ -33,18 +33,31 @@ public sealed class PayoutProcessorService(
 
     private async Task ProcessDuePayouts(CancellationToken cancellationToken)
     {
-        // Staging lifecycle E2E tests intentionally create payout queue records.
-        // Never submit or reconcile those records against a provider while the
-        // test-mode flag is enabled; staging may be configured with live Paystack
-        // credentials, and the test assertion only requires the queued state.
-        if (string.Equals(
-                Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE"),
-                "true",
-                StringComparison.OrdinalIgnoreCase))
+        // Staging lifecycle E2E tests normally keep all payout records queued.
+        // A narrowly scoped override is permitted only on Staging with an
+        // explicitly enabled flag and a Paystack Test Mode secret key.
+        var e2eTestMode = string.Equals(
+            Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+        var testTransfersEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("DFY_PAYSTACK_TEST_TRANSFERS_ENABLED"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+        var allowTestTransfers = PayoutProcessorSafetyPolicy.CanRunTestTransfers(
+            e2eTestMode,
+            testTransfersEnabled,
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            Environment.GetEnvironmentVariable("PAYSTACK_SECRET_KEY"));
+
+        if (e2eTestMode && !allowTestTransfers)
         {
             logger.LogInformation("DFY E2E test mode enabled; skipping Paystack payout processing.");
             return;
         }
+
+        if (allowTestTransfers)
+            logger.LogWarning("Explicit staging Paystack Test Mode transfer override is enabled.");
 
         using var scope = scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
