@@ -1058,6 +1058,76 @@ public class ScenarioTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task PaystackRefundNeedsAttention_KeepsTaskAndDisputeOnRefundHold()
+    {
+        using var context = CreateContext(nameof(PaystackRefundNeedsAttention_KeepsTaskAndDisputeOnRefundHold));
+        var creator = CreateUser(31, "creator", true, "refund-needs-attention-creator@test.com");
+        var runner = CreateUser(32, "runner", true, "refund-needs-attention-runner@test.com");
+        context.Users.AddRange(creator, runner);
+
+        var task = new TaskEntity
+        {
+            Id = 8893,
+            TaskId = "DFY-REFUND-NEEDS-ATTENTION",
+            TaskDescription = "Refund requires customer bank details",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "RefundPending",
+            EscrowStatus = "refund_pending",
+            TaskStatus = "RefundPending",
+            PayoutStatus = "NotStarted",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var refund = new Refund
+        {
+            TaskId = task.Id,
+            RefundId = "RF-NEEDS-ATTENTION",
+            TransactionId = "TX-NEEDS-ATTENTION",
+            Amount = 200m,
+            Reason = "Creator refund after dispute",
+            Status = "Submitted",
+            Task = task
+        };
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "Refund needs customer bank details",
+            Category = "Quality",
+            Status = "RefundPending",
+            Task = task
+        };
+        context.Tasks.Add(task);
+        context.Refunds.Add(refund);
+        context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
+
+        var controller = CreatePaymentController(context);
+        const string needsAttentionEvent = """{"event":"refund.needs-attention","data":{"id":"RF-NEEDS-ATTENTION","transaction_reference":"TX-NEEDS-ATTENTION","amount":20000,"currency":"ZAR","status":"needs-attention"}}""";
+
+        Assert.IsType<OkResult>(await InvokeWebhook(controller, needsAttentionEvent));
+        Assert.Equal("PendingInvestigation", refund.Status);
+        Assert.Contains("customer bank details", refund.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("RefundPending", task.TaskStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
+        Assert.Equal("RefundPending", dispute.Status);
+
+        const string staleProcessingEvent = """{"event":"refund.processing","data":{"id":"RF-NEEDS-ATTENTION","transaction_reference":"TX-NEEDS-ATTENTION","amount":20000,"currency":"ZAR","status":"processing"}}""";
+        Assert.IsType<OkResult>(await InvokeWebhook(controller, staleProcessingEvent));
+        Assert.Equal("PendingInvestigation", refund.Status);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task EscrowRelease_CreatesPendingPaystackPayout()
     {
         using var context = CreateContext(nameof(EscrowRelease_CreatesPendingPaystackPayout));
