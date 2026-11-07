@@ -67,7 +67,10 @@ public sealed class PayoutProcessorService(
                  (automaticPayoutsEnabled &&
                   (p.Status == "Pending" ||
                    p.Status == "AwaitingFunds" ||
-                   p.Status == "AwaitingEligibility"))) &&
+                   p.Status == "AwaitingEligibility") &&
+                  p.Task.TaskStatus == "PayoutPending" &&
+                  p.Task.PaymentStatus == "EscrowReleased" &&
+                  p.Task.EscrowStatus == "released")) &&
                 (p.NextAttemptAt == null || p.NextAttemptAt <= DateTime.UtcNow))
             .OrderBy(p => p.CreatedAt)
             .Take(25)
@@ -113,7 +116,10 @@ public sealed class PayoutProcessorService(
     {
         var claimed = await context.Payouts
             .Where(p => p.Id == payout.Id &&
-                        (p.Status == "Pending" || p.Status == "AwaitingFunds" || p.Status == "AwaitingEligibility"))
+                        (p.Status == "Pending" || p.Status == "AwaitingFunds" || p.Status == "AwaitingEligibility") &&
+                        p.Task.TaskStatus == "PayoutPending" &&
+                        p.Task.PaymentStatus == "EscrowReleased" &&
+                        p.Task.EscrowStatus == "released")
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(p => p.Status, "Processing")
                 .SetProperty(p => p.ProcessingAt, DateTime.UtcNow)
