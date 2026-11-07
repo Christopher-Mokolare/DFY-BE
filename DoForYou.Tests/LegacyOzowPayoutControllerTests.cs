@@ -1,4 +1,5 @@
 using DoForYou.API.Controllers;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DoForYou.Tests;
