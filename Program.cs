@@ -27,72 +27,6 @@ var builder = WebApplication.CreateBuilder(args);
 // URL info logs; keep warnings/errors and application logs enabled.
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
 
-builder.Configuration["Ozow:SiteCode"] =
-    Environment.GetEnvironmentVariable("OZOW_SITE_CODE")
-    ?? builder.Configuration["Ozow:SiteCode"];
-
-builder.Configuration["Ozow:PayoutApiKey"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYOUT_API_KEY")
-    ?? builder.Configuration["Ozow:PayoutApiKey"];
-
-builder.Configuration["Ozow:PayoutBaseUrl"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYOUT_BASE_URL")
-    ?? builder.Configuration["Ozow:PayoutBaseUrl"];
-
-builder.Configuration["Ozow:NotifyUrl"] =
-    Environment.GetEnvironmentVariable("OZOW_NOTIFY_URL")
-    ?? builder.Configuration["Ozow:NotifyUrl"];
-
-builder.Configuration["Ozow:VerifyUrl"] =
-    Environment.GetEnvironmentVariable("OZOW_VERIFY_URL")
-    ?? builder.Configuration["Ozow:VerifyUrl"];
-
-builder.Configuration["Ozow:AccessToken"] =
-    Environment.GetEnvironmentVariable("OZOW_ACCESS_TOKEN")
-    ?? builder.Configuration["Ozow:AccessToken"];
-
-builder.Configuration["Ozow:AccountNumberDecryptionKey"] =
-    Environment.GetEnvironmentVariable("OZOW_ACCOUNT_NUMBER_DECRYPTION_KEY")
-    ?? builder.Configuration["Ozow:AccountNumberDecryptionKey"];
-
-builder.Configuration["Ozow:PayoutIsRtc"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYOUT_IS_RTC")
-    ?? builder.Configuration["Ozow:PayoutIsRtc"];
-
-
-builder.Configuration["Ozow:PaymentApiKey"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYMENT_API_KEY")
-    ?? Environment.GetEnvironmentVariable("OZOW_API_KEY")
-    ?? builder.Configuration["Ozow:PaymentApiKey"];
-
-builder.Configuration["Ozow:PaymentPrivateKey"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYMENT_PRIVATE_KEY")
-    ?? Environment.GetEnvironmentVariable("OZOW_PRIVATE_KEY")
-    ?? builder.Configuration["Ozow:PaymentPrivateKey"];
-
-builder.Configuration["Ozow:PaymentBaseUrl"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYMENT_BASE_URL")
-    ?? builder.Configuration["Ozow:PaymentBaseUrl"]
-    ?? "https://stagingapi.ozow.com";
-
-builder.Configuration["Ozow:PaymentIsTest"] =
-    Environment.GetEnvironmentVariable("OZOW_PAYMENT_IS_TEST")
-    ?? builder.Configuration["Ozow:PaymentIsTest"]
-    ?? "true";
-
-builder.Configuration["Ozow:OneClientId"] =
-    Environment.GetEnvironmentVariable("OZOW_ONE_CLIENT_ID")
-    ?? builder.Configuration["Ozow:OneClientId"];
-
-builder.Configuration["Ozow:OneClientSecret"] =
-    Environment.GetEnvironmentVariable("OZOW_ONE_CLIENT_SECRET")
-    ?? builder.Configuration["Ozow:OneClientSecret"];
-
-builder.Configuration["Ozow:OneBaseUrl"] =
-    Environment.GetEnvironmentVariable("OZOW_ONE_BASE_URL")
-    ?? builder.Configuration["Ozow:OneBaseUrl"]
-    ?? "https://stagingone.ozow.com/v1";
-
 var jwtKey = builder.Configuration["Jwt:Key"] ?? Environment.GetEnvironmentVariable("JWT_KEY");
 if (builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(jwtKey))
     jwtKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -354,7 +288,9 @@ if (string.Equals(Environment.GetEnvironmentVariable("AUTO_MIGRATE"), "true", St
     // be ahead of its physical schema. Keep this idempotent and staging-only so
     // Paystack columns/tables are guaranteed even when EF thinks migrations ran.
     await migrationDb.Database.ExecuteSqlRawAsync(@"ALTER TABLE ""Payments""
-        ADD COLUMN IF NOT EXISTS ""Provider"" text NOT NULL DEFAULT 'Ozow';
+        ADD COLUMN IF NOT EXISTS ""Provider"" text NOT NULL DEFAULT 'Paystack';
+        ALTER TABLE ""Payments""
+        ALTER COLUMN ""Provider"" SET DEFAULT 'Paystack';
 
         ALTER TABLE ""BankAccounts""
         ADD COLUMN IF NOT EXISTS ""BankCode"" text NULL;
