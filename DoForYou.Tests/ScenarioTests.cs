@@ -1008,7 +1008,8 @@ private static AppDbContext CreateContext(string name)
                     "success",
                     500m,
                     transactionReference,
-                    null));
+                    null,
+                    "ZAR"));
         }
 
         public Task<RefundResult> CreateRefundAsync(
