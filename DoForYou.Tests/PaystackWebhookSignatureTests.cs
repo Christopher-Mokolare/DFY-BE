@@ -54,12 +54,82 @@ public sealed class PaystackWebhookSignatureTests
             Encoding.UTF8.GetBytes(secret),
             Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
 
-    private static PaystackProvider CreateProvider(string? secret)
+    [Fact]
+    public void VerifyWebhookSignature_AcceptsTimestampedPaystackSignature()
+    {
+        const string webhookSecret = "whsec_timestamped_signature_unit_test";
+        var provider = CreateProvider(Secret, webhookSecret);
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var signature = SignTimestamped(Payload, timestamp, webhookSecret);
+
+        Assert.True(provider.VerifyWebhookSignature(Payload, signature, isTimestampedSignature: true));
+    }
+
+    [Fact]
+    public void VerifyWebhookSignature_AcceptsAnyMatchingV1DuringSecretRotation()
+    {
+        const string oldSecret = "whsec_old_rotation_secret";
+        const string currentSecret = "whsec_current_rotation_secret";
+        var provider = CreateProvider(Secret, webhookSecrets: $"{oldSecret};{currentSecret}");
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var oldSignature = SignTimestamped(Payload, timestamp, oldSecret);
+        var currentSignature = SignTimestamped(Payload, timestamp, currentSecret);
+        var signature = $"t={timestamp},{oldSignature[(oldSignature.IndexOf(',') + 1)..]},{currentSignature[(currentSignature.IndexOf(',') + 1)..]}";
+
+        Assert.True(provider.VerifyWebhookSignature(Payload, signature, isTimestampedSignature: true));
+    }
+
+    [Theory]
+    [InlineData(-301)]
+    [InlineData(301)]
+    public void VerifyWebhookSignature_RejectsTimestampOutsideFiveMinuteWindow(long offsetSeconds)
+    {
+        const string webhookSecret = "whsec_timestamp_window_unit_test";
+        var provider = CreateProvider(Secret, webhookSecret);
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + offsetSeconds;
+        var signature = SignTimestamped(Payload, timestamp, webhookSecret);
+
+        Assert.False(provider.VerifyWebhookSignature(Payload, signature, isTimestampedSignature: true));
+    }
+
+    [Fact]
+    public void VerifyWebhookSignature_RejectsTimestampedHeaderWithoutWebhookSecret()
+    {
+        var provider = CreateProvider(Secret);
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var signature = SignTimestamped(Payload, timestamp, "whsec_unconfigured_secret");
+
+        Assert.False(provider.VerifyWebhookSignature(Payload, signature, isTimestampedSignature: true));
+    }
+
+    [Fact]
+    public void VerifyWebhookSignature_DoesNotDowngradeTimestampedHeaderToLegacySecret()
+    {
+        var provider = CreateProvider(Secret);
+        var legacySignature = Sign(Payload, Secret);
+
+        Assert.False(provider.VerifyWebhookSignature(Payload, legacySignature, isTimestampedSignature: true));
+    }
+
+    private static string SignTimestamped(string payload, long timestamp, string secret)
+    {
+        var signedPayload = Encoding.UTF8.GetBytes($"{timestamp}.{payload}");
+        var signature = Convert.ToHexString(HMACSHA512.HashData(Encoding.UTF8.GetBytes(secret), signedPayload))
+            .ToLowerInvariant();
+        return $"t={timestamp},v1=whk_testkey:{signature}";
+    }
+
+    private static PaystackProvider CreateProvider(
+        string? secret,
+        string? webhookSecret = null,
+        string? webhookSecrets = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Paystack:SecretKey"] = secret,
+                ["Paystack:WebhookSecret"] = webhookSecret,
+                ["Paystack:WebhookSecrets"] = webhookSecrets,
                 ["Paystack:BaseUrl"] = "https://api.paystack.co"
             })
             .Build();
