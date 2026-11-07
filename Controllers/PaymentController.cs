@@ -275,8 +275,9 @@ public class PaymentController : ControllerBase
         if (!root.TryGetProperty("data", out var data))
             return BadRequest();
 
-        var refundId = GetString(data, "id");
-        var transaction = data.TryGetProperty("transaction", out var transactionElement)
+        var refundId = GetString(data, "id") ?? GetString(data, "refund_reference");
+        var transactionReference = GetString(data, "transaction_reference");
+        var transactionId = data.TryGetProperty("transaction", out var transactionElement)
             ? transactionElement.ValueKind == JsonValueKind.Object
                 ? GetString(transactionElement, "id")
                 : transactionElement.ToString()
@@ -285,16 +286,32 @@ public class PaymentController : ControllerBase
         var currency = GetString(data, "currency");
         var providerStatus = GetString(data, "status");
 
-        if (string.IsNullOrWhiteSpace(refundId))
+        if (string.IsNullOrWhiteSpace(refundId) &&
+            string.IsNullOrWhiteSpace(transactionId) &&
+            string.IsNullOrWhiteSpace(transactionReference))
             return BadRequest();
 
         var refund = await _context.Refunds.FirstOrDefaultAsync(r =>
-            r.RefundId == refundId ||
-            (!string.IsNullOrWhiteSpace(transaction) && r.TransactionId == transaction));
+            (!string.IsNullOrWhiteSpace(refundId) && r.RefundId == refundId) ||
+            (!string.IsNullOrWhiteSpace(transactionId) && r.TransactionId == transactionId));
+
+        // Paystack refund.pending and refund.needs-attention events identify the
+        // original charge with transaction_reference; they may not include a
+        // refund ID yet. Resolve that reference through the verified payment.
+        if (refund == null && !string.IsNullOrWhiteSpace(transactionReference))
+        {
+            var paymentAttempt = await _context.PaymentAttempts
+                .Where(a => a.Reference == transactionReference && a.Status == "Completed")
+                .OrderByDescending(a => a.CompletedAt)
+                .FirstOrDefaultAsync();
+
+            if (paymentAttempt != null)
+                refund = await _context.Refunds.FirstOrDefaultAsync(r => r.TaskId == paymentAttempt.TaskId);
+        }
 
         if (refund == null)
         {
-            _logger.LogWarning("Paystack refund event {RefundId} has no matching DFY refund.", refundId);
+            _logger.LogWarning("Paystack refund event {RefundId} has no matching DFY refund.", refundId ?? transactionReference ?? transactionId);
             return Ok();
         }
 
@@ -302,20 +319,31 @@ public class PaymentController : ControllerBase
             amountMinor.Value / 100m != refund.Amount ||
             !string.Equals(currency, "ZAR", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("Rejected Paystack refund event {RefundId} because amount/currency did not match the DFY refund.", refundId);
-            return BadRequest();
-        }
-
-        if (!string.IsNullOrWhiteSpace(transaction) &&
-            !string.Equals(transaction, refund.TransactionId, StringComparison.Ordinal))
-        {
-            _logger.LogWarning("Rejected Paystack refund event {RefundId} because the transaction reference did not match.", refundId);
+            _logger.LogWarning("Rejected Paystack refund event {RefundId} because amount/currency did not match the DFY refund.", refundId ?? transactionReference ?? transactionId);
             return BadRequest();
         }
 
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == refund.TaskId);
         if (task == null)
             return Ok();
+
+        var matchingAttempt = await _context.PaymentAttempts
+            .Where(a => a.TaskId == refund.TaskId &&
+                        a.Status == "Completed" &&
+                        a.TransactionId == refund.TransactionId)
+            .OrderByDescending(a => a.CompletedAt)
+            .FirstOrDefaultAsync();
+        var expectedTransactionReference = matchingAttempt?.Reference ?? task.PaymentReference;
+
+        if ((!string.IsNullOrWhiteSpace(transactionId) &&
+             !string.Equals(transactionId, refund.TransactionId, StringComparison.Ordinal) &&
+             !string.Equals(transactionId, expectedTransactionReference, StringComparison.Ordinal)) ||
+            (!string.IsNullOrWhiteSpace(transactionReference) &&
+             !string.Equals(transactionReference, expectedTransactionReference, StringComparison.Ordinal)))
+        {
+            _logger.LogWarning("Rejected Paystack refund event {RefundId} because the transaction reference did not match.", refundId ?? transactionReference ?? transactionId);
+            return BadRequest();
+        }
 
         // Provider events may be retried or arrive out of order. A completed
         // refund is terminal for webhook processing, and stale pending/processing
