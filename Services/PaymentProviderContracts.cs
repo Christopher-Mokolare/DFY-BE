@@ -114,7 +114,7 @@ public interface IPaymentProvider
         string transactionId,
         CancellationToken cancellationToken = default);
 
-    bool VerifyWebhookSignature(string rawBody, string? signature);
+    bool VerifyWebhookSignature(string rawBody, string? signature, bool isTimestampedSignature = false);
 }
 
 public interface IPayoutProvider
