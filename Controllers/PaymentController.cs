@@ -68,8 +68,12 @@ public class PaymentController : ControllerBase
         var rawBody = await reader.ReadToEndAsync();
         Request.Body.Position = 0;
 
-        var signature = Request.Headers["x-paystack-signature"].FirstOrDefault();
-        if (!_paymentProvider.VerifyWebhookSignature(rawBody, signature))
+        var timestampedSignaturePresent = Request.Headers.ContainsKey("Paystack-Signature");
+        var signature = timestampedSignaturePresent
+            ? Request.Headers["Paystack-Signature"].FirstOrDefault()
+            : Request.Headers["x-paystack-signature"].FirstOrDefault();
+
+        if (!_paymentProvider.VerifyWebhookSignature(rawBody, signature, timestampedSignaturePresent))
         {
             _logger.LogWarning("Rejected Paystack webhook because signature validation failed.");
             return BadRequest();
