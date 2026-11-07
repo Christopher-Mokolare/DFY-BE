@@ -232,8 +232,12 @@ public class DisputesController : ControllerBase
             if (existingRefund != null && existingRefund.Status == "Complete")
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund has already completed." });
 
+            if (existingRefund != null &&
+                existingRefund.Status == "PendingInvestigation")
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
+
             if (existingRefund != null && !string.IsNullOrWhiteSpace(existingRefund.RefundId) &&
-                existingRefund.Status is "Pending" or "Submitted" or "PendingInvestigation")
+                existingRefund.Status is "Pending" or "Submitted")
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Paystack confirmation." });
 
             // Atomically reserve the disputed task for refund before calling Paystack.
@@ -349,6 +353,12 @@ public class DisputesController : ControllerBase
                     _ => "Submitted"
                 };
                 refundRecord.LastReconciledAt = DateTime.UtcNow;
+                refundRecord.FailureReason = refundRecord.Status switch
+                {
+                    "Failed" => "Paystack reports this refund failed.",
+                    "PendingInvestigation" => "Paystack requires customer bank details to complete this refund.",
+                    _ => null
+                };
                 if (refundRecord.Status == "Complete")
                     refundRecord.CompletedAt = DateTime.UtcNow;
                 if (refundRecord.Status == "Complete")
