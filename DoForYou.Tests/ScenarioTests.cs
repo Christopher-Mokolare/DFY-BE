@@ -1080,6 +1080,7 @@ public class ScenarioTests
             EscrowStatus = "refund_pending",
             TaskStatus = "RefundPending",
             PayoutStatus = "NotStarted",
+            PaymentReference = "DFY-REFUND-NEEDS-ATTENTION-REF",
             CreatedByUserId = creator.Id,
             AcceptedByUserId = runner.Id,
             CreatedAt = DateTime.UtcNow,
@@ -1089,7 +1090,7 @@ public class ScenarioTests
         {
             TaskId = task.Id,
             RefundId = "RF-NEEDS-ATTENTION",
-            TransactionId = "TX-NEEDS-ATTENTION",
+            TransactionId = "123456789",
             Amount = 200m,
             Reason = "Creator refund after dispute",
             Status = "Submitted",
@@ -1107,10 +1108,22 @@ public class ScenarioTests
         context.Tasks.Add(task);
         context.Refunds.Add(refund);
         context.Disputes.Add(dispute);
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-REFUND-NEEDS-ATTENTION-REF",
+            Amount = 200m,
+            Status = "Completed",
+            TransactionId = "123456789",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
         await context.SaveChangesAsync();
 
         var controller = CreatePaymentController(context);
-        const string needsAttentionEvent = """{"event":"refund.needs-attention","data":{"id":"RF-NEEDS-ATTENTION","transaction_reference":"TX-NEEDS-ATTENTION","amount":20000,"currency":"ZAR","status":"needs-attention"}}""";
+        const string needsAttentionEvent = """{"event":"refund.needs-attention","data":{"refund_reference":null,"transaction_reference":"DFY-REFUND-NEEDS-ATTENTION-REF","amount":20000,"currency":"ZAR","status":"needs-attention"}}""";
 
         Assert.IsType<OkResult>(await InvokeWebhook(controller, needsAttentionEvent));
         Assert.Equal("PendingInvestigation", refund.Status);
@@ -1120,7 +1133,7 @@ public class ScenarioTests
         Assert.Equal("refund_pending", task.EscrowStatus);
         Assert.Equal("RefundPending", dispute.Status);
 
-        const string staleProcessingEvent = """{"event":"refund.processing","data":{"id":"RF-NEEDS-ATTENTION","transaction_reference":"TX-NEEDS-ATTENTION","amount":20000,"currency":"ZAR","status":"processing"}}""";
+        const string staleProcessingEvent = """{"event":"refund.processing","data":{"refund_reference":null,"transaction_reference":"DFY-REFUND-NEEDS-ATTENTION-REF","amount":20000,"currency":"ZAR","status":"processing"}}""";
         Assert.IsType<OkResult>(await InvokeWebhook(controller, staleProcessingEvent));
         Assert.Equal("PendingInvestigation", refund.Status);
         Assert.Equal("RefundPending", task.PaymentStatus);
