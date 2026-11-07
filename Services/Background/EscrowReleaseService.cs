@@ -45,7 +45,7 @@ public class EscrowReleaseService : BackgroundService
                         task.CreatedByUserId,
                         "task_auto_confirmed",
                         "Task Automatically Confirmed",
-                        $"No confirmation or dispute was received within 24 hours for task {task.TaskId}. The task was automatically confirmed and the runner payout was initiated.",
+                        $"No confirmation or dispute was received within 24 hours for task {task.TaskId}. The task was automatically confirmed and the runner payout has been queued. The runner is marked paid only after Paystack confirms the transfer.",
                         task.Id);
                 }
 
