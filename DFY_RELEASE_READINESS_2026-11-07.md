@@ -33,7 +33,7 @@ These counts are point-in-time observations and must be refreshed before any bra
 | [DFY-BE #82](https://github.com/DoForYou-ZA/DFY-BE/pull/82) | Guard payout/refund races, handle `refund.needs-attention`, resolve refund webhooks by payment reference, and add a guarded staging Test Mode transfer opt-in | Latest backend CI run #520 passed. |
 | [DFY-BE #83](https://github.com/DoForYou-ZA/DFY-BE/pull/83) | Verify timestamped `Paystack-Signature`, retain safe legacy fallback, and verify transaction identity/currency | Latest backend CI run #521 passed, including build, EF snapshot verification and tests. |
 | [DFY-BE #84](https://github.com/DoForYou-ZA/DFY-BE/pull/84) | Allow escrow release and payout queueing before runner bank setup is complete | Latest backend CI run #507 passed, including EF model snapshot verification and tests. |
-| [DFY-BE #85](https://github.com/DoForYou-ZA/DFY-BE/pull/85) | Refresh this release-readiness report and README link | Documentation-only; no code workflow run was triggered at the time of the report. |
+| [DFY-BE #85](https://github.com/DoForYou-ZA/DFY-BE/pull/85) | Refresh this release-readiness report and README link | Documentation-only; CI was not triggered for the documentation-only changes. |
 | [DFY-FE #86](https://github.com/DoForYou-ZA/DFY-FE/pull/86) | Make the staging Docker build use the current staging-branch APK release | Latest frontend CI run #709 passed. Depends on the mobile staging release being published first. |
 | [dfy-mobile #26](https://github.com/DoForYou-ZA/dfy-mobile/pull/26) | Publish a rolling staging-branch APK and pass Google OAuth client IDs into the build | Latest mobile CI run #287 passed; Android artifact uploaded. Release publication is intentionally skipped on a pull-request run. |
 
@@ -136,7 +136,7 @@ Verify actual email delivery (not just a 200 response from the resend endpoint),
 
 ## 7. Hosted configuration and operator dependencies
 
-The Render workspace and service environment were not inspected during this audit. No service environment variables, deploy hooks, deployment settings or secrets were changed.
+The Render workspace was inspected read-only. Both staging services are configured to deploy the `staging` branch from the expected repositories, use Docker in Frankfurt on the Free plan, and have auto-deploy enabled. The latest observed successful deployments were backend commit `f64582c` and frontend commit `97b441c` on 2026-11-07. Render metrics returned no datapoints in the query window, so current CPU, memory, HTTP volume and latency could not be assessed from that result. The Render service details did not expose environment variable values; Google OAuth, Paystack mode, webhook secrets and feature flags remain unverified. No service environment variables, deploy hooks, deployment settings or secrets were changed.
 
 An authorised operator must confirm:
 
