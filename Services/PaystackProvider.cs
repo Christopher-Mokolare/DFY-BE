@@ -385,22 +385,134 @@ public sealed class PaystackProvider(
         }
     }
 
-    public bool VerifyWebhookSignature(string rawBody, string? signature)
+    public bool VerifyWebhookSignature(
+        string rawBody,
+        string? signature,
+        bool isTimestampedSignature = false)
     {
-        if (string.IsNullOrWhiteSpace(SecretKey) || string.IsNullOrWhiteSpace(signature))
+        if (string.IsNullOrWhiteSpace(signature))
             return false;
 
-        var expected = Convert.ToHexString(
-            HMACSHA512.HashData(
-                Encoding.UTF8.GetBytes(SecretKey),
-                Encoding.UTF8.GetBytes(rawBody)))
-            .ToLowerInvariant();
+        return isTimestampedSignature
+            ? VerifyTimestampedWebhookSignature(rawBody, signature)
+            : VerifyLegacyWebhookSignature(rawBody, signature);
+    }
 
-        var supplied = signature.Trim().ToLowerInvariant();
+    private bool VerifyLegacyWebhookSignature(string rawBody, string signature)
+    {
+        if (string.IsNullOrWhiteSpace(SecretKey))
+            return false;
 
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected),
-            Encoding.UTF8.GetBytes(supplied));
+        var supplied = signature.Trim();
+        if (supplied.Length != 128)
+            return false;
+
+        byte[] suppliedBytes;
+        try
+        {
+            suppliedBytes = Convert.FromHexString(supplied);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+
+        var expectedBytes = HMACSHA512.HashData(
+            Encoding.UTF8.GetBytes(SecretKey),
+            Encoding.UTF8.GetBytes(rawBody));
+
+        return CryptographicOperations.FixedTimeEquals(expectedBytes, suppliedBytes);
+    }
+
+    private bool VerifyTimestampedWebhookSignature(string rawBody, string signature)
+    {
+        var secrets = GetWebhookSigningSecrets();
+        if (secrets.Count == 0)
+            return false;
+
+        long? timestamp = null;
+        var signatures = new List<string>();
+
+        foreach (var part in signature.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = part.IndexOf('=');
+            if (separator <= 0)
+                continue;
+
+            var key = part[..separator].Trim();
+            var value = part[(separator + 1)..].Trim();
+
+            if (key == "t")
+            {
+                if (timestamp.HasValue ||
+                    !long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedTimestamp) ||
+                    parsedTimestamp <= 0)
+                    return false;
+
+                timestamp = parsedTimestamp;
+            }
+            else if (key == "v1")
+            {
+                signatures.Add(value);
+            }
+        }
+
+        if (!timestamp.HasValue || signatures.Count == 0)
+            return false;
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (timestamp.Value < now - 300 || timestamp.Value > now + 300)
+            return false;
+
+        var signedPayload = Encoding.UTF8.GetBytes(
+            timestamp.Value.ToString(CultureInfo.InvariantCulture) + "." + rawBody);
+
+        foreach (var secret in secrets)
+        {
+            var expected = HMACSHA512.HashData(Encoding.UTF8.GetBytes(secret), signedPayload);
+
+            foreach (var entry in signatures)
+            {
+                var separator = entry.IndexOf(':');
+                if (separator <= 0 ||
+                    !entry[..separator].StartsWith("whk_", StringComparison.Ordinal) ||
+                    entry.Length - separator - 1 != 128)
+                    continue;
+
+                byte[] supplied;
+                try
+                {
+                    supplied = Convert.FromHexString(entry[(separator + 1)..]);
+                }
+                catch (FormatException)
+                {
+                    continue;
+                }
+
+                if (CryptographicOperations.FixedTimeEquals(expected, supplied))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private IReadOnlyList<string> GetWebhookSigningSecrets()
+    {
+        var configured = Environment.GetEnvironmentVariable("PAYSTACK_WEBHOOK_SECRETS")
+            ?? configuration["Paystack:WebhookSecrets"];
+
+        if (string.IsNullOrWhiteSpace(configured))
+            configured = Environment.GetEnvironmentVariable("PAYSTACK_WEBHOOK_SECRET")
+                ?? configuration["Paystack:WebhookSecret"];
+
+        return string.IsNullOrWhiteSpace(configured)
+            ? Array.Empty<string>()
+            : configured
+                .Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(secret => secret.StartsWith("whsec_", StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
     }
 
     public async Task<IReadOnlyList<SupportedBank>> GetSupportedBanksAsync(
