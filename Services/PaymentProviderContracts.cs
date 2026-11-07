@@ -6,7 +6,8 @@ public record PaymentCreationResult(
     bool Success,
     string? PaymentUrl,
     string? TransactionReference,
-    string? Error);
+    string? Error,
+    string? Currency = null);
 
 public record PaymentVerificationResult(
     bool Success,
