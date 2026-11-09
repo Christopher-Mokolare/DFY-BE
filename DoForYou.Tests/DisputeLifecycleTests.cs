@@ -113,6 +113,58 @@ public class DisputeLifecycleTests
         Assert.Equal("EscrowHeld", task.PaymentStatus);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task RunnerCannotRaiseCreatorCompletionDispute()
+    {
+        using var context = CreateContext(nameof(RunnerCannotRaiseCreatorCompletionDispute));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, runner.Id);
+        var result = await controller.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The creator changed the scope after I accepted.",
+            Category = "Scope change"
+        });
+
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task CreatorCannotDisputeAfterConfirmationWindowExpires()
+    {
+        using var context = CreateContext(nameof(CreatorCannotDisputeAfterConfirmationWindowExpires));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        task.EscrowHoldUntil = DateTime.UtcNow.AddMinutes(-1);
+        task.CompletedAt = DateTime.UtcNow.AddHours(-25);
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, creator.Id);
+        var result = await controller.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The work does not match the agreed requirements.",
+            Category = "Quality"
+        });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
     private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
