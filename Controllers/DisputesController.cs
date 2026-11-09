@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Models;
 using DoForYou.API.Services;
 using System.Security.Claims;
 using System.Text.Json;
