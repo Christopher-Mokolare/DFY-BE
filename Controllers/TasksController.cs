@@ -595,7 +595,10 @@ public class TasksController : ControllerBase
             canEdit = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
             canComplete = task.AcceptedByUserId == currentUserId && task.TaskStatus == "Claimed",
             canCancel = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
-            canConfirm = task.CreatedByUserId == currentUserId && task.TaskStatus == "AwaitingConfirmation",
+            canConfirm = task.CreatedByUserId == currentUserId &&
+                task.TaskStatus == "AwaitingConfirmation" &&
+                task.EscrowStatus == "held" &&
+                task.PaymentStatus == "EscrowHeld",
             canMessage = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId,
             canDispute = task.CreatedByUserId == currentUserId &&
                 task.TaskStatus == "AwaitingConfirmation" &&
