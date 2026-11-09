@@ -301,7 +301,7 @@ public class DisputeLifecycleTests
         Assert.Equal("DisputePending", task.PaymentStatus);
         Assert.NotNull(incident.EscrowHoldReleasedAt);
         Assert.Contains("formal creator completion dispute", incident.EscrowHoldReleaseReason!, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, await context.AuditLogs.CountAsync());
+        Assert.Equal(3, await context.AuditLogs.CountAsync());
     }
 
     [Fact]
