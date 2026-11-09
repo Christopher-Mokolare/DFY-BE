@@ -1008,7 +1008,8 @@ private static AppDbContext CreateContext(string name)
                     "success",
                     500m,
                     transactionReference,
-                    null));
+                    null,
+                    "ZAR"));
         }
 
         public Task<RefundResult> CreateRefundAsync(
@@ -1027,7 +1028,7 @@ private static AppDbContext CreateContext(string name)
             System.Threading.Tasks.Task.FromResult<IReadOnlyList<RefundStatusResult>>(
                 Array.Empty<RefundStatusResult>());
 
-        public bool VerifyWebhookSignature(string rawBody, string? signature) => true;
+        public bool VerifyWebhookSignature(string rawBody, string? signature, bool isTimestampedSignature = false) => true;
     }
 
     private static TasksController CreateTasksController(AppDbContext context, int userId)

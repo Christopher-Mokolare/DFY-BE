@@ -20,7 +20,7 @@ Configure the webhook URL for the same Paystack environment as the secret key:
 
 `https://<BACKEND_URL_HOST>/api/v1/payment/webhook`
 
-The backend validates the `x-paystack-signature` HMAC-SHA512 signature before processing events.
+The backend prefers the timestamped `Paystack-Signature` header and validates its HMAC-SHA512 signature with the dedicated `PAYSTACK_WEBHOOK_SECRET` (or semicolon-separated `PAYSTACK_WEBHOOK_SECRETS` during key rotation). It enforces the 300-second timestamp window and checks every `v1` signature. Until Paystack sends the new header, the backend retains the legacy `x-paystack-signature` validation using `PAYSTACK_SECRET_KEY`; it does not fall back to the legacy header when a new header is present.
 
 Enable/confirm these event families:
 

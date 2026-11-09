@@ -6,7 +6,8 @@ public record PaymentCreationResult(
     bool Success,
     string? PaymentUrl,
     string? TransactionReference,
-    string? Error);
+    string? Error,
+    string? Currency = null);
 
 public record PaymentVerificationResult(
     bool Success,
@@ -15,7 +16,8 @@ public record PaymentVerificationResult(
     string? Status,
     decimal? Amount,
     string? TransactionReference,
-    string? Error);
+    string? Error,
+    string? Currency = null);
 
 public record RefundResult(
     bool Success,
@@ -112,7 +114,7 @@ public interface IPaymentProvider
         string transactionId,
         CancellationToken cancellationToken = default);
 
-    bool VerifyWebhookSignature(string rawBody, string? signature);
+    bool VerifyWebhookSignature(string rawBody, string? signature, bool isTimestampedSignature = false);
 }
 
 public interface IPayoutProvider

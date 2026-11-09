@@ -68,8 +68,12 @@ public class PaymentController : ControllerBase
         var rawBody = await reader.ReadToEndAsync();
         Request.Body.Position = 0;
 
-        var signature = Request.Headers["x-paystack-signature"].FirstOrDefault();
-        if (!_paymentProvider.VerifyWebhookSignature(rawBody, signature))
+        var timestampedSignaturePresent = Request.Headers.ContainsKey("Paystack-Signature");
+        var signature = timestampedSignaturePresent
+            ? Request.Headers["Paystack-Signature"].FirstOrDefault()
+            : Request.Headers["x-paystack-signature"].FirstOrDefault();
+
+        if (!_paymentProvider.VerifyWebhookSignature(rawBody, signature, timestampedSignaturePresent))
         {
             _logger.LogWarning("Rejected Paystack webhook because signature validation failed.");
             return BadRequest();
@@ -163,6 +167,9 @@ public class PaymentController : ControllerBase
         if (!verified.Success ||
             !verified.Found ||
             !string.Equals(verified.Status, "success", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(verified.TransactionReference, reference, StringComparison.Ordinal) ||
+            !string.Equals(verified.Currency, "ZAR", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(verified.TransactionId) ||
             !verified.Amount.HasValue ||
             verified.Amount.Value != expectedAmount)
         {
@@ -170,7 +177,9 @@ public class PaymentController : ControllerBase
             return BadRequest();
         }
 
-        var tx = transactionId ?? verified.TransactionId;
+        // Persist the transaction ID returned by Paystack's independent lookup,
+        // never an unverified ID copied from the webhook body.
+        var tx = verified.TransactionId;
 
         if (paymentAttempt != null)
         {
