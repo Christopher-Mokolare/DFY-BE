@@ -590,7 +590,10 @@ public class TasksController : ControllerBase
                 task.EscrowStatus == "held" &&
                 task.PaymentStatus == "EscrowHeld" &&
                 (task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24)) is DateTime disputeDeadline &&
-                DateTime.UtcNow <= disputeDeadline
+                DateTime.UtcNow <= disputeDeadline,
+            canReportIncident = task.AcceptedByUserId != null &&
+                (task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId) &&
+                task.TaskStatus is "Claimed" or "InProgress" or "AwaitingConfirmation"
         };
 
         return Ok(new ApiResponse<object> { Success = true, Data = taskDto, Message = "Task retrieved successfully" });
