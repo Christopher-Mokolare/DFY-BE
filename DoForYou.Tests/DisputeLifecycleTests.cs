@@ -105,9 +105,7 @@ public class DisputeLifecycleTests
             Category = "Abuse"
         });
 
-        var ok = Assert.IsType<OkObjectResult>(result.Result);
-        var response = Assert.IsType<ApiResponse<object>>(ok.Value);
-        Assert.False(response.Success);
+        Assert.IsType<ForbidResult>(result.Result);
         Assert.Empty(await context.Disputes.ToListAsync());
         Assert.Equal("held", task.EscrowStatus);
         Assert.Equal("EscrowHeld", task.PaymentStatus);
