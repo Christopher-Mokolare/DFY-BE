@@ -233,5 +233,13 @@ public class TaskIncident
     public int? ReviewedByAdminId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ReviewedAt { get; set; }
+    public DateTime? EscrowHoldPlacedAt { get; set; }
+    public DateTime? EscrowHoldReleasedAt { get; set; }
+    public int? EscrowHoldPlacedByAdminId { get; set; }
+    public DateTime? EscrowHoldDeadlineBefore { get; set; }
+    [MaxLength(500)]
+    public string? EscrowHoldReason { get; set; }
+    [MaxLength(500)]
+    public string? EscrowHoldReleaseReason { get; set; }
     public Task Task { get; set; } = null!;
 }
