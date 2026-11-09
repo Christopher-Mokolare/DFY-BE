@@ -241,6 +241,26 @@ namespace DoForYou.API.Migrations
                     b.Property<string>("EvidenceMessageIdsJson")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("EscrowHoldDeadlineBefore")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("EscrowHoldPlacedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("EscrowHoldPlacedByAdminId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EscrowHoldReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("EscrowHoldReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EscrowHoldReleaseReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<DateTime?>("ReviewedAt")
                         .HasColumnType("timestamp with time zone");
 
