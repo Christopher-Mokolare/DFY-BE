@@ -121,6 +121,57 @@ public class TaskIncidentsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = new { incidents = rows, total, page, pageSize } });
     }
 
+    [HttpGet("admin/incidents/{id:int}/evidence")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ApiResponse<object>>> GetIncidentEvidence(int id)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+
+        var incident = await _context.TaskIncidents.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == id);
+        if (incident == null)
+            return NotFound(new ApiResponse<object> { Success = false, Message = "Incident not found." });
+
+        var messageIds = string.IsNullOrWhiteSpace(incident.EvidenceMessageIdsJson)
+            ? new List<int>()
+            : JsonSerializer.Deserialize<List<int>>(incident.EvidenceMessageIdsJson) ?? new List<int>();
+        if (messageIds.Count == 0)
+            return Ok(new ApiResponse<object> { Success = true, Data = Array.Empty<object>() });
+
+        var messages = await _context.TaskMessages
+            .AsNoTracking()
+            .Include(m => m.Sender)
+            .Where(m => m.TaskId == incident.TaskId && messageIds.Contains(m.Id))
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => new
+            {
+                id = m.Id,
+                senderId = m.SenderId,
+                senderName = $"{m.Sender.FirstName} {m.Sender.LastName}".Trim(),
+                content = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal)
+                    ? m.Content.Substring(8).Trim()
+                    : m.Content,
+                timestamp = m.CreatedAt,
+                isSystem = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal)
+            })
+            .ToListAsync();
+
+        _context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "TaskIncidentEvidenceViewed",
+            EntityType = "TaskIncident",
+            EntityId = incident.Id,
+            NewValues = JsonSerializer.Serialize(new { taskReference = incident.TaskReference, messageIds = messages.Select(m => m.id) }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<object> { Success = true, Data = messages });
+    }
+
     [HttpPost("admin/incidents/{id:int}/hold-escrow")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<object>>> PlaceEscrowHold(int id, [FromBody] IncidentEscrowHoldRequest request)
