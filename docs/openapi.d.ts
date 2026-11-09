@@ -4314,6 +4314,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/incidents/{id}/hold-escrow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["IncidentEscrowHoldRequest"];
+                    "text/json": components["schemas"]["IncidentEscrowHoldRequest"];
+                    "application/*+json": components["schemas"]["IncidentEscrowHoldRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ObjectApiResponse"];
+                        "application/json": components["schemas"]["ObjectApiResponse"];
+                        "text/json": components["schemas"]["ObjectApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/incidents/{id}/release-escrow-hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["IncidentEscrowHoldRequest"];
+                    "text/json": components["schemas"]["IncidentEscrowHoldRequest"];
+                    "application/*+json": components["schemas"]["IncidentEscrowHoldRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ObjectApiResponse"];
+                        "application/json": components["schemas"]["ObjectApiResponse"];
+                        "text/json": components["schemas"]["ObjectApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/incidents/{id}": {
         parameters: {
             query?: never;
@@ -6301,6 +6391,9 @@ export interface components {
             termsVersion: string;
             privacyVersion: string;
             marketingConsent?: boolean;
+        };
+        IncidentEscrowHoldRequest: {
+            reason?: string | null;
         };
         InitiatePaymentRequest: {
             taskId: string;
