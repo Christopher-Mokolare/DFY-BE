@@ -193,6 +193,58 @@ public class DisputeLifecycleTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task AdminIncidentHoldBlocksReleaseAndExtendsConfirmationDeadlineWhenReleased()
+    {
+        using var context = CreateContext(nameof(AdminIncidentHoldBlocksReleaseAndExtendsConfirmationDeadlineWhenReleased));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var admin = CreateUser(3, "admin", "admin@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, admin);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var participantController = CreateIncidentController(context, runner.Id);
+        var report = await participantController.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The agreed task scope changed after acceptance and needs support review."
+        });
+        Assert.IsType<OkObjectResult>(report.Result);
+        var incident = Assert.Single(context.TaskIncidents);
+        var originalDeadline = task.EscrowHoldUntil!.Value;
+
+        var adminController = CreateIncidentController(context, admin.Id, "Admin");
+        var hold = await adminController.PlaceEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "Reviewing the runner's documented scope-change evidence."
+        });
+        Assert.IsType<OkObjectResult>(hold.Result);
+        Assert.Equal("incident_hold", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+
+        var releaseWhileHeld = await new EscrowService(context, NullLogger<EscrowService>.Instance)
+            .ReleaseEscrowAsync(task.Id, force: true);
+        Assert.False(releaseWhileHeld);
+
+        incident.EscrowHoldPlacedAt = DateTime.UtcNow.AddMinutes(-15);
+        await context.SaveChangesAsync();
+        var release = await adminController.ReleaseEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "The incident review is complete and the hold can safely be removed."
+        });
+
+        Assert.IsType<OkObjectResult>(release.Result);
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.True(task.EscrowHoldUntil >= originalDeadline.AddMinutes(14));
+        Assert.NotNull(incident.EscrowHoldReleasedAt);
+        Assert.Equal(2, await context.AuditLogs.CountAsync());
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task NonParticipantCannotSubmitTaskIncident()
     {
         using var context = CreateContext(nameof(NonParticipantCannotSubmitTaskIncident));
@@ -263,12 +315,15 @@ public class DisputeLifecycleTests
         CompletedAt = taskStatus == "AwaitingConfirmation" ? DateTime.UtcNow : null
     };
 
-    private static TaskIncidentsController CreateIncidentController(AppDbContext context, int userId)
+    private static TaskIncidentsController CreateIncidentController(AppDbContext context, int userId, string role = "User")
     {
         var controller = new TaskIncidentsController(context, new NoOpNotificationService());
         var http = new DefaultHttpContext();
         http.User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new Claim(ClaimTypes.NameIdentifier, userId.ToString())],
+            [
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+                new Claim(ClaimTypes.Role, role)
+            ],
             "TestAuth"));
         controller.ControllerContext = new ControllerContext { HttpContext = http };
         return controller;
