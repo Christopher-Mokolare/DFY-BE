@@ -205,3 +205,25 @@ public class SupportTicket
 
     public User? User { get; set; }
 }
+
+/// <summary>
+/// A participant's report of a task-related safety, conduct, scope or delivery incident.
+/// Incidents are operational reports and do not change payment or escrow state.
+/// </summary>
+public class TaskIncident
+{
+    public int Id { get; set; }
+    public int TaskId { get; set; }
+    public string TaskReference { get; set; } = string.Empty;
+    public int ReporterUserId { get; set; }
+    public int CreatorUserId { get; set; }
+    public int RunnerUserId { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Status { get; set; } = "Open";
+    public string? EvidenceMessageIdsJson { get; set; }
+    public string? AdminNotes { get; set; }
+    public int? ReviewedByAdminId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ReviewedAt { get; set; }
+}
