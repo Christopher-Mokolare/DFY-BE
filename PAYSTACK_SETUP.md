@@ -29,6 +29,7 @@ Enable/confirm these event families:
 - `refund.processing`
 - `refund.processed`
 - `refund.failed`
+- `refund.needs-attention`
 - `transfer.success`
 - `transfer.failed`
 - `transfer.reversed`
@@ -96,6 +97,8 @@ npx playwright test e2e/paystack-manual-checkout.spec.ts --headed
 ```
 
 The explicit Test Mode confirmation is required to avoid accidentally creating a real payment or transfer. The test pauses for the operator to complete Paystack Checkout, then verifies webhook activation, runner claim/completion, creator confirmation, and the final `RunnerPaid` / `Completed` payout state. Do not use production credentials or a live-mode Paystack account for this test.
+
+For the final transfer step while staging `DFY_E2E_TEST_MODE=true`, the backend requires all three server-side settings: `PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED=true`, `DFY_PAYSTACK_TEST_TRANSFERS_ENABLED=true`, and `PAYSTACK_SECRET_KEY` beginning with `sk_test_`. The backend additionally requires `ASPNETCORE_ENVIRONMENT=Staging`. The guarded override keeps E2E CORS/test behaviour enabled and refuses to run with a live key or outside Staging. Turn `DFY_PAYSTACK_TEST_TRANSFERS_ENABLED` and `PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED` off again after the controlled provider test.
 
 The provider-test sequence is:
 

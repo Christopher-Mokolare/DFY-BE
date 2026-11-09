@@ -92,7 +92,7 @@ public class PaymentController : ControllerBase
                 return await HandleChargeSuccess(root);
             }
 
-            if (eventName is "refund.processed" or "refund.failed" or "refund.pending" or "refund.processing")
+            if (eventName is "refund.processed" or "refund.failed" or "refund.pending" or "refund.processing" or "refund.needs-attention")
             {
                 return await HandleRefundEvent(root, eventName);
             }
@@ -284,8 +284,9 @@ public class PaymentController : ControllerBase
         if (!root.TryGetProperty("data", out var data))
             return BadRequest();
 
-        var refundId = GetString(data, "id");
-        var transaction = data.TryGetProperty("transaction", out var transactionElement)
+        var refundId = GetString(data, "id") ?? GetString(data, "refund_reference");
+        var transactionReference = GetString(data, "transaction_reference");
+        var transactionId = data.TryGetProperty("transaction", out var transactionElement)
             ? transactionElement.ValueKind == JsonValueKind.Object
                 ? GetString(transactionElement, "id")
                 : transactionElement.ToString()
@@ -294,16 +295,32 @@ public class PaymentController : ControllerBase
         var currency = GetString(data, "currency");
         var providerStatus = GetString(data, "status");
 
-        if (string.IsNullOrWhiteSpace(refundId))
+        if (string.IsNullOrWhiteSpace(refundId) &&
+            string.IsNullOrWhiteSpace(transactionId) &&
+            string.IsNullOrWhiteSpace(transactionReference))
             return BadRequest();
 
         var refund = await _context.Refunds.FirstOrDefaultAsync(r =>
-            r.RefundId == refundId ||
-            (!string.IsNullOrWhiteSpace(transaction) && r.TransactionId == transaction));
+            (!string.IsNullOrWhiteSpace(refundId) && r.RefundId == refundId) ||
+            (!string.IsNullOrWhiteSpace(transactionId) && r.TransactionId == transactionId));
+
+        // Paystack refund.pending and refund.needs-attention events identify the
+        // original charge with transaction_reference; they may not include a
+        // refund ID yet. Resolve that reference through the verified payment.
+        if (refund == null && !string.IsNullOrWhiteSpace(transactionReference))
+        {
+            var paymentAttempt = await _context.PaymentAttempts
+                .Where(a => a.Reference == transactionReference && a.Status == "Completed")
+                .OrderByDescending(a => a.CompletedAt)
+                .FirstOrDefaultAsync();
+
+            if (paymentAttempt != null)
+                refund = await _context.Refunds.FirstOrDefaultAsync(r => r.TaskId == paymentAttempt.TaskId);
+        }
 
         if (refund == null)
         {
-            _logger.LogWarning("Paystack refund event {RefundId} has no matching DFY refund.", refundId);
+            _logger.LogWarning("Paystack refund event {RefundId} has no matching DFY refund.", refundId ?? transactionReference ?? transactionId);
             return Ok();
         }
 
@@ -311,14 +328,7 @@ public class PaymentController : ControllerBase
             amountMinor.Value / 100m != refund.Amount ||
             !string.Equals(currency, "ZAR", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("Rejected Paystack refund event {RefundId} because amount/currency did not match the DFY refund.", refundId);
-            return BadRequest();
-        }
-
-        if (!string.IsNullOrWhiteSpace(transaction) &&
-            !string.Equals(transaction, refund.TransactionId, StringComparison.Ordinal))
-        {
-            _logger.LogWarning("Rejected Paystack refund event {RefundId} because the transaction reference did not match.", refundId);
+            _logger.LogWarning("Rejected Paystack refund event {RefundId} because amount/currency did not match the DFY refund.", refundId ?? transactionReference ?? transactionId);
             return BadRequest();
         }
 
@@ -326,12 +336,32 @@ public class PaymentController : ControllerBase
         if (task == null)
             return Ok();
 
+        var matchingAttempt = await _context.PaymentAttempts
+            .Where(a => a.TaskId == refund.TaskId &&
+                        a.Status == "Completed" &&
+                        a.TransactionId == refund.TransactionId)
+            .OrderByDescending(a => a.CompletedAt)
+            .FirstOrDefaultAsync();
+        var expectedTransactionReference = matchingAttempt?.Reference ?? task.PaymentReference;
+
+        if ((!string.IsNullOrWhiteSpace(transactionId) &&
+             !string.Equals(transactionId, refund.TransactionId, StringComparison.Ordinal) &&
+             !string.Equals(transactionId, expectedTransactionReference, StringComparison.Ordinal)) ||
+            (!string.IsNullOrWhiteSpace(transactionReference) &&
+             !string.Equals(transactionReference, expectedTransactionReference, StringComparison.Ordinal)))
+        {
+            _logger.LogWarning("Rejected Paystack refund event {RefundId} because the transaction reference did not match.", refundId ?? transactionReference ?? transactionId);
+            return BadRequest();
+        }
+
         // Provider events may be retried or arrive out of order. A completed
         // refund is terminal for webhook processing, and stale pending/processing
         // events must not undo a failure that is already awaiting reconciliation.
         if (string.Equals(refund.Status, "Complete", StringComparison.OrdinalIgnoreCase) ||
             (string.Equals(refund.Status, "Failed", StringComparison.OrdinalIgnoreCase) &&
-             eventName is "refund.failed" or "refund.pending" or "refund.processing"))
+             eventName is "refund.failed" or "refund.pending" or "refund.processing" or "refund.needs-attention") ||
+            (string.Equals(refund.Status, "PendingInvestigation", StringComparison.OrdinalIgnoreCase) &&
+             eventName is "refund.pending" or "refund.processing"))
             return Ok();
 
         refund.LastReconciledAt = DateTime.UtcNow;
@@ -368,7 +398,7 @@ public class PaymentController : ControllerBase
                 Action = "PaystackRefundCompleted",
                 EntityType = "Task",
                 EntityId = task.Id,
-                NewValues = $"refundId={refundId}; transactionId={transaction}; amount={(amountMinor ?? 0m) / 100m:F2}",
+                NewValues = $"refundId={refundId}; transactionId={transactionId}; transactionReference={transactionReference}; amount={(amountMinor ?? 0m) / 100m:F2}",
                 IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                 UserAgent = Request.Headers.UserAgent.ToString()
             });
@@ -390,6 +420,23 @@ public class PaymentController : ControllerBase
 
             foreach (var dispute in disputes)
                 dispute.Status = "Open";
+        }
+        else if (eventName == "refund.needs-attention" ||
+                 string.Equals(providerStatus, "needs-attention", StringComparison.OrdinalIgnoreCase))
+        {
+            refund.Status = "PendingInvestigation";
+            refund.FailureReason = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold until the provider confirms the outcome.";
+            task.PaymentStatus = "RefundPending";
+            task.TaskStatus = "RefundPending";
+            task.EscrowStatus = "refund_pending";
+            task.UpdatedAt = DateTime.UtcNow;
+
+            var disputes = await _context.Disputes
+                .Where(d => d.TaskId == task.Id && d.Status != "Resolved")
+                .ToListAsync();
+
+            foreach (var dispute in disputes)
+                dispute.Status = "RefundPending";
         }
         else
         {
