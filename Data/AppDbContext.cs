@@ -115,6 +115,12 @@ public class AppDbContext : DbContext
             .HasForeignKey(i => i.TaskId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<TaskIncident>()
+            .HasIndex(i => new { i.ReporterUserId, i.CreatedAt });
+
+        modelBuilder.Entity<TaskIncident>()
+            .HasIndex(i => new { i.TaskId, i.CreatedAt });
+
         modelBuilder.Entity<Models.Task>()
             .HasQueryFilter(t => !t.IsDeleted);
         modelBuilder.Entity<Models.Task>()
