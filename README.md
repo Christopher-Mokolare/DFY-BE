@@ -6,7 +6,7 @@ The .NET Web API for the DoForYou South African task marketplace. Creators post 
 
 DFY is **not yet production-ready**. The 24-hour creator-confirmation lifecycle and core staging E2E coverage have passed, but a controlled Paystack payment/transfer test, native mobile build/device validation, and final refund/dispute/reconciliation checks remain release gates.
 
-See [DFY Release Readiness](DFY_RELEASE_READINESS_2026-10-09.md) for the current verified status and remaining gates. Treat older Ozow-oriented notes as historical unless revalidated against current code.
+See [DFY Release Readiness](DFY_RELEASE_READINESS_2026-11-07.md) for the current verified status and remaining gates. Treat older Ozow-oriented notes as historical unless revalidated against current code.
 
 ## Core task and payment lifecycle
 
