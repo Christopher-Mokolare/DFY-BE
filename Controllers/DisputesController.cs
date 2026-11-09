@@ -43,12 +43,21 @@ public class DisputesController : ControllerBase
         if (task.CreatedByUserId != userId)
             return Forbid();
 
-        var disputeDeadline = task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
+        var now = DateTime.UtcNow;
+        var activeIncidentHold = await _context.TaskIncidents
+            .Where(i => i.TaskId == task.Id &&
+                        i.EscrowHoldPlacedAt != null &&
+                        i.EscrowHoldReleasedAt == null)
+            .OrderByDescending(i => i.EscrowHoldPlacedAt)
+            .FirstOrDefaultAsync();
+        var disputeDeadline = activeIncidentHold?.EscrowHoldDeadlineBefore.HasValue == true
+            ? activeIncidentHold.EscrowHoldDeadlineBefore.Value.Add(now - activeIncidentHold.EscrowHoldPlacedAt!.Value)
+            : task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
         if (task.TaskStatus != "AwaitingConfirmation" ||
             task.EscrowStatus is not ("held" or "incident_hold") ||
             task.PaymentStatus != "EscrowHeld" ||
             !disputeDeadline.HasValue ||
-            DateTime.UtcNow > disputeDeadline.Value)
+            now > disputeDeadline.Value)
             return Conflict(new ApiResponse<object> { Success = false, Message = "A completion dispute can only be raised by the task creator within the 24-hour confirmation window while escrow is held or on an incident hold." });
 
         var existingOpenDispute = await _context.Disputes
@@ -67,13 +76,6 @@ public class DisputesController : ControllerBase
 
         // A formal completion dispute supersedes any operational incident hold.
         // The escrow itself remains frozen under the formal dispute state.
-        var now = DateTime.UtcNow;
-        var activeIncidentHold = await _context.TaskIncidents
-            .Where(i => i.TaskId == task.Id &&
-                        i.EscrowHoldPlacedAt != null &&
-                        i.EscrowHoldReleasedAt == null)
-            .OrderByDescending(i => i.EscrowHoldPlacedAt)
-            .FirstOrDefaultAsync();
         if (activeIncidentHold != null)
         {
             activeIncidentHold.EscrowHoldReleasedAt = now;
