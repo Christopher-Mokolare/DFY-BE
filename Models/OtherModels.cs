@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace DoForYou.API.Models;
 
 public class Category
@@ -214,14 +216,19 @@ public class TaskIncident
 {
     public int Id { get; set; }
     public int TaskId { get; set; }
+    [MaxLength(64)]
     public string TaskReference { get; set; } = string.Empty;
     public int ReporterUserId { get; set; }
     public int CreatorUserId { get; set; }
     public int RunnerUserId { get; set; }
+    [MaxLength(64)]
     public string Category { get; set; } = string.Empty;
+    [MaxLength(2000)]
     public string Description { get; set; } = string.Empty;
+    [MaxLength(24)]
     public string Status { get; set; } = "Open";
     public string? EvidenceMessageIdsJson { get; set; }
+    [MaxLength(1000)]
     public string? AdminNotes { get; set; }
     public int? ReviewedByAdminId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
