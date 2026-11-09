@@ -114,7 +114,9 @@ public class TaskIncidentsController : ControllerBase
             {
                 i.Id, i.TaskReference, i.TaskId, i.ReporterUserId, i.CreatorUserId, i.RunnerUserId,
                 i.Category, i.Description, i.Status, i.EvidenceMessageIdsJson, i.AdminNotes,
-                i.ReviewedByAdminId, i.CreatedAt, i.ReviewedAt
+                i.ReviewedByAdminId, i.CreatedAt, i.ReviewedAt,
+                i.EscrowHoldPlacedAt, i.EscrowHoldReleasedAt, i.EscrowHoldPlacedByAdminId,
+                i.EscrowHoldDeadlineBefore, i.EscrowHoldReason, i.EscrowHoldReleaseReason
             }).ToListAsync();
         return Ok(new ApiResponse<object> { Success = true, Data = new { incidents = rows, total, page, pageSize } });
     }
