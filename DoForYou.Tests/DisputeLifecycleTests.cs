@@ -280,6 +280,12 @@ public class DisputeLifecycleTests
         Assert.IsType<OkObjectResult>(hold.Result);
         Assert.Equal("incident_hold", task.EscrowStatus);
 
+        // Simulate the original confirmation deadline passing while the hold is active.
+        // The effective dispute clock must remain paused for the full hold duration.
+        incident.EscrowHoldPlacedAt = DateTime.UtcNow.AddHours(-25);
+        incident.EscrowHoldDeadlineBefore = DateTime.UtcNow.AddHours(-1);
+        await context.SaveChangesAsync();
+
         var creatorController = CreateController(context, creator.Id);
         var dispute = await creatorController.RaiseDispute(new RaiseDisputeRequest
         {
