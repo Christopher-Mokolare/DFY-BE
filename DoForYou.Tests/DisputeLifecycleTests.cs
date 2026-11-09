@@ -252,6 +252,53 @@ public class DisputeLifecycleTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task CreatorCanOpenFormalDisputeWhileIncidentHoldIsActive()
+    {
+        using var context = CreateContext(nameof(CreatorCanOpenFormalDisputeWhileIncidentHoldIsActive));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var admin = CreateUser(3, "admin", "admin@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, admin);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var runnerController = CreateIncidentController(context, runner.Id);
+        var report = await runnerController.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The task scope changed after acceptance and needs a support review."
+        });
+        Assert.IsType<OkObjectResult>(report.Result);
+        var incident = Assert.Single(context.TaskIncidents);
+
+        var adminController = CreateIncidentController(context, admin.Id, "Admin");
+        var hold = await adminController.PlaceEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "Reviewing the runner's submitted scope-change evidence."
+        });
+        Assert.IsType<OkObjectResult>(hold.Result);
+        Assert.Equal("incident_hold", task.EscrowStatus);
+
+        var creatorController = CreateController(context, creator.Id);
+        var dispute = await creatorController.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The completed work does not match the agreed requirements.",
+            Category = "Quality"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(dispute.Result);
+        var response = Assert.IsType<ApiResponse<object>>(ok.Value);
+        Assert.True(response.Success);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.NotNull(incident.EscrowHoldReleasedAt);
+        Assert.Contains("formal creator completion dispute", incident.EscrowHoldReleaseReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, await context.AuditLogs.CountAsync());
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task NonParticipantCannotSubmitTaskIncident()
     {
         using var context = CreateContext(nameof(NonParticipantCannotSubmitTaskIncident));
