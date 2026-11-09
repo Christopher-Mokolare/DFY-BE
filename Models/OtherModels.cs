@@ -226,4 +226,5 @@ public class TaskIncident
     public int? ReviewedByAdminId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ReviewedAt { get; set; }
+    public Task Task { get; set; } = null!;
 }
