@@ -248,6 +248,9 @@ public class DisputeLifecycleTests
         Assert.Equal("AwaitingConfirmation", task.TaskStatus);
         Assert.True(task.EscrowHoldUntil >= originalDeadline.AddMinutes(14));
         Assert.NotNull(incident.EscrowHoldReleasedAt);
+        var automaticReleaseBeforeExtendedDeadline = await new EscrowService(context, NullLogger<EscrowService>.Instance)
+            .ReleaseEscrowAsync(task.Id, force: false);
+        Assert.False(automaticReleaseBeforeExtendedDeadline);
         Assert.Equal(2, await context.AuditLogs.CountAsync());
     }
 
