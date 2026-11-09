@@ -119,6 +119,173 @@ public class TaskIncidentsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = new { incidents = rows, total, page, pageSize } });
     }
 
+    [HttpPost("admin/incidents/{id:int}/hold-escrow")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ApiResponse<object>>> PlaceEscrowHold(int id, [FromBody] IncidentEscrowHoldRequest request)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+
+        var incident = await _context.TaskIncidents
+            .Include(i => i.Task)
+            .FirstOrDefaultAsync(i => i.Id == id);
+        if (incident == null)
+            return NotFound(new ApiResponse<object> { Success = false, Message = "Incident not found." });
+        if (incident.EscrowHoldPlacedAt.HasValue)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "This incident has already used its escrow-hold action." });
+
+        var task = incident.Task;
+        if (task.TaskStatus != "AwaitingConfirmation" ||
+            task.EscrowStatus != "held" ||
+            task.PaymentStatus != "EscrowHeld")
+            return Conflict(new ApiResponse<object> { Success = false, Message = "An incident hold can only be placed while a completed task is awaiting confirmation and escrow remains held." });
+
+        var now = DateTime.UtcNow;
+        int claimed;
+        if (_context.Database.IsRelational())
+        {
+            // This conditional database update races safely with EscrowService's
+            // conditional AwaitingConfirmation -> PayoutPending claim. Only one wins.
+            claimed = await _context.Tasks
+                .Where(t => t.Id == task.Id &&
+                            t.TaskStatus == "AwaitingConfirmation" &&
+                            t.EscrowStatus == "held" &&
+                            t.PaymentStatus == "EscrowHeld")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(t => t.EscrowStatus, "incident_hold")
+                    .SetProperty(t => t.UpdatedAt, now));
+        }
+        else
+        {
+            task.EscrowStatus = "incident_hold";
+            task.UpdatedAt = now;
+            claimed = 1;
+        }
+
+        if (claimed != 1)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The task is no longer eligible for an incident escrow hold. Refresh and review its current state." });
+
+        incident.Status = "UnderReview";
+        incident.EscrowHoldPlacedAt = now;
+        incident.EscrowHoldPlacedByAdminId = adminId.Value;
+        incident.EscrowHoldDeadlineBefore = task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
+        incident.EscrowHoldReason = reason;
+
+        _context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "TaskIncidentEscrowHeld",
+            EntityType = "TaskIncident",
+            EntityId = incident.Id,
+            OldValues = JsonSerializer.Serialize(new { escrowStatus = "held", paymentStatus = task.PaymentStatus }),
+            NewValues = JsonSerializer.Serialize(new { escrowStatus = "incident_hold", reason, taskReference = task.TaskId }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { incident.Id, incident.Status, incident.EscrowHoldPlacedAt, incident.EscrowHoldDeadlineBefore },
+            Message = "Escrow is on an audited incident hold. The payment status and runner payout have not been released."
+        });
+    }
+
+    [HttpPost("admin/incidents/{id:int}/release-escrow-hold")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ApiResponse<object>>> ReleaseEscrowHold(int id, [FromBody] IncidentEscrowHoldRequest request)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+
+        var incident = await _context.TaskIncidents
+            .Include(i => i.Task)
+            .FirstOrDefaultAsync(i => i.Id == id);
+        if (incident == null)
+            return NotFound(new ApiResponse<object> { Success = false, Message = "Incident not found." });
+        if (!incident.EscrowHoldPlacedAt.HasValue || incident.EscrowHoldReleasedAt.HasValue)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "This incident does not have an active escrow hold." });
+
+        var task = incident.Task;
+        if (task.TaskStatus != "AwaitingConfirmation" ||
+            task.EscrowStatus != "incident_hold" ||
+            task.PaymentStatus != "EscrowHeld")
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The task's escrow state has changed. Do not release this hold automatically; review the task and payment state first." });
+
+        var now = DateTime.UtcNow;
+        var heldFor = now - incident.EscrowHoldPlacedAt.Value;
+        if (heldFor < TimeSpan.Zero) heldFor = TimeSpan.Zero;
+        var originalDeadline = incident.EscrowHoldDeadlineBefore ?? task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24) ?? now;
+        var extendedDeadline = originalDeadline.Add(heldFor);
+
+        int released;
+        if (_context.Database.IsRelational())
+        {
+            released = await _context.Tasks
+                .Where(t => t.Id == task.Id &&
+                            t.TaskStatus == "AwaitingConfirmation" &&
+                            t.EscrowStatus == "incident_hold" &&
+                            t.PaymentStatus == "EscrowHeld")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(t => t.EscrowStatus, "held")
+                    .SetProperty(t => t.EscrowHoldUntil, extendedDeadline)
+                    .SetProperty(t => t.UpdatedAt, now));
+        }
+        else
+        {
+            task.EscrowStatus = "held";
+            task.EscrowHoldUntil = extendedDeadline;
+            task.UpdatedAt = now;
+            released = 1;
+        }
+
+        if (released != 1)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The escrow hold could not be released because the task state changed." });
+
+        incident.EscrowHoldReleasedAt = now;
+        incident.EscrowHoldReleaseReason = reason;
+        incident.AdminNotes = string.IsNullOrWhiteSpace(incident.AdminNotes)
+            ? $"Escrow hold released: {reason}"
+            : $"{incident.AdminNotes}\nEscrow hold released: {reason}";
+
+        _context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "TaskIncidentEscrowHoldReleased",
+            EntityType = "TaskIncident",
+            EntityId = incident.Id,
+            OldValues = JsonSerializer.Serialize(new { escrowStatus = "incident_hold", escrowHoldUntil = originalDeadline }),
+            NewValues = JsonSerializer.Serialize(new { escrowStatus = "held", escrowHoldUntil = extendedDeadline, heldForSeconds = (long)heldFor.TotalSeconds, reason }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { incident.Id, incident.EscrowHoldReleasedAt, escrowHoldUntil = extendedDeadline },
+            Message = "Escrow hold released. The confirmation deadline was extended by the hold duration; normal backend release rules now apply."
+        });
+    }
+
     [HttpPatch("admin/incidents/{id:int}")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ApiResponse<object>>> Review(int id, [FromBody] ReviewTaskIncidentRequest request)
@@ -176,3 +343,9 @@ public class ReviewTaskIncidentRequest
     public string Status { get; set; } = string.Empty;
     public string AdminNotes { get; set; } = string.Empty;
 }
+
+public class IncidentEscrowHoldRequest
+{
+    public string Reason { get; set; } = string.Empty;
+}
+
