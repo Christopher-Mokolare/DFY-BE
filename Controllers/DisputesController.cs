@@ -37,13 +37,18 @@ public class DisputesController : ControllerBase
         if (task == null)
             return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
-        if (task.CreatedByUserId != userId && task.AcceptedByUserId != userId)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Not authorized to dispute this task" });
+        // Completion disputes are a creator protection, not a general task-issue
+        // channel. Runners must use the separate incident-report workflow.
+        if (task.CreatedByUserId != userId)
+            return Forbid();
 
+        var disputeDeadline = task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
         if (task.TaskStatus != "AwaitingConfirmation" ||
             task.EscrowStatus != "held" ||
-            task.PaymentStatus != "EscrowHeld")
-            return Conflict(new ApiResponse<object> { Success = false, Message = "A dispute can only be raised for completed work while its escrow is held." });
+            task.PaymentStatus != "EscrowHeld" ||
+            !disputeDeadline.HasValue ||
+            DateTime.UtcNow > disputeDeadline.Value)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "A completion dispute can only be raised by the task creator within the 24-hour confirmation window while escrow is held." });
 
         var existingOpenDispute = await _context.Disputes
             .AnyAsync(d => d.TaskId == task.Id && d.Status == "Open");
