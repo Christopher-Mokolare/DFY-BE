@@ -146,12 +146,15 @@ public class TaskIncidentsController : ControllerBase
             return Conflict(new ApiResponse<object> { Success = false, Message = "This incident has already used its escrow-hold action." });
 
         var task = incident.Task;
+        var now = DateTime.UtcNow;
+        var confirmationDeadline = task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
         if (task.TaskStatus != "AwaitingConfirmation" ||
             task.EscrowStatus != "held" ||
-            task.PaymentStatus != "EscrowHeld")
-            return Conflict(new ApiResponse<object> { Success = false, Message = "An incident hold can only be placed while a completed task is awaiting confirmation and escrow remains held." });
+            task.PaymentStatus != "EscrowHeld" ||
+            !confirmationDeadline.HasValue ||
+            confirmationDeadline.Value <= now)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "An incident hold can only be placed during the active creator confirmation window while escrow remains held." });
 
-        var now = DateTime.UtcNow;
         int claimed;
         if (_context.Database.IsRelational())
         {
