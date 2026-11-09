@@ -45,8 +45,8 @@ public class TaskIncidentsController : ControllerBase
         if (task.AcceptedByUserId != userId && task.CreatedByUserId != userId)
             return Forbid();
         if (task.AcceptedByUserId == null ||
-            task.TaskStatus is "Posted" or "PendingPayment" or "Cancelled" or "RunnerPaid")
-            return Conflict(new ApiResponse<object> { Success = false, Message = "An incident can only be reported on a task with an assigned runner that has not been closed." });
+            task.TaskStatus is not ("Claimed" or "InProgress" or "AwaitingConfirmation"))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "An incident can only be reported on a claimed, in-progress or awaiting-confirmation task." });
 
         var evidenceIds = request.EvidenceMessageIds ?? new List<int>();
         if (evidenceIds.Count > 10 || evidenceIds.Any(id => id <= 0))
@@ -137,6 +137,7 @@ public class TaskIncidentsController : ControllerBase
         if (incident.Status is "Resolved" or "Dismissed")
             return Conflict(new ApiResponse<object> { Success = false, Message = "This incident has already been closed." });
 
+        var previousStatus = incident.Status;
         incident.Status = status!;
         incident.AdminNotes = notes;
         incident.ReviewedByAdminId = adminId.Value;
@@ -147,7 +148,7 @@ public class TaskIncidentsController : ControllerBase
             Action = "TaskIncidentReviewed",
             EntityType = "TaskIncident",
             EntityId = incident.Id,
-            OldValues = JsonSerializer.Serialize(new { status = "Open" }),
+            OldValues = JsonSerializer.Serialize(new { status = previousStatus }),
             NewValues = JsonSerializer.Serialize(new { status, adminNotes = notes }),
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             UserAgent = Request.Headers.UserAgent.ToString()
