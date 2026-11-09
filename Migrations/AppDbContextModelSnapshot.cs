@@ -1416,11 +1416,13 @@ namespace DoForYou.API.Migrations
 
             modelBuilder.Entity("DoForYou.API.Models.TaskIncident", b =>
                 {
-                    b.HasOne("DoForYou.API.Models.Task", null)
+                    b.HasOne("DoForYou.API.Models.Task", "Task")
                         .WithMany()
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("Task");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Dispute", b =>
