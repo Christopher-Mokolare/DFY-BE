@@ -228,6 +228,13 @@ public class DisputeLifecycleTests
             .ReleaseEscrowAsync(task.Id, force: true);
         Assert.False(releaseWhileHeld);
 
+        var closeWhileHeld = await adminController.Review(incident.Id, new ReviewTaskIncidentRequest
+        {
+            Status = "Resolved",
+            AdminNotes = "The review is complete but the financial hold remains active."
+        });
+        Assert.IsType<ConflictObjectResult>(closeWhileHeld.Result);
+
         incident.EscrowHoldPlacedAt = DateTime.UtcNow.AddMinutes(-15);
         await context.SaveChangesAsync();
         var release = await adminController.ReleaseEscrowHold(incident.Id, new IncidentEscrowHoldRequest
