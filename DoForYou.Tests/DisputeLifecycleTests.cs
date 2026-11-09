@@ -163,6 +163,60 @@ public class DisputeLifecycleTests
         Assert.Equal("EscrowHeld", task.PaymentStatus);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task RunnerIncidentReportIsStoredWithoutChangingEscrowOrPayment()
+    {
+        using var context = CreateContext(nameof(RunnerIncidentReportIsStoredWithoutChangingEscrowOrPayment));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Claimed", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateIncidentController(context, runner.Id);
+        var result = await controller.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The creator added additional work after the task was accepted."
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var response = Assert.IsType<ApiResponse<object>>(ok.Value);
+        Assert.True(response.Success);
+        var incident = Assert.Single(context.TaskIncidents);
+        Assert.Equal(runner.Id, incident.ReporterUserId);
+        Assert.Equal("Open", incident.Status);
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("Claimed", task.TaskStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task NonParticipantCannotSubmitTaskIncident()
+    {
+        using var context = CreateContext(nameof(NonParticipantCannotSubmitTaskIncident));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var stranger = CreateUser(3, "runner", "stranger@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Claimed", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, stranger);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateIncidentController(context, stranger.Id);
+        var result = await controller.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Safety concern",
+            Description = "An unrelated user is attempting to report this task."
+        });
+
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Empty(await context.TaskIncidents.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
     private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -208,6 +262,17 @@ public class DisputeLifecycleTests
         UpdatedAt = DateTime.UtcNow,
         CompletedAt = taskStatus == "AwaitingConfirmation" ? DateTime.UtcNow : null
     };
+
+    private static TaskIncidentsController CreateIncidentController(AppDbContext context, int userId)
+    {
+        var controller = new TaskIncidentsController(context, new NoOpNotificationService());
+        var http = new DefaultHttpContext();
+        http.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, userId.ToString())],
+            "TestAuth"));
+        controller.ControllerContext = new ControllerContext { HttpContext = http };
+        return controller;
+    }
 
     private static DisputesController CreateController(AppDbContext context, int userId)
     {
