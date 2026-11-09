@@ -585,7 +585,12 @@ public class TasksController : ControllerBase
             canCancel = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
             canConfirm = task.CreatedByUserId == currentUserId && task.TaskStatus == "AwaitingConfirmation",
             canMessage = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId,
-            canDispute = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId
+            canDispute = task.CreatedByUserId == currentUserId &&
+                task.TaskStatus == "AwaitingConfirmation" &&
+                task.EscrowStatus == "held" &&
+                task.PaymentStatus == "EscrowHeld" &&
+                (task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24)) is DateTime disputeDeadline &&
+                DateTime.UtcNow <= disputeDeadline
         };
 
         return Ok(new ApiResponse<object> { Success = true, Data = taskDto, Message = "Task retrieved successfully" });
