@@ -44,11 +44,11 @@ public class DisputesController : ControllerBase
 
         var disputeDeadline = task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
         if (task.TaskStatus != "AwaitingConfirmation" ||
-            task.EscrowStatus != "held" ||
+            task.EscrowStatus is not ("held" or "incident_hold") ||
             task.PaymentStatus != "EscrowHeld" ||
             !disputeDeadline.HasValue ||
             DateTime.UtcNow > disputeDeadline.Value)
-            return Conflict(new ApiResponse<object> { Success = false, Message = "A completion dispute can only be raised by the task creator within the 24-hour confirmation window while escrow is held." });
+            return Conflict(new ApiResponse<object> { Success = false, Message = "A completion dispute can only be raised by the task creator within the 24-hour confirmation window while escrow is held or on an incident hold." });
 
         var existingOpenDispute = await _context.Disputes
             .AnyAsync(d => d.TaskId == task.Id && d.Status == "Open");
@@ -64,11 +64,39 @@ public class DisputesController : ControllerBase
             Status = "Open"
         };
 
-        // A dispute must stop the normal 24-hour creator auto-release path. The task remains
-        // completed/held so an admin can later release it into the Paystack payout flow.
+        // A formal completion dispute supersedes any operational incident hold.
+        // The escrow itself remains frozen under the formal dispute state.
+        var now = DateTime.UtcNow;
+        var activeIncidentHold = await _context.TaskIncidents
+            .Where(i => i.TaskId == task.Id &&
+                        i.EscrowHoldPlacedAt != null &&
+                        i.EscrowHoldReleasedAt == null)
+            .OrderByDescending(i => i.EscrowHoldPlacedAt)
+            .FirstOrDefaultAsync();
+        if (activeIncidentHold != null)
+        {
+            activeIncidentHold.EscrowHoldReleasedAt = now;
+            activeIncidentHold.EscrowHoldReleaseReason = "Superseded by a formal creator completion dispute; escrow remains frozen under the dispute state.";
+            activeIncidentHold.AdminNotes = string.IsNullOrWhiteSpace(activeIncidentHold.AdminNotes)
+                ? "Incident hold ended because the creator opened a formal completion dispute."
+                : $"{activeIncidentHold.AdminNotes}\nIncident hold ended because the creator opened a formal completion dispute.";
+            _context.AuditLogs.Add(new AuditLog
+            {
+                UserId = userId.Value,
+                Action = "TaskIncidentHoldSupersededByDispute",
+                EntityType = "TaskIncident",
+                EntityId = activeIncidentHold.Id,
+                OldValues = JsonSerializer.Serialize(new { escrowStatus = "incident_hold" }),
+                NewValues = JsonSerializer.Serialize(new { escrowStatus = "disputed", disputeStatus = "Open" }),
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+        }
+
+        // The formal dispute now owns the escrow freeze and blocks normal auto-release.
         task.EscrowStatus = "disputed";
         task.PaymentStatus = "DisputePending";
-        task.UpdatedAt = DateTime.UtcNow;
+        task.UpdatedAt = now;
 
         _context.Disputes.Add(dispute);
         await _context.SaveChangesAsync();
