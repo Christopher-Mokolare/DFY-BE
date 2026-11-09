@@ -140,6 +140,8 @@ public class TaskIncidentsController : ControllerBase
             .FirstOrDefaultAsync(i => i.Id == id);
         if (incident == null)
             return NotFound(new ApiResponse<object> { Success = false, Message = "Incident not found." });
+        if (incident.Status is "Resolved" or "Dismissed")
+            return Conflict(new ApiResponse<object> { Success = false, Message = "A closed incident cannot initiate a new escrow hold." });
         if (incident.EscrowHoldPlacedAt.HasValue)
             return Conflict(new ApiResponse<object> { Success = false, Message = "This incident has already used its escrow-hold action." });
 
@@ -305,6 +307,10 @@ public class TaskIncidentsController : ControllerBase
         if (incident == null) return NotFound(new ApiResponse<object> { Success = false, Message = "Incident not found." });
         if (incident.Status is "Resolved" or "Dismissed")
             return Conflict(new ApiResponse<object> { Success = false, Message = "This incident has already been closed." });
+        if (status is "Resolved" or "Dismissed" &&
+            incident.EscrowHoldPlacedAt.HasValue &&
+            !incident.EscrowHoldReleasedAt.HasValue)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Release the active escrow hold before closing this incident." });
 
         var previousStatus = incident.Status;
         incident.Status = status!;
