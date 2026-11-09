@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<TaskMessage> TaskMessages { get; set; }
     public DbSet<TaskProgressUpdate> TaskProgressUpdates { get; set; }
     public DbSet<Dispute> Disputes { get; set; }
+    public DbSet<TaskIncident> TaskIncidents { get; set; } = null!;
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
     public DbSet<BusinessRule> BusinessRules { get; set; }
     public DbSet<Notification> Notifications { get; set; }
