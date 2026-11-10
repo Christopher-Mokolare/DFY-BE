@@ -149,11 +149,11 @@ public class TaskIncidentsController : ControllerBase
                 id = m.Id,
                 senderId = m.SenderId,
                 senderName = $"{m.Sender.FirstName} {m.Sender.LastName}".Trim(),
-                content = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal)
+                content = m.Content.StartsWith("[SYSTEM]")
                     ? m.Content.Substring(8).Trim()
                     : m.Content,
                 timestamp = m.CreatedAt,
-                isSystem = m.Content.StartsWith("[SYSTEM]", StringComparison.Ordinal)
+                isSystem = m.Content.StartsWith("[SYSTEM]")
             })
             .ToListAsync();
 
