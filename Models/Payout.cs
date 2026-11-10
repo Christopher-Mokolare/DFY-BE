@@ -6,7 +6,7 @@ public class Payout
 
     public int TaskId { get; set; }
     public int RunnerId { get; set; }
-    public int BankAccountId { get; set; }
+    public int? BankAccountId { get; set; }
 
     public decimal Amount { get; set; }
 
@@ -29,5 +29,5 @@ public class Payout
 
     public Task Task { get; set; } = null!;
     public User Runner { get; set; } = null!;
-    public BankAccount BankAccount { get; set; } = null!;
+    public BankAccount? BankAccount { get; set; }
 }
