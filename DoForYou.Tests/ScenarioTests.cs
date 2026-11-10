@@ -844,6 +844,191 @@ public class ScenarioTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task DisputeRefund_IsBlockedWhenPayoutIsAlreadyQueued()
+    {
+        using var context = CreateContext(nameof(DisputeRefund_IsBlockedWhenPayoutIsAlreadyQueued));
+        var creator = CreateUser(1, "creator", true, "refund-guard-creator@test.com");
+        var runner = CreateUser(2, "runner", true, "refund-guard-runner@test.com");
+        var admin = CreateUser(3, "admin", true, "refund-guard-admin@test.com");
+        admin.Roles = "Admin";
+        context.Users.AddRange(creator, runner, admin);
+
+        var bank = CreateVerifiedBankAccount(runner.Id);
+        context.BankAccounts.Add(bank);
+
+        var task = new TaskEntity
+        {
+            Id = 8890,
+            TaskId = "DFY-REFUND-GUARD-1",
+            TaskDescription = "Refund must not race a queued payout",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed",
+            TaskStatus = "AwaitingConfirmation",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The completed work needs review",
+            Category = "Quality",
+            Status = "Open",
+            Task = task
+        };
+        var attempt = new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-REFUND-GUARD-PAYMENT",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = "TX-REFUND-GUARD-1",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        };
+        var payout = new Payout
+        {
+            TaskId = task.Id,
+            RunnerId = runner.Id,
+            BankAccountId = bank.Id,
+            Amount = task.PayoutAmount,
+            Status = "Pending",
+            Provider = "Paystack",
+            MerchantReference = "DFY-REFUND-GUARD-PAYOUT",
+            CreatedAt = DateTime.UtcNow,
+            Task = task,
+            Runner = runner,
+            BankAccount = bank
+        };
+        context.Tasks.Add(task);
+        context.Disputes.Add(dispute);
+        context.PaymentAttempts.Add(attempt);
+        context.Payouts.Add(payout);
+        await context.SaveChangesAsync();
+
+        var controller = new DisputesController(
+            context,
+            new EscrowService(context, NullLogger<EscrowService>.Instance),
+            new NoOpNotificationService(),
+            new FakePaystackPaymentProvider());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, admin.Id.ToString())
+                }, "TestAuth"))
+            }
+        };
+
+        using var request = JsonDocument.Parse(
+            """{"action":"refund_creator","resolution":"Refund approved","reason":"Refund approved after dispute review"}""");
+        var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(await context.Refunds.ToListAsync());
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("Pending", payout.Status);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund()
+    {
+        using var context = CreateContext(nameof(DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund));
+        var creator = CreateUser(1, "creator", true, "refund-reserve-creator@test.com");
+        var runner = CreateUser(2, "runner", true, "refund-reserve-runner@test.com");
+        var admin = CreateUser(3, "admin", true, "refund-reserve-admin@test.com");
+        admin.Roles = "Admin";
+        context.Users.AddRange(creator, runner, admin);
+
+        var task = new TaskEntity
+        {
+            Id = 8891,
+            TaskId = "DFY-REFUND-RESERVE-1",
+            TaskDescription = "Reserve disputed task before provider refund",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed",
+            TaskStatus = "AwaitingConfirmation",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The completed work needs review",
+            Category = "Quality",
+            Status = "Open",
+            Task = task
+        };
+        context.Tasks.Add(task);
+        context.Disputes.Add(dispute);
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-REFUND-RESERVE-PAYMENT",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = "TX-REFUND-RESERVE-1",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var controller = new DisputesController(
+            context,
+            new EscrowService(context, NullLogger<EscrowService>.Instance),
+            new NoOpNotificationService(),
+            new FakePaystackPaymentProvider());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, admin.Id.ToString())
+                }, "TestAuth"))
+            }
+        };
+
+        using var request = JsonDocument.Parse(
+            """{"action":"refund_creator","resolution":"Refund approved","reason":"Refund approved after dispute review"}""");
+        var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
+        Assert.Equal("RefundPending", task.TaskStatus);
+        Assert.Equal("RefundPending", dispute.Status);
+        var refund = Assert.Single(await context.Refunds.ToListAsync());
+        Assert.Equal("Submitted", refund.Status);
+        Assert.Equal("TX-REFUND-RESERVE-1", refund.TransactionId);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task EscrowRelease_QueuesPayoutWithoutVerifiedBankAccount()
     {
         using var context = CreateContext(nameof(EscrowRelease_QueuesPayoutWithoutVerifiedBankAccount));
@@ -920,6 +1105,89 @@ public class ScenarioTests
         http.Request.Headers["x-paystack-signature"] = "test-signature";
         controller.ControllerContext = new ControllerContext { HttpContext = http };
         return await controller.Webhook();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task PaystackRefundNeedsAttention_KeepsTaskAndDisputeOnRefundHold()
+    {
+        using var context = CreateContext(nameof(PaystackRefundNeedsAttention_KeepsTaskAndDisputeOnRefundHold));
+        var creator = CreateUser(31, "creator", true, "refund-needs-attention-creator@test.com");
+        var runner = CreateUser(32, "runner", true, "refund-needs-attention-runner@test.com");
+        context.Users.AddRange(creator, runner);
+
+        var task = new TaskEntity
+        {
+            Id = 8893,
+            TaskId = "DFY-REFUND-NEEDS-ATTENTION",
+            TaskDescription = "Refund requires customer bank details",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "RefundPending",
+            EscrowStatus = "refund_pending",
+            TaskStatus = "RefundPending",
+            PayoutStatus = "NotStarted",
+            PaymentReference = "DFY-REFUND-NEEDS-ATTENTION-REF",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var refund = new Refund
+        {
+            TaskId = task.Id,
+            RefundId = "RF-NEEDS-ATTENTION",
+            TransactionId = "123456789",
+            Amount = 200m,
+            Reason = "Creator refund after dispute",
+            Status = "Submitted",
+            Task = task
+        };
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "Refund needs customer bank details",
+            Category = "Quality",
+            Status = "RefundPending",
+            Task = task
+        };
+        context.Tasks.Add(task);
+        context.Refunds.Add(refund);
+        context.Disputes.Add(dispute);
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-REFUND-NEEDS-ATTENTION-REF",
+            Amount = 200m,
+            Status = "Completed",
+            TransactionId = "123456789",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreatePaymentController(context);
+        const string needsAttentionEvent = """{"event":"refund.needs-attention","data":{"refund_reference":null,"transaction_reference":"DFY-REFUND-NEEDS-ATTENTION-REF","amount":20000,"currency":"ZAR","status":"needs-attention"}}""";
+
+        Assert.IsType<OkResult>(await InvokeWebhook(controller, needsAttentionEvent));
+        Assert.Equal("PendingInvestigation", refund.Status);
+        Assert.Contains("customer bank details", refund.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("RefundPending", task.TaskStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
+        Assert.Equal("RefundPending", dispute.Status);
+
+        const string staleProcessingEvent = """{"event":"refund.processing","data":{"refund_reference":null,"transaction_reference":"DFY-REFUND-NEEDS-ATTENTION-REF","amount":20000,"currency":"ZAR","status":"processing"}}""";
+        Assert.IsType<OkResult>(await InvokeWebhook(controller, staleProcessingEvent));
+        Assert.Equal("PendingInvestigation", refund.Status);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
     }
 
     [Fact]
@@ -1058,7 +1326,8 @@ private static AppDbContext CreateContext(string name)
                     "success",
                     500m,
                     transactionReference,
-                    null));
+                    null,
+                    "ZAR"));
         }
 
         public Task<RefundResult> CreateRefundAsync(
@@ -1077,7 +1346,7 @@ private static AppDbContext CreateContext(string name)
             System.Threading.Tasks.Task.FromResult<IReadOnlyList<RefundStatusResult>>(
                 Array.Empty<RefundStatusResult>());
 
-        public bool VerifyWebhookSignature(string rawBody, string? signature) => true;
+        public bool VerifyWebhookSignature(string rawBody, string? signature, bool isTimestampedSignature = false) => true;
     }
 
     private static TasksController CreateTasksController(AppDbContext context, int userId)
