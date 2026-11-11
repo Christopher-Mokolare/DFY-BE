@@ -15,12 +15,13 @@ public sealed class DiditIdentityVerificationServiceTests
     private const string WebhookSecret = "didit-test-webhook-secret";
     private const string ConsentVersion = "identity-verification-v1";
 
-    private static IConfiguration Configuration() => new ConfigurationBuilder()
+    private static IConfiguration Configuration(string? previousSecret = null) => new ConfigurationBuilder()
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Didit:ApiKey"] = ApiKey,
             ["Didit:WorkflowId"] = WorkflowId,
             ["Didit:WebhookSecret"] = WebhookSecret,
+            ["Didit:PreviousWebhookSecret"] = previousSecret,
             ["IdentityVerification:ConsentVersion"] = ConsentVersion
         })
         .Build();
@@ -83,6 +84,14 @@ public sealed class DiditIdentityVerificationServiceTests
         Assert.False(service.VerifyWebhookSignature(Encoding.UTF8.GetBytes(json), signature, "1"));
         Assert.False(service.VerifyWebhookSignature(Encoding.UTF8.GetBytes(json.Replace("Approved", "Declined", StringComparison.Ordinal)), signature, timestamp));
         Assert.False(service.VerifyWebhookSignature(Encoding.UTF8.GetBytes(json), "00", timestamp));
+
+        const string previousSecret = "previous-didit-webhook-secret";
+        var previousSignature = Convert.ToHexString(HMACSHA256.HashData(
+            Encoding.UTF8.GetBytes(previousSecret), Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        var rotationService = CreateService(
+            new StubHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))),
+            previousSecret);
+        Assert.True(rotationService.VerifyWebhookSignature(Encoding.UTF8.GetBytes(json), previousSignature, timestamp));
     }
 
     private static string Canonical(JsonElement element)
@@ -97,8 +106,8 @@ public sealed class DiditIdentityVerificationServiceTests
         return element.GetRawText();
     }
 
-    private static DiditIdentityVerificationService CreateService(HttpMessageHandler handler) =>
-        new(new HttpClient(handler), Configuration(), NullLogger<DiditIdentityVerificationService>.Instance);
+    private static DiditIdentityVerificationService CreateService(HttpMessageHandler handler, string? previousSecret = null) =>
+        new(new HttpClient(handler), Configuration(previousSecret), NullLogger<DiditIdentityVerificationService>.Instance);
 
     private sealed class StubHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> callback) : HttpMessageHandler
