@@ -6543,6 +6543,7 @@ export interface components {
         ManualIdentityVerificationDecisionRequest: {
             decision: string;
             reason: string;
+            internalNote?: string | null;
         };
         MarkTaskReadRequest: {
             /** Format: int32 */

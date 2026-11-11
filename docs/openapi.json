@@ -7548,6 +7548,12 @@
             "maxLength": 1000,
             "minLength": 10,
             "type": "string"
+          },
+          "internalNote": {
+            "maxLength": 1000,
+            "minLength": 0,
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
