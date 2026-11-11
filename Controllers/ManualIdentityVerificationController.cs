@@ -480,9 +480,9 @@ public sealed class ManualIdentityVerificationController(
         {
             s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt,
             s.userName, s.Email, s.DateOfBirth,
-            reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessDays(s.SubmittedAt, 1, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
+            reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
             reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
-            isOverdue = now > SouthAfricanBusinessCalendar.AddBusinessDays(s.SubmittedAt, 1, configuration["IdentityVerification:SouthAfricanPublicHolidays"])
+            isOverdue = now > SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"])
         }).ToList();
         return Ok(new ApiResponse<object> { Success = true, Data = new { submissions, totalCount = total, page, pageSize } });
     }
