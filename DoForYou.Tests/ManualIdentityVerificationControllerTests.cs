@@ -79,7 +79,7 @@ public sealed class ManualIdentityVerificationControllerTests
         Assert.NotEqual(original, encrypted.Ciphertext);
         Assert.Equal(original, decrypted);
         encrypted.Tag[0] ^= 0x01;
-        Assert.Throws<System.Security.Cryptography.CryptographicException>(
+        Assert.Throws<System.Security.Cryptography.AuthenticationTagMismatchException>(
             () => service.Decrypt(encrypted.Ciphertext, encrypted.Nonce, encrypted.Tag));
     }
 
