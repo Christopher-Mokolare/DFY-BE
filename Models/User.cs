@@ -39,7 +39,8 @@ public class User
     public string? IdentityVerificationProvider { get; set; }
     // Stable non-PII reference sent as provider vendor data; it is never the ID number.
     public string? IdentityVerificationExternalUserId { get; set; }
-    // Provider applicant/session reference used only for webhook correlation.\n    public string? IdentityVerificationApplicantId { get; set; }
+    // Provider applicant/session reference used only for webhook correlation.
+    public string? IdentityVerificationApplicantId { get; set; }
     public DateTime? IdentityVerificationStartedAt { get; set; }
     public DateTime? IdentityVerificationUpdatedAt { get; set; }
     public DateTime? IdentityVerificationLastEventAt { get; set; }
