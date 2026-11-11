@@ -219,25 +219,49 @@ public sealed class ManualIdentityVerificationController(
 
         // Consume the short-lived handoff with a conditional database update so
         // concurrent submissions cannot create two applications from one link.
-        var affected = await context.Users.Where(u => u.Id == user.Id &&
-                u.IdentityVerificationHandoffTokenHash == handoffHash &&
-                u.IdentityVerificationHandoffExpiry != null &&
-                u.IdentityVerificationHandoffExpiry > now &&
-                !u.IsArchived && u.EmailVerified)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(u => u.IdentityVerificationHandoffTokenHash, (string?)null)
-                .SetProperty(u => u.IdentityVerificationHandoffExpiry, (DateTime?)null)
-                .SetProperty(u => u.IdentityVerificationStatus, "pending")
-                .SetProperty(u => u.IdentityVerificationProvider, ManualProvider)
-                .SetProperty(u => u.IdentityVerificationExternalUserId, (string?)null)
-                .SetProperty(u => u.IdentityVerificationApplicantId, (string?)null)
-                .SetProperty(u => u.IdentityVerificationStartedAt, now)
-                .SetProperty(u => u.IdentityVerificationUpdatedAt, now)
-                .SetProperty(u => u.IdentityVerificationLastEventAt, (DateTime?)null), cancellationToken);
-        if (affected != 1)
-            return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_HANDOFF_ALREADY_USED", Message = "This document-submission link has already been used." });
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? transaction = null;
+        if (context.Database.IsRelational())
+            transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            if (context.Database.IsRelational())
+            {
+                var affected = await context.Users.Where(u => u.Id == user.Id &&
+                        u.IdentityVerificationHandoffTokenHash == handoffHash &&
+                        u.IdentityVerificationHandoffExpiry != null &&
+                        u.IdentityVerificationHandoffExpiry > now &&
+                        !u.IsArchived && u.EmailVerified)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(u => u.IdentityVerificationHandoffTokenHash, (string?)null)
+                        .SetProperty(u => u.IdentityVerificationHandoffExpiry, (DateTime?)null)
+                        .SetProperty(u => u.IdentityVerificationStatus, "pending")
+                        .SetProperty(u => u.IdentityVerificationProvider, ManualProvider)
+                        .SetProperty(u => u.IdentityVerificationExternalUserId, (string?)null)
+                        .SetProperty(u => u.IdentityVerificationApplicantId, (string?)null)
+                        .SetProperty(u => u.IdentityVerificationStartedAt, now)
+                        .SetProperty(u => u.IdentityVerificationUpdatedAt, now)
+                        .SetProperty(u => u.IdentityVerificationLastEventAt, (DateTime?)null), cancellationToken);
+                if (affected != 1)
+                    return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_HANDOFF_ALREADY_USED", Message = "This document-submission link has already been used." });
+            }
+            else
+            {
+                if (user.IdentityVerificationHandoffTokenHash != handoffHash ||
+                    !user.IdentityVerificationHandoffExpiry.HasValue ||
+                    user.IdentityVerificationHandoffExpiry.Value <= now)
+                    return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_HANDOFF_ALREADY_USED", Message = "This document-submission link has already been used." });
+                user.IdentityVerificationHandoffTokenHash = null;
+                user.IdentityVerificationHandoffExpiry = null;
+                user.IdentityVerificationStatus = "pending";
+                user.IdentityVerificationProvider = ManualProvider;
+                user.IdentityVerificationExternalUserId = null;
+                user.IdentityVerificationApplicantId = null;
+                user.IdentityVerificationStartedAt = now;
+                user.IdentityVerificationUpdatedAt = now;
+                user.IdentityVerificationLastEventAt = null;
+            }
 
-        var submission = new IdentityVerificationSubmission
+            var submission = new IdentityVerificationSubmission
         {
             UserId = user.Id, DocumentType = documentType, Status = "pending",
             FrontCiphertext = encryptedFront.Ciphertext, FrontNonce = encryptedFront.Nonce, FrontTag = encryptedFront.Tag,
@@ -245,17 +269,28 @@ public sealed class ManualIdentityVerificationController(
             BackNonce = encryptedBack?.Nonce, BackTag = encryptedBack?.Tag, BackContentType = backType,
             ConsentVersion = ConsentVersion, SubmittedAt = now
         };
-        context.IdentityVerificationSubmissions.Add(submission);
-        context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
-        await context.SaveChangesAsync(cancellationToken);
-        logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
+            context.IdentityVerificationSubmissions.Add(submission);
+            context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
+            await context.SaveChangesAsync(cancellationToken);
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
+            logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
 
-        return Accepted(new ApiResponse<object>
+            return Accepted(new ApiResponse<object>
+            {
+                Success = true,
+                Data = new { submissionId = submission.Id, status = submission.Status, submittedAt = submission.SubmittedAt },
+                Message = "Your identity documents were securely submitted. Runner eligibility remains locked until DFY completes its review."
+            });
+        }
+        catch
         {
-            Success = true,
-            Data = new { submissionId = submission.Id, status = submission.Status, submittedAt = submission.SubmittedAt },
-            Message = "Your identity documents were securely submitted. Runner eligibility remains locked until DFY completes its review."
-        });
+            if (transaction != null) await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+        finally
+        {
+            if (transaction != null) await transaction.DisposeAsync();
+        }
     }
 
     [Authorize]
