@@ -24,7 +24,8 @@ public sealed class ManualIdentityVerificationController(
     AppDbContext context,
     IIdentityDocumentEncryptionService encryption,
     IConfiguration configuration,
-    ILogger<ManualIdentityVerificationController> logger) : ControllerBase
+    ILogger<ManualIdentityVerificationController> logger,
+    INotificationService? notifications = null) : ControllerBase
 {
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
@@ -276,6 +277,12 @@ public sealed class ManualIdentityVerificationController(
             context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
             await context.SaveChangesAsync(cancellationToken);
             if (transaction != null) await transaction.CommitAsync(cancellationToken);
+            await NotifySafelyAsync(service => service.CreateNotificationAsync(
+                user.Id, "identity_review_submitted", "DFY Document Review received",
+                "Your documents were securely submitted. DFY aims to review submissions within one business day; we will notify you when there is an update."), "runner submission confirmation");
+            await NotifySafelyAsync(service => service.NotifyAdminsAsync(
+                "identity_review_new", "New DFY Document Review",
+                $"Runner {user.Id} submitted document review case {submission.Id}."), "administrator new-case alert");
             logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
 
             return Accepted(new ApiResponse<object>
@@ -542,6 +549,7 @@ public sealed class ManualIdentityVerificationController(
             _ => "more_info_requested"
         };
 
+        var reviewedUserId = 0;
         if (context.Database.IsRelational())
         {
             await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
@@ -566,6 +574,7 @@ public sealed class ManualIdentityVerificationController(
             var submission = await context.IdentityVerificationSubmissions
                 .Include(s => s.User)
                 .FirstAsync(s => s.Id == id, cancellationToken);
+            reviewedUserId = submission.UserId;
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
@@ -583,6 +592,7 @@ public sealed class ManualIdentityVerificationController(
             if (submission.Status != "pending")
                 return Conflict(new ApiResponse<object> { Success = false, Message = "This application has already been reviewed or is no longer pending." });
 
+            reviewedUserId = submission.UserId;
             submission.ReviewedAt = now;
             submission.ReviewedByUserId = adminId.Value;
             submission.ReviewReason = reason;
@@ -596,6 +606,21 @@ public sealed class ManualIdentityVerificationController(
             await context.SaveChangesAsync(cancellationToken);
         }
 
+        var runnerTitle = decision switch
+        {
+            "approve" => "DFY Document Review approved",
+            "reject" => "DFY Document Review unsuccessful",
+            _ => "More information required for DFY Document Review"
+        };
+        var runnerMessage = decision switch
+        {
+            "approve" => "DFY has completed its manual document review. Your runner eligibility has been updated.",
+            "reject" => "DFY could not approve this document submission. Review reason: " + reason,
+            _ => "DFY needs you to update your submission. Please follow these instructions: " + reason
+        };
+        await NotifySafelyAsync(service => service.CreateNotificationAsync(
+            reviewedUserId, "identity_review_" + decision, runnerTitle, runnerMessage), "runner review decision notification");
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
@@ -606,6 +631,19 @@ public sealed class ManualIdentityVerificationController(
                     ? "DFY recorded the manual document review as rejected."
                     : "Additional information has been requested. The runner may submit a corrected application."
         });
+    }
+
+    private async Task NotifySafelyAsync(Func<INotificationService, Task> notification, string purpose)
+    {
+        if (notifications == null) return;
+        try
+        {
+            await notification(notifications);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "DFY Document Review notification failed for {Purpose}; the workflow remains saved.", purpose);
+        }
     }
 
     private async Task<bool> HasRecentAdminTwoFactorAsync(int adminId, CancellationToken cancellationToken)
