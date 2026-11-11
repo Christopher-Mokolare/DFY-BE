@@ -2994,6 +2994,18 @@
         }
       }
     },
+    "/api/v1/identity-verification/didit/webhook": {
+      "post": {
+        "tags": [
+          "IdentityVerification"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/identity-verification/sumsub/webhook": {
       "post": {
         "tags": [
