@@ -20,6 +20,7 @@ public sealed class DiditIdentityVerificationService(
     private string ApiKey => ReadSetting("DIDIT_API_KEY", "Didit:ApiKey");
     private string WorkflowId => ReadSetting("DIDIT_WORKFLOW_ID", "Didit:WorkflowId");
     private string WebhookSecret => ReadSetting("DIDIT_WEBHOOK_SECRET", "Didit:WebhookSecret");
+    private string PreviousWebhookSecret => ReadSetting("DIDIT_WEBHOOK_PREVIOUS_SECRET", "Didit:PreviousWebhookSecret");
     private string CallbackUrl => ReadSetting("DIDIT_WEBHOOK_URL", "Didit:WebhookUrl");
     public string ProviderName => "Didit";
     public string ConsentVersion => ReadSetting("IDENTITY_VERIFICATION_CONSENT_VERSION", "IdentityVerification:ConsentVersion");
@@ -105,25 +106,43 @@ public sealed class DiditIdentityVerificationService(
                 return false;
 
             var canonical = Canonicalize(document.RootElement);
-            var secretBytes = Encoding.UTF8.GetBytes(WebhookSecret);
             var payloadBytes = Encoding.UTF8.GetBytes(canonical);
-            byte[] expected;
-            try { expected = HMACSHA256.HashData(secretBytes, payloadBytes); }
-            finally
+            byte[] supplied;
+            try { supplied = Convert.FromHexString(digest.Trim()); }
+            catch (FormatException)
             {
-                CryptographicOperations.ZeroMemory(secretBytes);
                 CryptographicOperations.ZeroMemory(payloadBytes);
+                return false;
             }
 
             try
             {
-                byte[] supplied;
-                try { supplied = Convert.FromHexString(digest.Trim()); }
-                catch (FormatException) { return false; }
-                return supplied.Length == expected.Length &&
-                    CryptographicOperations.FixedTimeEquals(expected, supplied);
+                var secrets = new[] { WebhookSecret, PreviousWebhookSecret }
+                    .Where(secret => !string.IsNullOrWhiteSpace(secret))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                foreach (var secret in secrets)
+                {
+                    var secretBytes = Encoding.UTF8.GetBytes(secret);
+                    byte[] expected;
+                    try { expected = HMACSHA256.HashData(secretBytes, payloadBytes); }
+                    finally { CryptographicOperations.ZeroMemory(secretBytes); }
+
+                    try
+                    {
+                        if (supplied.Length == expected.Length &&
+                            CryptographicOperations.FixedTimeEquals(expected, supplied))
+                            return true;
+                    }
+                    finally { CryptographicOperations.ZeroMemory(expected); }
+                }
+                return false;
             }
-            finally { CryptographicOperations.ZeroMemory(expected); }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(payloadBytes);
+                CryptographicOperations.ZeroMemory(supplied);
+            }
         }
         catch (JsonException) { return false; }
         catch (ArgumentOutOfRangeException) { return false; }
