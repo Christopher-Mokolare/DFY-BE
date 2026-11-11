@@ -60,6 +60,9 @@ public sealed class IdentityDocumentRetentionService(
             submission.FrontCiphertext = [];
             submission.FrontNonce = [];
             submission.FrontTag = [];
+            if (submission.BackCiphertext != null) Array.Clear(submission.BackCiphertext);
+            if (submission.BackNonce != null) Array.Clear(submission.BackNonce);
+            if (submission.BackTag != null) Array.Clear(submission.BackTag);
             submission.BackCiphertext = null;
             submission.BackNonce = null;
             submission.BackTag = null;
