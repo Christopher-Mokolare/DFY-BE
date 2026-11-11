@@ -28,7 +28,8 @@ public sealed class ManualIdentityVerificationControllerTests
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["IdentityVerification:ConsentVersion"] = ConsentVersion,
-            ["DFY_KYC_DOCUMENT_ENCRYPTION_KEY"] = Convert.ToBase64String(Enumerable.Range(1, 32).Select(x => (byte)x).ToArray())
+            ["DFY_KYC_DOCUMENT_ENCRYPTION_KEY"] = Convert.ToBase64String(Enumerable.Range(1, 32).Select(x => (byte)x).ToArray()),
+            ["DFY_KYC_ID_HMAC_KEY"] = Convert.ToBase64String(Enumerable.Range(33, 32).Select(x => (byte)x).ToArray())
         })
         .Build();
 
@@ -53,7 +54,8 @@ public sealed class ManualIdentityVerificationControllerTests
             config,
             NullLogger<ManualIdentityVerificationController>.Instance,
             imageService: new IdentityDocumentImageService(),
-            malwareScanner: new TestCleanMalwareScanner());
+            malwareScanner: new TestCleanMalwareScanner(),
+            documentIdService: new IdentityDocumentIdService(config));
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -276,6 +278,54 @@ public sealed class ManualIdentityVerificationControllerTests
         var release = await first.ReleaseReview(submission.Id, CancellationToken.None);
         Assert.IsType<OkObjectResult>(release.Result);
         Assert.IsType<OkObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
+    }
+
+
+    [Fact]
+    public async Task Duplicate_South_African_ID_is_flagged_for_investigation_not_auto_rejected()
+    {
+        await using var context = CreateContext();
+        const string validId = "8001015009087";
+        var policy = new UserPolicyService();
+        Assert.True(policy.TryGetAdultDateOfBirthFromSouthAfricanId(validId, out var dob));
+        var idService = new IdentityDocumentIdService(Configuration());
+        var duplicateOwner = NewRunner(108);
+        duplicateOwner.IdentityDocumentIdHmac = idService.ComputeHmac(validId);
+        var runner = NewRunner(109);
+        var admin = new User
+        {
+            Id = 905, FirstName = "Admin", LastName = "User", Email = "admin6@example.test",
+            NormalizedEmail = "admin6@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow
+        };
+        context.Users.AddRange(duplicateOwner, runner, admin);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "south_african_id_card", Status = "pending",
+            FrontCiphertext = [1, 2, 3], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, admin.Id);
+        Assert.IsType<OkObjectResult>((await controller.ClaimReview(submission.Id, CancellationToken.None)).Result);
+        var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
+        {
+            Decision = "approve",
+            VerifiedDateOfBirth = dob,
+            SouthAfricanIdNumber = validId,
+            RunnerNote = "Document details were reviewed and matched the runner profile."
+        }, CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("pending", submission.Status);
+        Assert.True(submission.DuplicateIdDetected);
+        Assert.Equal(idService.ComputeHmac(validId), submission.DocumentIdHmac);
+        Assert.Equal("not_started", runner.IdentityVerificationStatus);
+        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
+            e => e.EventType == "duplicate_id_flagged" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
     }
 
     [Fact]
