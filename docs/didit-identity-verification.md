@@ -8,7 +8,8 @@ Configure these values as Render environment secrets on the **staging backend on
 
 - `DIDIT_API_KEY`: Didit API key for the staging/sandbox application.
 - `DIDIT_WORKFLOW_ID`: the published workflow ID for the DFY runner workflow.
-- `DIDIT_WEBHOOK_SECRET`: the signing secret for the Didit webhook destination.
+- `DIDIT_WEBHOOK_SECRET`: the current signing secret for the Didit webhook destination.
+- `DIDIT_WEBHOOK_PREVIOUS_SECRET` (optional): the previous signing secret during Didit's 24-hour rotation overlap.
 - `IDENTITY_VERIFICATION_CONSENT_VERSION`: the exact approved notice version presented to runners.
 - `DIDIT_WEBHOOK_URL` (optional): the public HTTPS callback URL, if configured in the Didit session workflow.
 
