@@ -44,6 +44,11 @@ public sealed class IdentityVerificationSubmission
     public DateTime? ReviewedAt { get; set; }
     public int? ReviewedByUserId { get; set; }
 
+    // Exclusive reviewer lease. Expired leases can be claimed by another authorised reviewer.
+    public int? ReviewClaimedByUserId { get; set; }
+    public DateTime? ReviewClaimExpiresAt { get; set; }
+    public DateTime? ReviewClaimHeartbeatAt { get; set; }
+
     [StringLength(1000)]
     public string? ReviewReason { get; set; }
 
