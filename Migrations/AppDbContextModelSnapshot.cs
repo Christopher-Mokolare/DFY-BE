@@ -1301,6 +1301,9 @@ namespace DoForYou.API.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_IdentityVerificationEvents_Provider_EventHash");
 
+                    b.HasIndex("SubmissionId", "ActorUserId", "ReceivedAt")
+                        .HasDatabaseName("IX_IdentityVerificationEvents_Submission_Actor_ReceivedAt");
+
                     b.HasIndex("UserId", "ReceivedAt")
                         .HasDatabaseName("IX_IdentityVerificationEvents_UserId_ReceivedAt");
 
