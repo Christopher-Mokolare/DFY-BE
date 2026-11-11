@@ -35,7 +35,8 @@ namespace DoForYou.API.Migrations
                     ReviewedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     ReviewedByUserId = table.Column<int>(type: "integer", nullable: true),
                     ReviewReason = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
-                    DocumentsDeleteAfter = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    DocumentsDeleteAfter = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    DocumentsPurgedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
                 {
