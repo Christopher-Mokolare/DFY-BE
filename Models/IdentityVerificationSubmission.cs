@@ -40,6 +40,7 @@ public sealed class IdentityVerificationSubmission
     public string ConsentVersion { get; set; } = string.Empty;
 
     public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;
+    // Fallback retention deadline for unreviewed submissions; reset to 90 days after a decision.
     public DateTime? ReviewedAt { get; set; }
     public int? ReviewedByUserId { get; set; }
 
