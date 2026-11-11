@@ -114,6 +114,52 @@ public sealed class ManualIdentityVerificationControllerTests
     }
 
     [Fact]
+    public async Task Runner_can_submit_green_barcoded_id_book_photo_page_without_back_image()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(104);
+        context.Users.Add(runner);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, runner.Id);
+        var result = await controller.Submit(new SubmitManualIdentityVerificationRequest
+        {
+            ConsentAccepted = true,
+            ConsentVersion = ConsentVersion,
+            DocumentType = "south_african_id_book",
+            FrontDocument = Jpeg("id-book-details.jpg"),
+            BackDocument = null
+        }, CancellationToken.None);
+
+        Assert.IsType<AcceptedResult>(result.Result);
+        var submission = await context.IdentityVerificationSubmissions.SingleAsync();
+        Assert.Equal("south_african_id_book", submission.DocumentType);
+        Assert.Null(submission.BackCiphertext);
+    }
+
+    [Fact]
+    public async Task Smart_id_card_submission_requires_both_sides()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(105);
+        context.Users.Add(runner);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, runner.Id);
+        var result = await controller.Submit(new SubmitManualIdentityVerificationRequest
+        {
+            ConsentAccepted = true,
+            ConsentVersion = ConsentVersion,
+            DocumentType = "south_african_id_card",
+            FrontDocument = Jpeg("smart-id-front.jpg"),
+            BackDocument = null
+        }, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, Assert.IsType<BadRequestObjectResult>(result.Result).StatusCode);
+        Assert.Empty(await context.IdentityVerificationSubmissions.ToListAsync());
+    }
+
+    [Fact]
     public async Task Administrator_approval_requires_recent_authenticator_and_updates_backend_status()
     {
         await using var context = CreateContext();
