@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
     public DbSet<IdentityVerificationEvent> IdentityVerificationEvents { get; set; } = null!;
+    public DbSet<IdentityVerificationSubmission> IdentityVerificationSubmissions { get; set; } = null!;
 
     public override int SaveChanges()
     {
@@ -107,6 +108,26 @@ public class AppDbContext : DbContext
             .HasOne(e => e.User)
             .WithMany()
             .HasForeignKey(e => e.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => new { s.Status, s.SubmittedAt })
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_Status_SubmittedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => new { s.UserId, s.SubmittedAt })
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasOne(s => s.User)
+            .WithMany()
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasOne(s => s.ReviewedByUser)
+            .WithMany()
+            .HasForeignKey(s => s.ReviewedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<TaskIncident>()
