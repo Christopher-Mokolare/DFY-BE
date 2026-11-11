@@ -184,13 +184,16 @@ public sealed class ManualIdentityVerificationControllerTests
         var controller = CreateController(context, admin.Id);
         var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
         {
-            Decision = "approve", Reason = "Document details were reviewed and matched the runner profile."
+            Decision = "approve", Reason = "Document details were reviewed and matched the runner profile.",
+            InternalNote = "Second reviewer confirmed the profile name and date of birth."
         }, CancellationToken.None);
 
         Assert.IsType<OkObjectResult>(result.Result);
         Assert.Equal("passed", runner.IdentityVerificationStatus);
         Assert.Equal("approved", submission.Status);
         Assert.Equal(admin.Id, submission.ReviewedByUserId);
+        Assert.Equal("Second reviewer confirmed the profile name and date of birth.", submission.InternalReviewNote);
+        Assert.Equal("Document details were reviewed and matched the runner profile.", submission.ReviewReason);
         Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(), e => e.EventType == "admin_approve");
     }
 
