@@ -140,6 +140,7 @@ builder.Services.AddSingleton<IAuthenticatorService, AuthenticatorService>();
 builder.Services.AddSingleton<IIdentityDocumentEncryptionService, IdentityDocumentEncryptionService>();
 builder.Services.AddSingleton<IIdentityDocumentImageService, IdentityDocumentImageService>();
 builder.Services.AddSingleton<IIdentityDocumentMalwareScanner, ClamAvIdentityDocumentMalwareScanner>();
+builder.Services.AddSingleton<IIdentityDocumentIdService, IdentityDocumentIdService>();
 builder.Services.AddHostedService<IdentityDocumentRetentionService>();
 builder.Services.AddHostedService<IdentityReviewSlaService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
