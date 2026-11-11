@@ -245,16 +245,6 @@ public sealed class ManualIdentityVerificationController(
                 Message = "Secure document checks are temporarily unavailable. Please try again later."
             });
         }
-        catch (Exception ex) when (ex is IOException or SocketException)
-        {
-            logger.LogError(ex, "DFY malware scanning or image normalization failed for a document submission.");
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
-            {
-                Success = false,
-                Error = "IDENTITY_DOCUMENT_SCANNER_UNAVAILABLE",
-                Message = "Secure document checks are temporarily unavailable. Please try again later."
-            });
-        }
 
         var encryptedFront = encryption.Encrypt(frontBytes);
         var encryptedBack = backBytes == null ? null : encryption.Encrypt(backBytes);
@@ -365,12 +355,13 @@ public sealed class ManualIdentityVerificationController(
         var userId = CurrentUserId();
         if (userId == null) return Unauthorized();
 
-        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion) ||
+            malwareScanner?.IsConfigured != true || imageService == null)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
             {
                 Success = false,
                 Error = "DFY_IDENTITY_VERIFICATION_NOT_CONFIGURED",
-                Message = "DFY identity-document submission is not available yet."
+                Message = "DFY secure document submission, malware scanning and image sanitisation are not fully configured."
             });
 
         if (!request.ConsentAccepted ||
