@@ -14,6 +14,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    services:
+      clamav:
+        image: clamav/clamav:1.4-debian13-slim
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "bash -c '</dev/tcp/127.0.0.1/3310'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-start-period 120s
+          --health-retries 18
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -44,6 +55,9 @@ jobs:
           dotnet ef migrations has-pending-model-changes --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --no-build --configuration Release
 
       - name: Test
+        env:
+          DFY_KYC_CLAMAV_HOST: 127.0.0.1
+          DFY_KYC_CLAMAV_PORT: '3310'
         run: dotnet test DoForYou.Tests/DoForYou.Tests.csproj --no-restore --configuration Release --verbosity normal
 
       - name: Preserve committed API contract snapshot
@@ -73,13 +87,8 @@ jobs:
         env:
           TARGET_BRANCH: ${{ github.head_ref || 'main' }}
         run: |
-          # Save generated outputs, then switch to the real target branch rather than
-          # GitHub's temporary PR merge ref before committing generated files.
           cp docs/openapi.json /tmp/dfy-openapi.json
           cp docs/openapi.d.ts /tmp/dfy-openapi.d.ts
-          # Exported OpenAPI files may differ from the committed snapshot. Restore
-          # the checked-out tree before switching branches; the generated copies
-          # are safely preserved in /tmp for the subsequent sync commit.
           git restore --source=HEAD --worktree docs/openapi.json docs/openapi.d.ts
           git fetch origin "$TARGET_BRANCH"
           git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
