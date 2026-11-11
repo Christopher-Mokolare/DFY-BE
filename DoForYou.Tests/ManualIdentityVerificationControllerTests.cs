@@ -98,7 +98,7 @@ public sealed class ManualIdentityVerificationControllerTests
         {
             ConsentAccepted = true,
             ConsentVersion = ConsentVersion,
-            DocumentType = "south_african_id",
+            DocumentType = "south_african_id_card",
             FrontDocument = front,
             BackDocument = back
         }, CancellationToken.None);
