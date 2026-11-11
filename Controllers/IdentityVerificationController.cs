@@ -490,10 +490,11 @@ public sealed class IdentityVerificationController(
         await using var bodyBuffer = new MemoryStream();
         await Request.Body.CopyToAsync(bodyBuffer, cancellationToken);
         var rawBody = bodyBuffer.ToArray();
-        if (!identityVerification.VerifyWebhookSignature(
-                rawBody,
-                Request.Headers["X-Signature-V2"].ToString(),
-                Request.Headers["X-Timestamp"].ToString()))
+        var signature = Request.Headers["X-Signature-V2"].ToString();
+        var previousSignature = Request.Headers["X-Signature-V2-Previous"].ToString();
+        var timestampHeader = Request.Headers["X-Timestamp"].ToString();
+        if (!identityVerification.VerifyWebhookSignature(rawBody, signature, timestampHeader) &&
+            !identityVerification.VerifyWebhookSignature(rawBody, previousSignature, timestampHeader))
         {
             logger.LogWarning("Rejected Didit identity webhook with invalid signature or timestamp.");
             return Unauthorized();
@@ -512,21 +513,27 @@ public sealed class IdentityVerificationController(
             var workflowId = ReadString(root, "workflow_id");
             var webhookType = ReadString(root, "webhook_type");
             var status = ReadString(root, "status");
-            var timestamp = ReadString(root, "timestamp");
+            var eventId = ReadString(root, "event_id");
+            var createdAt = ReadString(root, "created_at");
+            if (!string.Equals(webhookType, "status.updated", StringComparison.Ordinal))
+                return Accepted(new { accepted = true });
             if (string.IsNullOrWhiteSpace(sessionId) ||
                 string.IsNullOrWhiteSpace(vendorData) ||
                 string.IsNullOrWhiteSpace(workflowId) ||
                 string.IsNullOrWhiteSpace(status) ||
+                string.IsNullOrWhiteSpace(eventId) ||
                 !string.Equals(workflowId, identityVerification.ExpectedLevelName, StringComparison.Ordinal))
                 return Accepted(new { accepted = true });
 
-            if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds))
+            // Didit refreshes the dispatch timestamp on retries. Use created_at for
+            // event ordering and the stable event_id for idempotency.
+            if (!long.TryParse(createdAt, NumberStyles.None, CultureInfo.InvariantCulture, out var createdAtSeconds))
                 return BadRequest();
             DateTime providerEventAt;
-            try { providerEventAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime; }
+            try { providerEventAt = DateTimeOffset.FromUnixTimeSeconds(createdAtSeconds).UtcDateTime; }
             catch (ArgumentOutOfRangeException) { return BadRequest(); }
 
-            var eventHash = Convert.ToHexString(SHA256.HashData(rawBody)).ToLowerInvariant();
+            var eventHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(eventId))).ToLowerInvariant();
             if (await context.IdentityVerificationEvents.AsNoTracking()
                     .AnyAsync(e => e.Provider == "Didit" && e.EventHash == eventHash, cancellationToken))
                 return Ok(new { accepted = true, duplicate = true });
@@ -598,7 +605,9 @@ public sealed class IdentityVerificationController(
                     string.Equals(state.GetString(), "Approved", StringComparison.Ordinal));
             }
 
-            return AllApproved(decision, "id_verifications") &&
+            var decisionStatus = ReadString(decision, "status");
+            return string.Equals(decisionStatus, "Approved", StringComparison.Ordinal) &&
+                   AllApproved(decision, "id_verifications") &&
                    AllApproved(decision, "liveness_checks") &&
                    AllApproved(decision, "face_matches")
                 ? "passed"
@@ -609,7 +618,7 @@ public sealed class IdentityVerificationController(
         {
             "Declined" => "failed",
             "In Review" => "manual_review",
-            "Expired" => "expired",
+            "Expired" or "Kyc Expired" => "expired",
             "Resubmitted" or "In Progress" or "Not Started" => "pending",
             _ => "ignored"
         };
