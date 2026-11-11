@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using SixLabors.ImageSharp;
 using System.Net.Sockets;
 
 namespace DoForYou.API.Controllers;
@@ -710,7 +709,7 @@ public sealed class ManualIdentityVerificationController(
                 $"DFY CONFIDENTIAL · REVIEW ONLY · CASE {submission.Id} · ADMIN {adminId.Value} · {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC")
                 ?? plaintext;
         }
-        catch (Exception ex) when (ex is InvalidDataException or InvalidImageContentException)
+        catch (InvalidDataException ex)
         {
             CryptographicOperations.ZeroMemory(plaintext);
             logger.LogError(ex, "Unable to watermark DFY identity document for submission {SubmissionId}.", id);
