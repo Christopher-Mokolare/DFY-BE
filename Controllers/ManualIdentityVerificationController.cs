@@ -525,7 +525,12 @@ public sealed class ManualIdentityVerificationController(
         if (affected == 0)
             return Conflict(new ApiResponse<object> { Success = false, Message = "This case is no longer pending or is currently claimed by another reviewer." });
 
-        context.IdentityVerificationEvents.Add(CreateEvent(0, "review_claimed", "claimed", adminId.Value, id));
+        var runnerUserId = await context.IdentityVerificationSubmissions.AsNoTracking()
+            .Where(s => s.Id == id)
+            .Select(s => s.UserId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (runnerUserId == 0) return NotFound();
+        context.IdentityVerificationEvents.Add(CreateEvent(runnerUserId, "review_claimed", "claimed", adminId.Value, id));
         await context.SaveChangesAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { claimedByUserId = adminId.Value, expiresAt = expires }, Message = "Review case claimed for ten minutes." });
     }
@@ -540,12 +545,28 @@ public sealed class ManualIdentityVerificationController(
             return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "Complete administrator authenticator verification to keep this review claim active." });
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
-        var affected = await context.IdentityVerificationSubmissions
-            .Where(s => s.Id == id && s.Status == "pending" &&
-                s.ReviewClaimedByUserId == adminId.Value && s.ReviewClaimExpiresAt > now)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(s => s.ReviewClaimHeartbeatAt, (DateTime?)now)
-                .SetProperty(s => s.ReviewClaimExpiresAt, (DateTime?)expires), cancellationToken);
+        int affected;
+        if (context.Database.IsRelational())
+        {
+            affected = await context.IdentityVerificationSubmissions
+                .Where(s => s.Id == id && s.Status == "pending" &&
+                    s.ReviewClaimedByUserId == adminId.Value && s.ReviewClaimExpiresAt > now)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(s => s.ReviewClaimHeartbeatAt, (DateTime?)now)
+                    .SetProperty(s => s.ReviewClaimExpiresAt, (DateTime?)expires), cancellationToken);
+        }
+        else
+        {
+            var submission = await context.IdentityVerificationSubmissions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+            if (submission == null || submission.Status != "pending" || submission.ReviewClaimedByUserId != adminId.Value || submission.ReviewClaimExpiresAt <= now)
+                affected = 0;
+            else
+            {
+                submission.ReviewClaimHeartbeatAt = now;
+                submission.ReviewClaimExpiresAt = expires;
+                affected = await context.SaveChangesAsync(cancellationToken);
+            }
+        }
         if (affected != 1)
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your review claim has expired or belongs to another reviewer. Claim the case again." });
         return Ok(new ApiResponse<object> { Success = true, Data = new { expiresAt = expires } });
@@ -558,13 +579,29 @@ public sealed class ManualIdentityVerificationController(
         var adminId = CurrentUserId();
         if (adminId == null) return Unauthorized();
         var now = DateTime.UtcNow;
-        var affected = await context.IdentityVerificationSubmissions
-            .Where(s => s.Id == id && s.Status == "pending" && s.ReviewClaimedByUserId == adminId.Value)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(s => s.ReviewClaimedByUserId, (int?)null)
-                .SetProperty(s => s.ReviewClaimHeartbeatAt, (DateTime?)null)
-                .SetProperty(s => s.ReviewClaimExpiresAt, (DateTime?)null), cancellationToken);
-        return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected == 1, releasedAt = now } });
+        int affected;
+        if (context.Database.IsRelational())
+        {
+            affected = await context.IdentityVerificationSubmissions
+                .Where(s => s.Id == id && s.Status == "pending" && s.ReviewClaimedByUserId == adminId.Value)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(s => s.ReviewClaimedByUserId, (int?)null)
+                    .SetProperty(s => s.ReviewClaimHeartbeatAt, (DateTime?)null)
+                    .SetProperty(s => s.ReviewClaimExpiresAt, (DateTime?)null), cancellationToken);
+        }
+        else
+        {
+            var submission = await context.IdentityVerificationSubmissions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+            if (submission != null && submission.Status == "pending" && submission.ReviewClaimedByUserId == adminId.Value)
+            {
+                submission.ReviewClaimedByUserId = null;
+                submission.ReviewClaimHeartbeatAt = null;
+                submission.ReviewClaimExpiresAt = null;
+                affected = await context.SaveChangesAsync(cancellationToken);
+            }
+            else affected = 0;
+        }
+        return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
     [Authorize(Roles = "Admin")]
