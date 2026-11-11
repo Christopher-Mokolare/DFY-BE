@@ -10,8 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace DoForYou.Tests;
 
@@ -69,10 +68,10 @@ public sealed class ManualIdentityVerificationControllerTests
 
     private static FormFile Jpeg(string name)
     {
-        using var image = new Image<Rgba32>(640, 480);
-        using var buffer = new MemoryStream();
-        image.SaveAsJpeg(buffer);
-        var bytes = buffer.ToArray();
+        using var image = new SKBitmap(640, 480);
+        using var skImage = SKImage.FromBitmap(image);
+        using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+        var bytes = encoded.ToArray();
         return new FormFile(new MemoryStream(bytes), 0, bytes.Length, name, name)
         {
             Headers = new HeaderDictionary(),
@@ -85,21 +84,21 @@ public sealed class ManualIdentityVerificationControllerTests
     public void Identity_document_normalization_strips_metadata_and_server_watermark_changes_the_view_copy()
     {
         var service = new IdentityDocumentImageService();
-        using var source = new Image<Rgba32>(640, 480);
-        using var sourceStream = new MemoryStream();
-        source.SaveAsJpeg(sourceStream);
-        var normalized = service.NormalizeAndStripMetadata(sourceStream.ToArray(), "image/jpeg");
+        using var source = new SKBitmap(640, 480);
+        using var sourceImage = SKImage.FromBitmap(source);
+        using var sourceEncoded = sourceImage.Encode(SKEncodedImageFormat.Jpeg, 90);
+        var normalized = service.NormalizeAndStripMetadata(sourceEncoded.ToArray(), "image/jpeg");
 
-        using var normalizedImage = Image.Load<Rgba32>(normalized.Bytes);
-        Assert.Null(normalizedImage.Metadata.ExifProfile);
-        Assert.Null(normalizedImage.Metadata.IptcProfile);
-        Assert.Null(normalizedImage.Metadata.XmpProfile);
+        using var normalizedCodec = SKCodec.Create(normalized.Bytes);
+        Assert.NotNull(normalizedCodec);
+        Assert.Equal(SKEncodedOrigin.TopLeft, normalizedCodec!.Origin);
 
         var watermarked = service.ApplyWatermark(normalized.Bytes, normalized.ContentType, "DFY CONFIDENTIAL CASE 12");
         Assert.NotEqual(normalized.Bytes, watermarked);
-        using var watermarkedImage = Image.Load<Rgba32>(watermarked);
-        Assert.Equal(640, watermarkedImage.Width);
-        Assert.Equal(480, watermarkedImage.Height);
+        using var watermarkedBitmap = SKBitmap.Decode(watermarked);
+        Assert.NotNull(watermarkedBitmap);
+        Assert.Equal(640, watermarkedBitmap!.Width);
+        Assert.Equal(480, watermarkedBitmap.Height);
     }
 
     [Fact]
