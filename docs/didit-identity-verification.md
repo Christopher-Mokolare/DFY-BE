@@ -4,6 +4,8 @@ DFY's backend remains the authority for runner identity status and task/payout e
 
 ## Required provider configuration
 
+Set `IDENTITY_VERIFICATION_PROVIDER=Didit` on the **staging backend only** to select Didit. If this selector is absent, DFY keeps the existing Sumsub provider, so production is not switched by default.
+
 Configure these values as Render environment secrets on the **staging backend only**:
 
 - `DIDIT_API_KEY`: Didit API key for the staging/sandbox application.
