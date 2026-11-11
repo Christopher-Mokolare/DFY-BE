@@ -633,7 +633,7 @@ public sealed class ManualIdentityVerificationController(
         });
     }
 
-    private async Task NotifySafelyAsync(Func<INotificationService, System.Threading.Tasks.Task> notification, string purpose)
+    private async System.Threading.Tasks.Task NotifySafelyAsync(Func<INotificationService, System.Threading.Tasks.Task> notification, string purpose)
     {
         if (notifications == null) return;
         try
