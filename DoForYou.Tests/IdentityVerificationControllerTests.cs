@@ -312,7 +312,9 @@ public class IdentityVerificationControllerTests
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var json = JsonSerializer.Serialize(new
         {
+            event_id = "didit-event-80",
             timestamp,
+            created_at = timestamp,
             session_id = "didit-session-80",
             vendor_data = $"dfy-user-{user.Id}",
             workflow_id = "sandbox-runner-level",
@@ -354,7 +356,9 @@ public class IdentityVerificationControllerTests
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var json = JsonSerializer.Serialize(new
         {
+            event_id = "didit-event-81",
             timestamp,
+            created_at = timestamp,
             session_id = "didit-session-81",
             vendor_data = $"dfy-user-{user.Id}",
             workflow_id = "sandbox-runner-level",
