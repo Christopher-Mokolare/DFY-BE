@@ -35,7 +35,7 @@ Register a public HTTPS destination pointing to:
 
 `POST https://dfy-be-staging.onrender.com/api/v1/identity-verification/didit/webhook`
 
-Subscribe to `status.updated` and select webhook version `v3`.
+Subscribe to `status.updated` and `data.updated`, and select webhook version `v3`.
 
 Store the destination's `secret_shared_key` as `DIDIT_WEBHOOK_SECRET`.
 
