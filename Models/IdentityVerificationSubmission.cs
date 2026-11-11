@@ -47,6 +47,7 @@ public sealed class IdentityVerificationSubmission
     public string? ReviewReason { get; set; }
 
     public DateTime? DocumentsDeleteAfter { get; set; }
+    public DateTime? DocumentsPurgedAt { get; set; }
 
     public User User { get; set; } = null!;
     public User? ReviewedByUser { get; set; }
