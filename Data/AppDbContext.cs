@@ -196,6 +196,7 @@ public class AppDbContext : DbContext
             .HasOne(p => p.BankAccount)
             .WithMany()
             .HasForeignKey(p => p.BankAccountId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
     }
 }

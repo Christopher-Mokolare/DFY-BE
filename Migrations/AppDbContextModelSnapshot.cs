@@ -498,7 +498,7 @@ namespace DoForYou.API.Migrations
                     b.Property<int>("AttemptCount")
                         .HasColumnType("integer");
 
-                    b.Property<int>("BankAccountId")
+                    b.Property<int?>("BankAccountId")
                         .HasColumnType("integer");
 
                     b.Property<DateTime?>("CompletedAt")

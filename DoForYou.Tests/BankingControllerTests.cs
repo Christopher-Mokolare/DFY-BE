@@ -563,6 +563,82 @@ public class BankingControllerTests
         Assert.Equal("PayoutPending", task.TaskStatus);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task VerifyBankAccount_AttachesVerifiedAccountToUnassignedPayout()
+    {
+        using var context = CreateContext();
+        var creator = CreateUser(15);
+        var runner = CreateUser(16);
+        context.Users.AddRange(creator, runner);
+
+        var bankAccount = new BankAccount
+        {
+            UserId = runner.Id,
+            BankName = "Canonical Bank",
+            BankCode = "632005",
+            AccountNumber = "1234567890",
+            AccountHolderName = "Runner User",
+            BranchCode = "123456",
+            AccountType = "Savings",
+            IsVerified = true,
+            IsActive = true
+        };
+        var task = new DoForYou.API.Models.Task
+        {
+            TaskId = "DFY-ATTACH-WAITING-PAYOUT",
+            TaskName = "Attach waiting payout",
+            TaskDescription = "Attach a newly verified bank account to a queued payout",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            PayoutAmount = 170m,
+            PaymentStatus = "EscrowReleased",
+            TaskStatus = "PayoutPending",
+            PayoutStatus = "AwaitingBankDetails",
+            EscrowStatus = "released",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id
+        };
+        context.BankAccounts.Add(bankAccount);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var payout = new Payout
+        {
+            TaskId = task.Id,
+            Task = task,
+            RunnerId = runner.Id,
+            BankAccountId = null,
+            BankAccount = null,
+            Amount = 170m,
+            Status = "AwaitingBankDetails",
+            Provider = "Paystack",
+            MerchantReference = "DFY-PAYOUT-ATTACH-WAITING",
+            FailureReason = "Runner has no active verified Paystack bank account."
+        };
+        context.Payouts.Add(payout);
+        await context.SaveChangesAsync();
+
+        var bankProvider = new FakePaystackBankProvider(
+            new[] { new SupportedBank("632005", "Canonical Bank", "123456") });
+        var banking = new BankingService(bankProvider, context);
+        var controller = CreateController(context, runner.Id, banking, bankProvider);
+
+        var result = await controller.VerifyBankAccount(bankAccount.Id, CancellationToken.None);
+
+        var response = Assert.IsType<ApiResponse<object>>(
+            Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.True(response.Success);
+        Assert.Equal("RCP_TEST", bankAccount.ProviderReference);
+        Assert.Equal(bankAccount.Id, payout.BankAccountId);
+        Assert.Same(bankAccount, payout.BankAccount);
+        Assert.Equal("Pending", payout.Status);
+        Assert.Null(payout.FailureReason);
+        Assert.Equal("Pending", task.PayoutStatus);
+        Assert.Equal("PayoutPending", task.TaskStatus);
+    }
+
     private static AppDbContext CreateContext()
     {
         var options =
