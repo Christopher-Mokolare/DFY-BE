@@ -485,7 +485,7 @@ public sealed class ManualIdentityVerificationController(
         }
         else return BadRequest();
 
-        if (cipher == null || nonce == null || tag == null || contentType == null) return NotFound();
+        if (cipher == null || cipher.Length == 0 || nonce == null || nonce.Length != 12 || tag == null || tag.Length != 16 || contentType == null) return NotFound();
         byte[] plaintext;
         try { plaintext = encryption.Decrypt(cipher, nonce, tag); }
         catch (CryptographicException)
