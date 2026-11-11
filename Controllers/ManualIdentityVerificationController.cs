@@ -269,7 +269,8 @@ public sealed class ManualIdentityVerificationController(
             FrontCiphertext = encryptedFront.Ciphertext, FrontNonce = encryptedFront.Nonce, FrontTag = encryptedFront.Tag,
             FrontContentType = frontType, BackCiphertext = encryptedBack?.Ciphertext,
             BackNonce = encryptedBack?.Nonce, BackTag = encryptedBack?.Tag, BackContentType = backType,
-            ConsentVersion = ConsentVersion, SubmittedAt = now
+            ConsentVersion = ConsentVersion, SubmittedAt = now,
+                DocumentsDeleteAfter = now.AddDays(90)
         };
             context.IdentityVerificationSubmissions.Add(submission);
             context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
@@ -399,7 +400,8 @@ public sealed class ManualIdentityVerificationController(
             BackTag = encryptedBack?.Tag,
             BackContentType = backType,
             ConsentVersion = request.ConsentVersion,
-            SubmittedAt = now
+            SubmittedAt = now,
+            DocumentsDeleteAfter = now.AddDays(90)
         };
 
         user.IdentityVerificationStatus = "pending";
