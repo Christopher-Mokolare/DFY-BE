@@ -197,6 +197,43 @@ public sealed class ManualIdentityVerificationControllerTests
         Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(), e => e.EventType == "admin_approve");
     }
 
+
+    [Fact]
+    public async Task Administrator_cannot_approve_runner_under_18()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(106);
+        var admin = new User
+        {
+            Id = 902, FirstName = "Admin", LastName = "User", Email = "admin3@example.test",
+            NormalizedEmail = "admin3@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow
+        };
+        context.Users.AddRange(runner, admin);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "pending",
+            FrontCiphertext = [1, 2, 3], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, admin.Id);
+        var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
+        {
+            Decision = "approve",
+            VerifiedDateOfBirth = DateTime.UtcNow.Date.AddYears(-17),
+            RunnerNote = "Document details were reviewed and matched the runner profile."
+        }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal("not_started", runner.IdentityVerificationStatus);
+        Assert.Equal("pending", submission.Status);
+        Assert.Null(runner.DateOfBirth);
+    }
+
     [Fact]
     public async Task Administrator_without_recent_authenticator_cannot_approve_identity_documents()
     {
