@@ -137,7 +137,17 @@ builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IBankingService, BankingService>();
 builder.Services.AddScoped<IUserPolicyService, UserPolicyService>();
 builder.Services.AddSingleton<IAuthenticatorService, AuthenticatorService>();
-builder.Services.AddHttpClient<IIdentityVerificationService, DiditIdentityVerificationService>();
+builder.Services.AddHttpClient<SumsubIdentityVerificationService>();
+builder.Services.AddHttpClient<DiditIdentityVerificationService>();
+builder.Services.AddScoped<IIdentityVerificationService>(services =>
+{
+    var provider = builder.Configuration["IDENTITY_VERIFICATION_PROVIDER"]?.Trim();
+    if (string.IsNullOrWhiteSpace(provider) || string.Equals(provider, "Sumsub", StringComparison.OrdinalIgnoreCase))
+        return services.GetRequiredService<SumsubIdentityVerificationService>();
+    if (string.Equals(provider, "Didit", StringComparison.OrdinalIgnoreCase))
+        return services.GetRequiredService<DiditIdentityVerificationService>();
+    throw new InvalidOperationException("IDENTITY_VERIFICATION_PROVIDER must be either Sumsub or Didit.");
+});
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHttpClient("Brevo", client =>
 {
