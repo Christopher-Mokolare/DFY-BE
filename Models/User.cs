@@ -13,6 +13,8 @@ public class User
     public string PhoneNumber { get; set; } = string.Empty;
     public string UserType { get; set; } = string.Empty;
     public string? IdNumber { get; set; }
+    // Keyed HMAC only; raw document ID numbers are never copied from review submissions into this field.
+    public string? IdentityDocumentIdHmac { get; set; }
     public string? Address { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
     public bool PasswordLoginEnabled { get; set; } = true;
