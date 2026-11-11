@@ -529,14 +529,14 @@ public sealed class ManualIdentityVerificationController(
             {
                 s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
                 userName = s.User.FirstName + " " + s.User.LastName,
-                s.User.Email, s.User.DateOfBirth
+                s.User.Email
             })
             .ToListAsync(cancellationToken);
         var now = DateTime.UtcNow;
         var submissions = rows.Select(s => new
         {
             s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
-            s.userName, s.Email, s.DateOfBirth,
+            s.userName, s.Email,
             reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
             reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
             isOverdue = now > SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"])
