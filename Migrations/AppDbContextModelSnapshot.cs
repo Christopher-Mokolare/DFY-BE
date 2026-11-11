@@ -1409,6 +1409,11 @@ namespace DoForYou.API.Migrations
                     b.HasIndex("ReviewedByUserId")
                         .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
 
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("\\"Status\\" = 'pending'")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_Pending");
+
                     b.ToTable("IdentityVerificationSubmissions");
                 });
 
