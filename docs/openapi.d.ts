@@ -6647,6 +6647,7 @@ export interface components {
             verifiedDateOfBirth?: string | null;
             reasonCode?: string | null;
             runnerNote?: string | null;
+            southAfricanIdNumber?: string | null;
             internalNote?: string | null;
         };
         MarkTaskReadRequest: {

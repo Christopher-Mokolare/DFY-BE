@@ -7678,6 +7678,12 @@
             "type": "string",
             "nullable": true
           },
+          "southAfricanIdNumber": {
+            "maxLength": 13,
+            "minLength": 13,
+            "type": "string",
+            "nullable": true
+          },
           "internalNote": {
             "maxLength": 1000,
             "minLength": 0,
