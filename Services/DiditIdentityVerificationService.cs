@@ -20,7 +20,6 @@ public sealed class DiditIdentityVerificationService(
     private string ApiKey => ReadSetting("DIDIT_API_KEY", "Didit:ApiKey");
     private string WorkflowId => ReadSetting("DIDIT_WORKFLOW_ID", "Didit:WorkflowId");
     private string WebhookSecret => ReadSetting("DIDIT_WEBHOOK_SECRET", "Didit:WebhookSecret");
-    private string PreviousWebhookSecret => ReadSetting("DIDIT_WEBHOOK_PREVIOUS_SECRET", "Didit:PreviousWebhookSecret");
     public string ProviderName => "Didit";
     public string ConsentVersion => ReadSetting("IDENTITY_VERIFICATION_CONSENT_VERSION", "IdentityVerification:ConsentVersion");
     public string ExpectedLevelName => WorkflowId;
@@ -89,68 +88,78 @@ public sealed class DiditIdentityVerificationService(
         return new IdentityProviderSession(null, sessionId, verificationUri.AbsoluteUri);
     }
 
-    public bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm)
+    public bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? timestampHeader)
     {
         if (string.IsNullOrWhiteSpace(WebhookSecret) ||
             string.IsNullOrWhiteSpace(digest) ||
-            string.IsNullOrWhiteSpace(digestAlgorithm))
+            !IsFreshTimestamp(timestampHeader))
             return false;
 
         try
         {
             using var document = JsonDocument.Parse(rawBody.ToArray());
-            var timestamp = ReadString(document.RootElement, "timestamp");
-            if (string.IsNullOrWhiteSpace(timestamp) ||
-                !string.Equals(timestamp, digestAlgorithm.Trim(), StringComparison.Ordinal))
-                return false;
-
-            if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds))
-                return false;
-            var eventTime = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
-            if (Math.Abs((DateTimeOffset.UtcNow - eventTime).TotalSeconds) > 300)
+            var bodyTimestamp = ReadString(document.RootElement, "timestamp");
+            if (!string.Equals(bodyTimestamp, timestampHeader!.Trim(), StringComparison.Ordinal))
                 return false;
 
             var canonical = Canonicalize(document.RootElement);
             var payloadBytes = Encoding.UTF8.GetBytes(canonical);
-            byte[] supplied;
-            try { supplied = Convert.FromHexString(digest.Trim()); }
-            catch (FormatException)
-            {
-                CryptographicOperations.ZeroMemory(payloadBytes);
-                return false;
-            }
-
-            try
-            {
-                var secrets = new[] { WebhookSecret, PreviousWebhookSecret }
-                    .Where(secret => !string.IsNullOrWhiteSpace(secret))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
-                foreach (var secret in secrets)
-                {
-                    var secretBytes = Encoding.UTF8.GetBytes(secret);
-                    byte[] expected;
-                    try { expected = HMACSHA256.HashData(secretBytes, payloadBytes); }
-                    finally { CryptographicOperations.ZeroMemory(secretBytes); }
-
-                    try
-                    {
-                        if (supplied.Length == expected.Length &&
-                            CryptographicOperations.FixedTimeEquals(expected, supplied))
-                            return true;
-                    }
-                    finally { CryptographicOperations.ZeroMemory(expected); }
-                }
-                return false;
-            }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(payloadBytes);
-                CryptographicOperations.ZeroMemory(supplied);
-            }
+            return VerifyHmac(payloadBytes, digest, WebhookSecret);
         }
         catch (JsonException) { return false; }
+    }
+
+    public bool VerifyWebhookRawSignature(ReadOnlySpan<byte> rawBody, string? digest, string? timestampHeader)
+    {
+        if (string.IsNullOrWhiteSpace(WebhookSecret) ||
+            string.IsNullOrWhiteSpace(digest) ||
+            !IsFreshTimestamp(timestampHeader))
+            return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawBody.ToArray());
+            var bodyTimestamp = ReadString(document.RootElement, "timestamp");
+            if (!string.Equals(bodyTimestamp, timestampHeader!.Trim(), StringComparison.Ordinal))
+                return false;
+            return VerifyHmac(rawBody, digest, WebhookSecret);
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static bool IsFreshTimestamp(string? timestamp)
+    {
+        if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds))
+            return false;
+        try
+        {
+            var eventTime = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+            return Math.Abs((DateTimeOffset.UtcNow - eventTime).TotalSeconds) <= 300;
+        }
         catch (ArgumentOutOfRangeException) { return false; }
+    }
+
+    private static bool VerifyHmac(ReadOnlySpan<byte> payload, string signature, string secret)
+    {
+        byte[] supplied;
+        try { supplied = Convert.FromHexString(signature.Trim()); }
+        catch (FormatException) { return false; }
+
+        var secretBytes = Encoding.UTF8.GetBytes(secret);
+        byte[] expected;
+        try { expected = HMACSHA256.HashData(secretBytes, payload); }
+        finally { CryptographicOperations.ZeroMemory(secretBytes); }
+
+        try
+        {
+            return supplied.Length == expected.Length &&
+                CryptographicOperations.FixedTimeEquals(expected, supplied);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(expected);
+            CryptographicOperations.ZeroMemory(supplied);
+        }
     }
 
     private static string Canonicalize(JsonElement element)
