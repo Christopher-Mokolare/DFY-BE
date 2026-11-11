@@ -30,7 +30,8 @@ public sealed class ManualIdentityVerificationController(
     INotificationService? notifications = null,
     IEmailSender? emailSender = null,
     IIdentityDocumentImageService? imageService = null,
-    IIdentityDocumentMalwareScanner? malwareScanner = null) : ControllerBase
+    IIdentityDocumentMalwareScanner? malwareScanner = null,
+    IIdentityDocumentIdService? documentIdService = null) : ControllerBase
 {
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
