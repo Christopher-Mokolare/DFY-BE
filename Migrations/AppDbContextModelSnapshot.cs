@@ -1277,6 +1277,16 @@ namespace DoForYou.API.Migrations
                     b.Property<DateTime>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("ActorUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SubmissionId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DocumentSide")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
                     b.Property<string>("ResultStatus")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1384,6 +1394,15 @@ namespace DoForYou.API.Migrations
                     b.Property<int?>("ReviewedByUserId")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ReviewClaimedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReviewClaimExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ReviewClaimHeartbeatAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("ReviewedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1408,6 +1427,9 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("ReviewedByUserId")
                         .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
+                    b.HasIndex("ReviewClaimExpiresAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewClaimExpiresAt");
 
                     b.HasIndex("UserId")
                         .IsUnique()
