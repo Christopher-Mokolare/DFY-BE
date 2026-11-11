@@ -51,7 +51,8 @@ public sealed class ManualIdentityVerificationController(
                 u.UserType, u.EmailVerified, u.IdentityVerificationStatus,
                 u.IdentityVerificationProvider, u.IdentityVerificationStartedAt,
                 u.IdentityVerificationUpdatedAt, u.IdentityVerificationAttemptCount,
-                u.IdentityVerificationAttemptWindowStartAt
+                u.IdentityVerificationAttemptWindowStartAt, u.IdentityVerificationHandoffTokenHash,
+                u.IdentityVerificationHandoffExpiry
             })
             .FirstOrDefaultAsync(cancellationToken);
         if (user == null) return NotFound();
@@ -80,11 +81,180 @@ public sealed class ManualIdentityVerificationController(
                 configured,
                 consentVersion = ConsentVersion,
                 attemptsRemaining,
+                handoffPending = user.IdentityVerificationHandoffTokenHash != null && user.IdentityVerificationHandoffExpiry > DateTime.UtcNow,
                 latestSubmission = latest,
                 canStart = configured && user.EmailVerified && IsRunner(user.UserType) &&
                     (CanRestart(user.IdentityVerificationStatus) || providerPendingCanBeReplaced) &&
-                    attemptsRemaining > 0
+                    attemptsRemaining > 0 &&
+                    !(user.IdentityVerificationHandoffTokenHash != null && user.IdentityVerificationHandoffExpiry > DateTime.UtcNow)
             }
+        });
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("handoff")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateHandoff(
+        [FromBody] StartManualIdentityVerificationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        if (userId == null) return Unauthorized();
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+            {
+                Success = false, Error = "DFY_IDENTITY_VERIFICATION_NOT_CONFIGURED",
+                Message = "DFY identity-document submission is not available yet."
+            });
+        if (!request.ConsentAccepted || !string.Equals(request.ConsentVersion, ConsentVersion, StringComparison.Ordinal))
+            return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_CONSENT_REQUIRED", Message = "Review and accept the current DFY identity-document notice before continuing." });
+
+        var user = await context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, cancellationToken);
+        if (user == null || user.IsArchived) return Unauthorized();
+        if (!user.EmailVerified || !IsRunner(user.UserType))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "A verified-email Runner or Both account is required." });
+        if (string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your runner identity review has already been approved." });
+        if (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your documents are already awaiting DFY review." });
+        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your application is already awaiting DFY review." });
+
+        var now = DateTime.UtcNow;
+        if (user.IdentityVerificationHandoffTokenHash != null &&
+            user.IdentityVerificationHandoffExpiry.HasValue &&
+            user.IdentityVerificationHandoffExpiry.Value > now)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "A document-submission link is already active. Open it or wait for it to expire." });
+
+        var windowExpired = !user.IdentityVerificationAttemptWindowStartAt.HasValue ||
+            user.IdentityVerificationAttemptWindowStartAt.Value <= now.Subtract(AttemptWindow);
+        if (!windowExpired && user.IdentityVerificationAttemptCount >= MaxAttemptsPerWindow)
+            return StatusCode(StatusCodes.Status429TooManyRequests, new ApiResponse<object>
+            {
+                Success = false, Error = "IDENTITY_RETRY_LIMIT",
+                Message = "You have reached the runner identity-document submission limit. Contact support for assistance."
+            });
+
+        var handoffCode = Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        user.IdentityVerificationHandoffTokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(handoffCode))).ToLowerInvariant();
+        user.IdentityVerificationHandoffExpiry = now.AddMinutes(5);
+        user.IdentityVerificationAttemptWindowStartAt = windowExpired ? now : user.IdentityVerificationAttemptWindowStartAt;
+        user.IdentityVerificationAttemptCount = windowExpired ? 1 : user.IdentityVerificationAttemptCount + 1;
+        user.IdentityVerificationUpdatedAt = now;
+        context.UserConsentEvents.Add(new UserConsentEvent
+        {
+            UserId = user.Id, ConsentType = "identity-verification", Accepted = true,
+            Version = request.ConsentVersion, RecordedAt = now, Source = "runner-manual-identity-handoff"
+        });
+        await context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { handoffCode, expiresAt = user.IdentityVerificationHandoffExpiry, consentVersion = request.ConsentVersion },
+            Message = "Secure document-submission link prepared. It expires in five minutes and can only be used once."
+        });
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("auth")]
+    [HttpPost("submission/handoff")]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    [Consumes("multipart/form-data")]
+    public async Task<ActionResult<ApiResponse<object>>> SubmitHandoff(
+        [FromForm] SubmitManualIdentityVerificationHandoffRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object> { Success = false, Message = "DFY document submission is not available yet." });
+        var now = DateTime.UtcNow;
+        var handoffHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.HandoffCode))).ToLowerInvariant();
+        var user = await context.Users.FirstOrDefaultAsync(u =>
+            u.IdentityVerificationHandoffTokenHash == handoffHash &&
+            u.IdentityVerificationHandoffExpiry != null &&
+            u.IdentityVerificationHandoffExpiry > now &&
+            !u.IsArchived && u.EmailVerified, cancellationToken);
+        if (user == null || !IsRunner(user.UserType) ||
+            (user.IdentityVerificationStatus == "passed") ||
+            (user.IdentityVerificationStatus == "pending" && user.IdentityVerificationProvider == ManualProvider))
+            return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_HANDOFF_INVALID", Message = "This document-submission link is invalid, expired or already used. Return to your DoForYou profile and start again." });
+
+        var consent = await context.UserConsentEvents.AsNoTracking()
+            .Where(e => e.UserId == user.Id && e.ConsentType == "identity-verification" &&
+                e.Accepted && e.Version == ConsentVersion && e.RecordedAt >= now.AddMinutes(-6))
+            .OrderByDescending(e => e.RecordedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (consent == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_CONSENT_REQUIRED", Message = "The identity-document consent has expired. Return to your profile and start again." });
+
+        var documentType = request.DocumentType?.Trim().ToLowerInvariant();
+        if (documentType is not ("south_african_id" or "passport"))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African ID card or passport." });
+        if (request.FrontDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front of your identity document." });
+        if (documentType == "south_african_id" && request.BackDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African ID card." });
+        if (documentType == "passport" && request.BackDocument != null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A passport submission requires only its photo-information page." });
+
+        byte[] frontBytes;
+        string frontType;
+        byte[]? backBytes = null;
+        string? backType = null;
+        try
+        {
+            (frontBytes, frontType) = await ReadImageAsync(request.FrontDocument, cancellationToken);
+            if (request.BackDocument != null) (backBytes, backType) = await ReadImageAsync(request.BackDocument, cancellationToken);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BadRequest(new ApiResponse<object> { Success = false, Message = ex.Message });
+        }
+
+        var encryptedFront = encryption.Encrypt(frontBytes);
+        var encryptedBack = backBytes == null ? null : encryption.Encrypt(backBytes);
+        CryptographicOperations.ZeroMemory(frontBytes);
+        if (backBytes != null) CryptographicOperations.ZeroMemory(backBytes);
+
+        // Consume the short-lived handoff with a conditional database update so
+        // concurrent submissions cannot create two applications from one link.
+        var affected = await context.Users.Where(u => u.Id == user.Id &&
+                u.IdentityVerificationHandoffTokenHash == handoffHash &&
+                u.IdentityVerificationHandoffExpiry != null &&
+                u.IdentityVerificationHandoffExpiry > now &&
+                !u.IsArchived && u.EmailVerified)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(u => u.IdentityVerificationHandoffTokenHash, (string?)null)
+                .SetProperty(u => u.IdentityVerificationHandoffExpiry, (DateTime?)null)
+                .SetProperty(u => u.IdentityVerificationStatus, "pending")
+                .SetProperty(u => u.IdentityVerificationProvider, ManualProvider)
+                .SetProperty(u => u.IdentityVerificationExternalUserId, (string?)null)
+                .SetProperty(u => u.IdentityVerificationApplicantId, (string?)null)
+                .SetProperty(u => u.IdentityVerificationStartedAt, now)
+                .SetProperty(u => u.IdentityVerificationUpdatedAt, now)
+                .SetProperty(u => u.IdentityVerificationLastEventAt, (DateTime?)null), cancellationToken);
+        if (affected != 1)
+            return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_HANDOFF_ALREADY_USED", Message = "This document-submission link has already been used." });
+
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = user.Id, DocumentType = documentType, Status = "pending",
+            FrontCiphertext = encryptedFront.Ciphertext, FrontNonce = encryptedFront.Nonce, FrontTag = encryptedFront.Tag,
+            FrontContentType = frontType, BackCiphertext = encryptedBack?.Ciphertext,
+            BackNonce = encryptedBack?.Nonce, BackTag = encryptedBack?.Tag, BackContentType = backType,
+            ConsentVersion = ConsentVersion, SubmittedAt = now
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
+        await context.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
+
+        return Accepted(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submissionId = submission.Id, status = submission.Status, submittedAt = submission.SubmittedAt },
+            Message = "Your identity documents were securely submitted. Runner eligibility remains locked until DFY completes its review."
         });
     }
 
@@ -420,6 +590,29 @@ public sealed class ManualIdentityVerificationController(
         var value = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         return int.TryParse(value, out var id) ? id : null;
     }
+}
+
+public sealed class StartManualIdentityVerificationRequest
+{
+    [Required]
+    public bool ConsentAccepted { get; set; }
+
+    [Required, StringLength(40)]
+    public string ConsentVersion { get; set; } = string.Empty;
+}
+
+public sealed class SubmitManualIdentityVerificationHandoffRequest
+{
+    [Required, StringLength(200, MinimumLength = 20)]
+    public string HandoffCode { get; set; } = string.Empty;
+
+    [Required, StringLength(32)]
+    public string DocumentType { get; set; } = string.Empty;
+
+    [Required]
+    public IFormFile? FrontDocument { get; set; }
+
+    public IFormFile? BackDocument { get; set; }
 }
 
 public sealed class SubmitManualIdentityVerificationRequest
