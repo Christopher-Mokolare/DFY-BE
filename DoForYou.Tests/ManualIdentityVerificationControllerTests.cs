@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 namespace DoForYou.Tests;
 
@@ -43,7 +45,8 @@ public sealed class ManualIdentityVerificationControllerTests
             context,
             new IdentityDocumentEncryptionService(config),
             config,
-            NullLogger<ManualIdentityVerificationController>.Instance);
+            NullLogger<ManualIdentityVerificationController>.Instance,
+            imageService: new IdentityDocumentImageService());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -57,12 +60,37 @@ public sealed class ManualIdentityVerificationControllerTests
 
     private static FormFile Jpeg(string name)
     {
-        byte[] bytes = [0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02, 0x03];
+        using var image = new Image<Rgba32>(640, 480);
+        using var buffer = new MemoryStream();
+        image.SaveAsJpeg(buffer);
+        var bytes = buffer.ToArray();
         return new FormFile(new MemoryStream(bytes), 0, bytes.Length, name, name)
         {
             Headers = new HeaderDictionary(),
             ContentType = "image/jpeg"
         };
+    }
+
+
+    [Fact]
+    public void Identity_document_normalization_strips_metadata_and_server_watermark_changes_the_view_copy()
+    {
+        var service = new IdentityDocumentImageService();
+        using var source = new Image<Rgba32>(640, 480);
+        using var sourceStream = new MemoryStream();
+        source.SaveAsJpeg(sourceStream);
+        var normalized = service.NormalizeAndStripMetadata(sourceStream.ToArray(), "image/jpeg");
+
+        using var normalizedImage = Image.Load<Rgba32>(normalized.Bytes);
+        Assert.Null(normalizedImage.Metadata.ExifProfile);
+        Assert.Null(normalizedImage.Metadata.IptcProfile);
+        Assert.Null(normalizedImage.Metadata.XmpProfile);
+
+        var watermarked = service.ApplyWatermark(normalized.Bytes, normalized.ContentType, "DFY CONFIDENTIAL CASE 12");
+        Assert.NotEqual(normalized.Bytes, watermarked);
+        using var watermarkedImage = Image.Load<Rgba32>(watermarked);
+        Assert.Equal(640, watermarkedImage.Width);
+        Assert.Equal(480, watermarkedImage.Height);
     }
 
     [Fact]
