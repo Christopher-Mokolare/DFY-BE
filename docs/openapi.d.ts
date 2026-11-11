@@ -3298,13 +3298,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["OzowPayoutVerifyRequest"];
-                    "text/json": components["schemas"]["OzowPayoutVerifyRequest"];
-                    "application/*+json": components["schemas"]["OzowPayoutVerifyRequest"];
-                };
-            };
+            requestBody?: never;
             responses: {
                 /** @description OK */
                 200: {
@@ -3337,13 +3331,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["OzowPayoutNotificationRequest"];
-                    "text/json": components["schemas"]["OzowPayoutNotificationRequest"];
-                    "application/*+json": components["schemas"]["OzowPayoutNotificationRequest"];
-                };
-            };
+            requestBody?: never;
             responses: {
                 /** @description OK */
                 200: {
@@ -6468,36 +6456,6 @@ export interface components {
             data?: unknown[] | null;
             message?: string | null;
             error?: string | null;
-        };
-        OzowBankingDetails: {
-            bankGroupId?: string | null;
-            accountNumber?: string | null;
-            branchCode?: string | null;
-        };
-        OzowPayoutNotificationRequest: {
-            payoutId?: string | null;
-            siteCode?: string | null;
-            merchantReference?: string | null;
-            customerMerchantReference?: string | null;
-            payoutStatus?: unknown;
-            /** Format: int32 */
-            payoutSubStatus?: number | null;
-            /** Format: int32 */
-            subStatus?: number | null;
-            hashCheck?: string | null;
-        };
-        OzowPayoutVerifyRequest: {
-            payoutId?: string | null;
-            siteCode?: string | null;
-            /** Format: double */
-            amount?: number;
-            merchantReference?: string | null;
-            customerBankReference?: string | null;
-            isRtc?: boolean;
-            notifyUrl?: string | null;
-            verifyUrl?: string | null;
-            bankingDetails?: components["schemas"]["OzowBankingDetails"];
-            hashCheck?: string | null;
         };
         PublishTestimonialRequest: {
             isPublished?: boolean;
