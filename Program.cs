@@ -138,6 +138,7 @@ builder.Services.AddScoped<IBankingService, BankingService>();
 builder.Services.AddScoped<IUserPolicyService, UserPolicyService>();
 builder.Services.AddSingleton<IAuthenticatorService, AuthenticatorService>();
 builder.Services.AddHttpClient<IIdentityVerificationService, SumsubIdentityVerificationService>();
+builder.Services.AddSingleton<IIdentityDocumentEncryptionService, IdentityDocumentEncryptionService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHttpClient("Brevo", client =>
 {
