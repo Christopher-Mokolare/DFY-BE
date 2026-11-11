@@ -335,7 +335,12 @@ public class IdentityVerificationControllerTests
         Assert.Single(context.IdentityVerificationEvents);
         Assert.Equal("Didit", (await context.IdentityVerificationEvents.SingleAsync()).Provider);
 
-        var replay = await SendDiditWebhook(CreateController(context, provider), json, timestamp.ToString(CultureInfo.InvariantCulture));
+        // Didit refreshes timestamp on retries but retains the same event_id.
+        var retryJson = json.Replace(
+            $"\\"timestamp\\":{timestamp}",
+            $"\\"timestamp\\":{timestamp + 1}",
+            StringComparison.Ordinal);
+        var replay = await SendDiditWebhook(CreateController(context, provider), retryJson, (timestamp + 1).ToString(CultureInfo.InvariantCulture));
         Assert.IsType<OkObjectResult>(replay);
         Assert.Single(context.IdentityVerificationEvents);
     }
