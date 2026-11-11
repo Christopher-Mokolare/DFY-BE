@@ -26,7 +26,8 @@ public sealed class ManualIdentityVerificationController(
     IConfiguration configuration,
     ILogger<ManualIdentityVerificationController> logger,
     INotificationService? notifications = null,
-    IEmailSender? emailSender = null) : ControllerBase
+    IEmailSender? emailSender = null,
+    IIdentityDocumentImageService? imageService = null) : ControllerBase
 {
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
@@ -210,6 +211,34 @@ public sealed class ManualIdentityVerificationController(
         {
             (frontBytes, frontType) = await ReadImageAsync(request.FrontDocument, cancellationToken);
             if (request.BackDocument != null) (backBytes, backType) = await ReadImageAsync(request.BackDocument, cancellationToken);
+            if (imageService != null)
+            {
+                var normalizedFront = imageService.NormalizeAndStripMetadata(frontBytes, frontType);
+                CryptographicOperations.ZeroMemory(frontBytes);
+                frontBytes = normalizedFront.Bytes;
+                frontType = normalizedFront.ContentType;
+                if (backBytes != null && backType != null)
+                {
+                    var normalizedBack = imageService.NormalizeAndStripMetadata(backBytes, backType);
+                    CryptographicOperations.ZeroMemory(backBytes);
+                    backBytes = normalizedBack.Bytes;
+                    backType = normalizedBack.ContentType;
+                }
+            }
+            if (imageService != null)
+            {
+                var normalizedFront = imageService.NormalizeAndStripMetadata(frontBytes, frontType);
+                CryptographicOperations.ZeroMemory(frontBytes);
+                frontBytes = normalizedFront.Bytes;
+                frontType = normalizedFront.ContentType;
+                if (backBytes != null && backType != null)
+                {
+                    var normalizedBack = imageService.NormalizeAndStripMetadata(backBytes, backType);
+                    CryptographicOperations.ZeroMemory(backBytes);
+                    backBytes = normalizedBack.Bytes;
+                    backType = normalizedBack.ContentType;
+                }
+            }
         }
         catch (InvalidDataException ex)
         {
@@ -645,11 +674,27 @@ public sealed class ManualIdentityVerificationController(
             return StatusCode(StatusCodes.Status500InternalServerError);
         }
 
+        byte[] watermarked;
+        try
+        {
+            watermarked = imageService?.ApplyWatermark(
+                plaintext, contentType,
+                $"DFY CONFIDENTIAL · REVIEW ONLY · CASE {submission.Id} · ADMIN {adminId.Value} · {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC")
+                ?? plaintext;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidImageContentException)
+        {
+            CryptographicOperations.ZeroMemory(plaintext);
+            logger.LogError(ex, "Unable to watermark DFY identity document for submission {SubmissionId}.", id);
+            return StatusCode(StatusCodes.Status500InternalServerError);
+        }
+        if (!ReferenceEquals(watermarked, plaintext)) CryptographicOperations.ZeroMemory(plaintext);
+
         context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_document_accessed", "viewed", adminId.Value, submission.Id, side.ToLowerInvariant()));
         await context.SaveChangesAsync(cancellationToken);
         Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
         Response.Headers.Pragma = "no-cache";
-        return File(plaintext, contentType);
+        return File(watermarked, contentType);
     }
 
     [Authorize(Roles = "Admin")]
