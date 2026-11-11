@@ -284,18 +284,18 @@ public sealed class IdentityVerificationController(
         string? diditUrl = null;
         try
         {
-            var providerSession = await identityVerification.CreateSdkAccessTokenAsync(externalUserId, user.Email, cancellationToken);
+            var providerSession = await identityVerification.CreateProviderSessionAsync(externalUserId, user.Email, cancellationToken);
             if (string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal))
             {
-                var parts = providerSession.Split('|', 2);
-                if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+                if (string.IsNullOrWhiteSpace(providerSession.SessionId) ||
+                    string.IsNullOrWhiteSpace(providerSession.VerificationUrl))
                     throw new InvalidOperationException("The identity-verification provider returned an invalid hosted session.");
-                diditSessionId = parts[0];
-                diditUrl = parts[1];
+                diditSessionId = providerSession.SessionId;
+                diditUrl = providerSession.VerificationUrl;
             }
             else
             {
-                accessToken = providerSession;
+                accessToken = providerSession.AccessToken;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
