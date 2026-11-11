@@ -37,6 +37,15 @@ public sealed class DiditIdentityVerificationService(
         string verifiedEmail,
         CancellationToken cancellationToken)
     {
+        var session = await CreateProviderSessionAsync(externalUserId, verifiedEmail, cancellationToken);
+        return session.SessionId + "|" + session.VerificationUrl;
+    }
+
+    public async Task<IdentityProviderSession> CreateProviderSessionAsync(
+        string externalUserId,
+        string verifiedEmail,
+        CancellationToken cancellationToken)
+    {
         if (!IsConfigured)
             throw new InvalidOperationException("Didit identity verification is not configured.");
         if (string.IsNullOrWhiteSpace(externalUserId))
@@ -79,9 +88,9 @@ public sealed class DiditIdentityVerificationService(
             throw new InvalidOperationException("The identity-verification provider returned an invalid session response.");
         }
 
-        // The controller stores the provider session reference separately. Returning
-        // the URL through the existing interface keeps the API key server-side.
-        return sessionId + "|" + verificationUri.AbsoluteUri;
+        // Only the hosted URL and session reference leave the provider adapter.
+        // The API key and webhook secret remain server-side.
+        return new IdentityProviderSession(null, sessionId, verificationUri.AbsoluteUri);
     }
 
     public bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm)
