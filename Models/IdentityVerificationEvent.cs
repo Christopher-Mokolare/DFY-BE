@@ -28,5 +28,12 @@ public sealed class IdentityVerificationEvent
 
     public DateTime ReceivedAt { get; set; } = DateTime.UtcNow;
 
+    // Actor and document references make sensitive access auditable without storing document bytes.
+    public int? ActorUserId { get; set; }
+    public int? SubmissionId { get; set; }
+
+    [StringLength(8)]
+    public string? DocumentSide { get; set; }
+
     public User User { get; set; } = null!;
 }
