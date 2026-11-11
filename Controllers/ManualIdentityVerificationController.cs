@@ -523,38 +523,78 @@ public sealed class ManualIdentityVerificationController(
         if (reason.Length < 10 || reason.Length > 1000)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Provide a review reason between 10 and 1000 characters." });
 
-        var submission = await context.IdentityVerificationSubmissions
-            .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
-        if (submission == null) return NotFound();
-        if (submission.Status != "pending")
-            return Conflict(new ApiResponse<object> { Success = false, Message = "This application has already been reviewed or is no longer pending." });
-
         var now = DateTime.UtcNow;
-        submission.ReviewedAt = now;
-        submission.ReviewedByUserId = adminId.Value;
-        submission.ReviewReason = reason;
-
         var nextStatus = decision switch
         {
             "approve" => "passed",
             "reject" => "failed",
             _ => "more_info_requested"
         };
-        submission.Status = decision == "request_information" ? "more_info_requested" : decision == "approve" ? "approved" : "rejected";
-        submission.DocumentsDeleteAfter = now.AddDays(90);
-        submission.User.IdentityVerificationStatus = nextStatus;
-        submission.User.IdentityVerificationProvider = ManualProvider;
-        submission.User.IdentityVerificationUpdatedAt = now;
-        submission.User.IdentityVerificationLastEventAt = now;
+        var submissionStatus = decision switch
+        {
+            "approve" => "approved",
+            "reject" => "rejected",
+            _ => "more_info_requested"
+        };
 
-        context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus));
-        await context.SaveChangesAsync(cancellationToken);
+        if (context.Database.IsRelational())
+        {
+            await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+            var claimed = await context.IdentityVerificationSubmissions
+                .Where(s => s.Id == id && s.Status == "pending")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(s => s.Status, submissionStatus)
+                    .SetProperty(s => s.ReviewedAt, (DateTime?)now)
+                    .SetProperty(s => s.ReviewedByUserId, (int?)adminId.Value)
+                    .SetProperty(s => s.ReviewReason, reason)
+                    .SetProperty(s => s.DocumentsDeleteAfter, (DateTime?)now.AddDays(90)),
+                    cancellationToken);
+            if (claimed != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                var exists = await context.IdentityVerificationSubmissions.AsNoTracking().AnyAsync(s => s.Id == id, cancellationToken);
+                return exists
+                    ? Conflict(new ApiResponse<object> { Success = false, Message = "This application has already been reviewed or is no longer pending." })
+                    : NotFound();
+            }
+
+            var submission = await context.IdentityVerificationSubmissions
+                .Include(s => s.User)
+                .FirstAsync(s => s.Id == id, cancellationToken);
+            submission.User.IdentityVerificationStatus = nextStatus;
+            submission.User.IdentityVerificationProvider = ManualProvider;
+            submission.User.IdentityVerificationUpdatedAt = now;
+            submission.User.IdentityVerificationLastEventAt = now;
+            context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus));
+            await context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        else
+        {
+            var submission = await context.IdentityVerificationSubmissions
+                .Include(s => s.User)
+                .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+            if (submission == null) return NotFound();
+            if (submission.Status != "pending")
+                return Conflict(new ApiResponse<object> { Success = false, Message = "This application has already been reviewed or is no longer pending." });
+
+            submission.ReviewedAt = now;
+            submission.ReviewedByUserId = adminId.Value;
+            submission.ReviewReason = reason;
+            submission.Status = submissionStatus;
+            submission.DocumentsDeleteAfter = now.AddDays(90);
+            submission.User.IdentityVerificationStatus = nextStatus;
+            submission.User.IdentityVerificationProvider = ManualProvider;
+            submission.User.IdentityVerificationUpdatedAt = now;
+            submission.User.IdentityVerificationLastEventAt = now;
+            context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus));
+            await context.SaveChangesAsync(cancellationToken);
+        }
 
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { submissionId = submission.Id, status = nextStatus, reviewedAt = now },
+            Data = new { submissionId = id, status = nextStatus, reviewedAt = now },
             Message = decision == "approve"
                 ? "DFY recorded the manual document review as approved."
                 : decision == "reject"
