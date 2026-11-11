@@ -90,6 +90,8 @@ public sealed class UserPolicyService : IUserPolicyService
         !user.IsArchived &&
         user.EmailVerified &&
         string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase) &&
+        user.DateOfBirth.HasValue &&
+        IsAtLeast18(user.DateOfBirth.Value, DateTime.UtcNow.Date) &&
         user.AuthenticatorTwoFactorEnabled;
 
     public static bool IsAtLeast18(DateTime dateOfBirth, DateTime today)
