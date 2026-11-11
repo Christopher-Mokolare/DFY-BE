@@ -117,6 +117,14 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.ReviewClaimExpiresAt)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewClaimExpiresAt");
+
+        modelBuilder.Entity<IdentityVerificationEvent>()
+            .HasIndex(e => new { e.SubmissionId, e.ActorUserId, e.ReceivedAt })
+            .HasDatabaseName("IX_IdentityVerificationEvents_Submission_Actor_ReceivedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
             .HasIndex(s => new { s.Status, s.SubmittedAt })
             .HasDatabaseName("IX_IdentityVerificationSubmissions_Status_SubmittedAt");
 
