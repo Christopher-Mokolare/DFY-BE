@@ -25,7 +25,8 @@ public sealed class ManualIdentityVerificationController(
     IIdentityDocumentEncryptionService encryption,
     IConfiguration configuration,
     ILogger<ManualIdentityVerificationController> logger,
-    INotificationService? notifications = null) : ControllerBase
+    INotificationService? notifications = null,
+    IEmailSender? emailSender = null) : ControllerBase
 {
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
@@ -283,6 +284,15 @@ public sealed class ManualIdentityVerificationController(
             await NotifySafelyAsync(service => service.NotifyAdminsAsync(
                 "identity_review_new", "New DFY Document Review",
                 $"Runner {user.Id} submitted document review case {submission.Id}."), "administrator new-case alert");
+            await SendEmailSafelyAsync(user.Email, "We received your DFY Document Review submission",
+                "Your identity documents were securely submitted. DFY aims to review submissions within one business day. We will notify you when there is an update.", cancellationToken);
+            var adminEmails = await context.Users.AsNoTracking()
+                .Where(u => !u.IsArchived && u.Roles != null && u.Roles.Contains("Admin"))
+                .Select(u => u.Email)
+                .ToListAsync(cancellationToken);
+            foreach (var adminEmail in adminEmails.Distinct(StringComparer.OrdinalIgnoreCase))
+                await SendEmailSafelyAsync(adminEmail, "New DFY Document Review submission",
+                    $"A runner submitted document review case {submission.Id}. Sign in to the DFY administrator dashboard to review it.", cancellationToken);
             logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
 
             return Accepted(new ApiResponse<object>
@@ -620,6 +630,12 @@ public sealed class ManualIdentityVerificationController(
         };
         await NotifySafelyAsync(service => service.CreateNotificationAsync(
             reviewedUserId, "identity_review_" + decision, runnerTitle, runnerMessage), "runner review decision notification");
+        var runnerEmail = await context.Users.AsNoTracking()
+            .Where(u => u.Id == reviewedUserId)
+            .Select(u => u.Email)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(runnerEmail))
+            await SendEmailSafelyAsync(runnerEmail, runnerTitle, runnerMessage, cancellationToken);
 
         return Ok(new ApiResponse<object>
         {
@@ -631,6 +647,19 @@ public sealed class ManualIdentityVerificationController(
                     ? "DFY recorded the manual document review as rejected."
                     : "Additional information has been requested. The runner may submit a corrected application."
         });
+    }
+
+    private async System.Threading.Tasks.Task SendEmailSafelyAsync(string? recipient, string subject, string body, CancellationToken cancellationToken)
+    {
+        if (emailSender == null || string.IsNullOrWhiteSpace(recipient)) return;
+        try
+        {
+            await emailSender.SendAsync(recipient, subject, body, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "DFY Document Review email notification failed for recipient {Recipient}; the workflow remains saved.", recipient);
+        }
     }
 
     private async System.Threading.Tasks.Task NotifySafelyAsync(Func<INotificationService, System.Threading.Tasks.Task> notification, string purpose)
