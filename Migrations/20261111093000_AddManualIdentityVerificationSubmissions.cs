@@ -64,6 +64,11 @@ namespace DoForYou.API.Migrations
                 name: "IX_IdentityVerificationSubmissions_UserId_SubmittedAt",
                 table: "IdentityVerificationSubmissions",
                 columns: new[] { "UserId", "SubmittedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_IdentityVerificationSubmissions_ReviewedByUserId",
+                table: "IdentityVerificationSubmissions",
+                column: "ReviewedByUserId");
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
