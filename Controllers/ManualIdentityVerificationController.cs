@@ -760,7 +760,6 @@ public sealed class ManualIdentityVerificationController(
                 .FirstAsync(s => s.Id == id, cancellationToken);
             reviewedUserId = submission.UserId;
             if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
-            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
@@ -789,11 +788,12 @@ public sealed class ManualIdentityVerificationController(
             submission.ReviewClaimedByUserId = null;
             submission.ReviewClaimHeartbeatAt = null;
             submission.ReviewClaimExpiresAt = null;
+            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
-            context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus));
+            context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
             await context.SaveChangesAsync(cancellationToken);
         }
 
