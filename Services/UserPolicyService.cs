@@ -77,6 +77,8 @@ public sealed class UserPolicyService : IUserPolicyService
         user.EmailVerified &&
         (NormalizeUserType(user.UserType) is "runner" or "both") &&
         string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase) &&
+        user.DateOfBirth.HasValue &&
+        IsAtLeast18(user.DateOfBirth.Value, DateTime.UtcNow.Date) &&
         user.AuthenticatorTwoFactorEnabled;
 
     /// <summary>
@@ -89,6 +91,15 @@ public sealed class UserPolicyService : IUserPolicyService
         user.EmailVerified &&
         string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase) &&
         user.AuthenticatorTwoFactorEnabled;
+
+    public static bool IsAtLeast18(DateTime dateOfBirth, DateTime today)
+    {
+        var dob = dateOfBirth.Date;
+        if (dob > today.Date) return false;
+        var age = today.Year - dob.Year;
+        if (dob > today.Date.AddYears(-age)) age--;
+        return age >= 18 && age <= 110;
+    }
 
     private static string NormalizeUserType(string? userType) =>
         userType?.Trim().ToLowerInvariant() ?? string.Empty;
