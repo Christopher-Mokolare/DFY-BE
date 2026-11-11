@@ -551,6 +551,9 @@ public sealed class ManualIdentityVerificationController(
         if (decision is not ("approve" or "reject" or "request_information"))
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose approve, reject or request_information." });
         var reason = request.Reason?.Trim() ?? string.Empty;
+        var internalNote = request.InternalNote?.Trim();
+        if (internalNote?.Length > 1000)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Internal administrator notes cannot exceed 1000 characters." });
         if (reason.Length < 10 || reason.Length > 1000)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Provide a review reason between 10 and 1000 characters." });
 
@@ -579,6 +582,7 @@ public sealed class ManualIdentityVerificationController(
                     .SetProperty(s => s.ReviewedAt, (DateTime?)now)
                     .SetProperty(s => s.ReviewedByUserId, (int?)adminId.Value)
                     .SetProperty(s => s.ReviewReason, reason)
+                    .SetProperty(s => s.InternalReviewNote, internalNote)
                     .SetProperty(s => s.DocumentsDeleteAfter, (DateTime?)now.AddDays(90)),
                     cancellationToken);
             if (claimed != 1)
@@ -615,6 +619,7 @@ public sealed class ManualIdentityVerificationController(
             submission.ReviewedAt = now;
             submission.ReviewedByUserId = adminId.Value;
             submission.ReviewReason = reason;
+            submission.InternalReviewNote = internalNote;
             submission.Status = submissionStatus;
             submission.DocumentsDeleteAfter = now.AddDays(90);
             submission.User.IdentityVerificationStatus = nextStatus;
@@ -795,4 +800,7 @@ public sealed class ManualIdentityVerificationDecisionRequest
 
     [Required, StringLength(1000, MinimumLength = 10)]
     public string Reason { get; set; } = string.Empty;
+
+    [StringLength(1000)]
+    public string? InternalNote { get; set; }
 }
