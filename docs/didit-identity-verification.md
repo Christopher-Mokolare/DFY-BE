@@ -23,6 +23,7 @@ Create and publish a KYC workflow in Didit's staging/sandbox application contain
 1. Government ID verification, enabled for South African documents.
 2. Passive liveness.
 3. 1:1 face match.
+4. Explicit biometric consent, where supported by the published workflow, aligned with DFY's approved consent notice.
 
 Do not enable AML, DHA/database lookup, NFC or other paid modules unless DFY has explicitly approved the additional cost and purpose. The default full KYC bundle price is not a substitute for confirming the actual modules in the workflow.
 
