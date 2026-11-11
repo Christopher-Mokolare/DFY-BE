@@ -322,6 +322,7 @@ public class IdentityVerificationControllerTests
             status = "Approved",
             decision = new
             {
+                status = "Approved",
                 id_verifications = new[] { new { status = "Approved" } },
                 liveness_checks = new[] { new { status = "Approved" } },
                 face_matches = new[] { new { status = "Approved" } }
