@@ -28,7 +28,8 @@ public sealed class ManualIdentityVerificationController(
     ILogger<ManualIdentityVerificationController> logger,
     INotificationService? notifications = null,
     IEmailSender? emailSender = null,
-    IIdentityDocumentImageService? imageService = null) : ControllerBase
+    IIdentityDocumentImageService? imageService = null,
+    IIdentityDocumentMalwareScanner? malwareScanner = null) : ControllerBase
 {
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
@@ -67,7 +68,7 @@ public sealed class ManualIdentityVerificationController(
             .Select(s => new { s.Id, s.DocumentType, s.Status, s.SubmittedAt, s.ReviewReason })
             .FirstOrDefaultAsync(cancellationToken);
 
-        var configured = encryption.IsConfigured && !string.IsNullOrWhiteSpace(ConsentVersion);
+        var configured = encryption.IsConfigured && !string.IsNullOrWhiteSpace(ConsentVersion) && malwareScanner?.IsConfigured == true;
         var legacyProviderStateCanBeReplaced =
             (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase)) &&
@@ -105,7 +106,7 @@ public sealed class ManualIdentityVerificationController(
     {
         var userId = CurrentUserId();
         if (userId == null) return Unauthorized();
-        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion) || malwareScanner?.IsConfigured != true)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
             {
                 Success = false, Error = "DFY_IDENTITY_VERIFICATION_NOT_CONFIGURED",
@@ -212,6 +213,8 @@ public sealed class ManualIdentityVerificationController(
         {
             (frontBytes, frontType) = await ReadImageAsync(request.FrontDocument, cancellationToken);
             if (request.BackDocument != null) (backBytes, backType) = await ReadImageAsync(request.BackDocument, cancellationToken);
+            await malwareScanner!.ScanAsync(frontBytes, cancellationToken);
+            if (backBytes != null) await malwareScanner.ScanAsync(backBytes, cancellationToken);
             if (imageService != null)
             {
                 var normalizedFront = imageService.NormalizeAndStripMetadata(frontBytes, frontType);
