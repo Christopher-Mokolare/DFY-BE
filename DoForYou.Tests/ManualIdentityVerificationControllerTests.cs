@@ -17,6 +17,12 @@ namespace DoForYou.Tests;
 
 public sealed class ManualIdentityVerificationControllerTests
 {
+    private sealed class TestCleanMalwareScanner : IIdentityDocumentMalwareScanner
+    {
+        public bool IsConfigured => true;
+        public Task ScanAsync(ReadOnlyMemory<byte> document, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     private const string ConsentVersion = "identity-verification-v1";
     private static IConfiguration Configuration() => new ConfigurationBuilder()
         .AddInMemoryCollection(new Dictionary<string, string?>
@@ -46,7 +52,8 @@ public sealed class ManualIdentityVerificationControllerTests
             new IdentityDocumentEncryptionService(config),
             config,
             NullLogger<ManualIdentityVerificationController>.Instance,
-            imageService: new IdentityDocumentImageService());
+            imageService: new IdentityDocumentImageService(),
+            malwareScanner: new TestCleanMalwareScanner());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
