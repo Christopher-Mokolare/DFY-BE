@@ -98,7 +98,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<IdentityVerificationSubmission>()
             .HasIndex(s => s.UserId)
             .IsUnique()
-            .HasFilter("\\"Status\\" = 'pending'")
+            .HasFilter("\"Status\" = 'pending'")
             .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_Pending");
 
         modelBuilder.Entity<IdentityVerificationEvent>()
