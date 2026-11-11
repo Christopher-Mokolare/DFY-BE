@@ -295,6 +295,95 @@ public class IdentityVerificationControllerTests
         Assert.Empty(context.IdentityVerificationEvents);
     }
 
+    [Fact]
+    public async Task Didit_approved_webhook_requires_id_liveness_and_face_match_and_is_idempotent()
+    {
+        await using var context = CreateContext();
+        var user = NewRunner(80);
+        user.IdentityVerificationStatus = "pending";
+        user.IdentityVerificationProvider = "Didit";
+        user.IdentityVerificationExternalUserId = $"dfy-user-{user.Id}";
+        user.IdentityVerificationApplicantId = "didit-session-80";
+        user.IdentityVerificationStartedAt = DateTime.UtcNow.AddMinutes(-2);
+        context.Users.Add(user);
+        await context.SaveChangesAsync();
+
+        var provider = new FakeIdentityService { ProviderName = "Didit" };
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var json = JsonSerializer.Serialize(new
+        {
+            timestamp,
+            session_id = "didit-session-80",
+            vendor_data = $"dfy-user-{user.Id}",
+            workflow_id = "sandbox-runner-level",
+            webhook_type = "status.updated",
+            status = "Approved",
+            decision = new
+            {
+                id_verifications = new[] { new { status = "Approved" } },
+                liveness_checks = new[] { new { status = "Approved" } },
+                face_matches = new[] { new { status = "Approved" } }
+            }
+        });
+
+        var first = await SendDiditWebhook(CreateController(context, provider), json, timestamp.ToString(CultureInfo.InvariantCulture));
+        Assert.IsType<OkObjectResult>(first);
+        Assert.Equal("passed", user.IdentityVerificationStatus);
+        Assert.Single(context.IdentityVerificationEvents);
+        Assert.Equal("Didit", (await context.IdentityVerificationEvents.SingleAsync()).Provider);
+
+        var replay = await SendDiditWebhook(CreateController(context, provider), json, timestamp.ToString(CultureInfo.InvariantCulture));
+        Assert.IsType<OkObjectResult>(replay);
+        Assert.Single(context.IdentityVerificationEvents);
+    }
+
+    [Fact]
+    public async Task Didit_approved_top_level_status_without_all_required_checks_never_approves_runner()
+    {
+        await using var context = CreateContext();
+        var user = NewRunner(81);
+        user.IdentityVerificationStatus = "pending";
+        user.IdentityVerificationProvider = "Didit";
+        user.IdentityVerificationExternalUserId = $"dfy-user-{user.Id}";
+        user.IdentityVerificationApplicantId = "didit-session-81";
+        user.IdentityVerificationStartedAt = DateTime.UtcNow.AddMinutes(-2);
+        context.Users.Add(user);
+        await context.SaveChangesAsync();
+
+        var provider = new FakeIdentityService { ProviderName = "Didit" };
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var json = JsonSerializer.Serialize(new
+        {
+            timestamp,
+            session_id = "didit-session-81",
+            vendor_data = $"dfy-user-{user.Id}",
+            workflow_id = "sandbox-runner-level",
+            webhook_type = "status.updated",
+            status = "Approved",
+            decision = new
+            {
+                id_verifications = new[] { new { status = "Approved" } },
+                liveness_checks = new[] { new { status = "Approved" } },
+                face_matches = Array.Empty<object>()
+            }
+        });
+
+        var result = await SendDiditWebhook(CreateController(context, provider), json, timestamp.ToString(CultureInfo.InvariantCulture));
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("manual_review", user.IdentityVerificationStatus);
+    }
+
+    private static async Task<IActionResult> SendDiditWebhook(IdentityVerificationController controller, string json, string timestamp)
+    {
+        var http = new DefaultHttpContext();
+        http.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        http.Request.Headers["X-Signature-V2"] = "test-digest";
+        http.Request.Headers["X-Timestamp"] = timestamp;
+        controller.ControllerContext = new ControllerContext { HttpContext = http };
+        return await controller.DiditWebhook(CancellationToken.None);
+    }
+
     private static async Task<IActionResult> SendWebhook(IdentityVerificationController controller, string json)
     {
         var http = new DefaultHttpContext();
@@ -343,6 +432,7 @@ public class IdentityVerificationControllerTests
         public bool IsConfigured { get; set; } = true;
         public string ConsentVersion => IdentityVerificationControllerTests.ConsentVersion;
         public string ExpectedLevelName => "sandbox-runner-level";
+        public string ProviderName { get; set; } = "Sumsub";
         public string AccessToken { get; set; } = "provider-test-token";
         public bool AcceptWebhook { get; set; } = true;
         public int TokenRequests { get; private set; }
@@ -356,6 +446,7 @@ public class IdentityVerificationControllerTests
         }
 
         public bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm) =>
-            AcceptWebhook && digestAlgorithm == "HMAC_SHA256_HEX" && digest == "test-digest";
+            AcceptWebhook && digest == "test-digest" &&
+            (digestAlgorithm == "HMAC_SHA256_HEX" || long.TryParse(digestAlgorithm, out _));
     }
 }
