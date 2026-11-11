@@ -555,6 +555,17 @@ public sealed class ManualIdentityVerificationController(
         var internalNote = request.InternalNote?.Trim();
         if (internalNote?.Length > 1000)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Internal administrator notes cannot exceed 1000 characters." });
+        if (decision == "approve")
+        {
+            if (!request.VerifiedDateOfBirth.HasValue)
+                return BadRequest(new ApiResponse<object> { Success = false, Message = "Record the date of birth shown on the document before approving runner activation." });
+            var dob = request.VerifiedDateOfBirth.Value.Date;
+            var today = DateTime.UtcNow.Date;
+            var age = today.Year - dob.Year;
+            if (dob > today.AddYears(-age)) age--;
+            if (dob > today || age < 18 || age > 110)
+                return BadRequest(new ApiResponse<object> { Success = false, Message = "Runner activation requires a document-verified date of birth showing an age of at least 18." });
+        }
 
         var reasonLabels = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -625,6 +636,8 @@ public sealed class ManualIdentityVerificationController(
                 .Include(s => s.User)
                 .FirstAsync(s => s.Id == id, cancellationToken);
             reviewedUserId = submission.UserId;
+            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
+            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
@@ -824,6 +837,8 @@ public sealed class ManualIdentityVerificationDecisionRequest
 {
     [Required, StringLength(32)]
     public string Decision { get; set; } = string.Empty;
+
+    public DateTime? VerifiedDateOfBirth { get; set; }
 
     [StringLength(40)]
     public string? ReasonCode { get; set; }
