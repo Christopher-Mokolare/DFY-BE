@@ -95,6 +95,12 @@ public class AppDbContext : DbContext
             .HasForeignKey(e => e.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.UserId)
+            .IsUnique()
+            .HasFilter("\\"Status\\" = 'pending'")
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_Pending");
+
         modelBuilder.Entity<IdentityVerificationEvent>()
             .HasIndex(e => new { e.Provider, e.EventHash })
             .IsUnique()
