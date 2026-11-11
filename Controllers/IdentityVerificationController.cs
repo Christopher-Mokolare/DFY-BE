@@ -447,7 +447,7 @@ public sealed class IdentityVerificationController(
         try
         {
             var accessToken = await identityVerification.CreateSdkAccessTokenAsync(
-                user.IdentityVerificationExternalUserId,
+                user.IdentityVerificationExternalUserId!,
                 user.Email,
                 cancellationToken);
             return Ok(new ApiResponse<object>
