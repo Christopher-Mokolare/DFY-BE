@@ -182,6 +182,8 @@ public sealed class ManualIdentityVerificationControllerTests
         await context.SaveChangesAsync();
 
         var controller = CreateController(context, admin.Id);
+        var claim = await controller.ClaimReview(submission.Id, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(claim.Result);
         var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
         {
             Decision = "approve", VerifiedDateOfBirth = new Date(1980, 0, 1), RunnerNote = "Document details were reviewed and matched the runner profile.",
@@ -194,9 +196,51 @@ public sealed class ManualIdentityVerificationControllerTests
         Assert.Equal(admin.Id, submission.ReviewedByUserId);
         Assert.Equal("Second reviewer confirmed the profile name and date of birth.", submission.InternalReviewNote);
         Assert.Equal("Document details were reviewed and matched the runner profile.", submission.ReviewReason);
-        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(), e => e.EventType == "admin_approve");
+        var audit = await context.IdentityVerificationEvents.ToListAsync();
+        Assert.Contains(audit, e => e.EventType == "admin_approve" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
+        Assert.Contains(audit, e => e.EventType == "review_claimed" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
     }
 
+
+
+    [Fact]
+    public async Task Reviewer_claim_is_exclusive_until_released_or_expired()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(107);
+        var admin1 = new User
+        {
+            Id = 903, FirstName = "Admin", LastName = "One", Email = "admin4@example.test",
+            NormalizedEmail = "admin4@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow
+        };
+        var admin2 = new User
+        {
+            Id = 904, FirstName = "Admin", LastName = "Two", Email = "admin5@example.test",
+            NormalizedEmail = "admin5@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow
+        };
+        context.Users.AddRange(runner, admin1, admin2);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "pending",
+            FrontCiphertext = [1, 2, 3], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var first = CreateController(context, admin1.Id);
+        var second = CreateController(context, admin2.Id);
+        Assert.IsType<OkObjectResult>((await first.ClaimReview(submission.Id, CancellationToken.None)).Result);
+        Assert.IsType<ConflictObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
+
+        var release = await first.ReleaseReview(submission.Id, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(release.Result);
+        Assert.IsType<OkObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
+    }
 
     [Fact]
     public async Task Administrator_cannot_approve_runner_under_18()
