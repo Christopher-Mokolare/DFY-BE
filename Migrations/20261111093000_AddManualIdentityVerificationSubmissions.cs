@@ -76,7 +76,7 @@ namespace DoForYou.API.Migrations
                 table: "IdentityVerificationSubmissions",
                 column: "UserId",
                 unique: true,
-                filter: "\"Status\" = 'pending'");
+                filter: "\"Status\" = 'pending'"
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
