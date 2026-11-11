@@ -68,15 +68,18 @@ public sealed class UserPolicyService : IUserPolicyService
         (NormalizeUserType(user.UserType) is "creator" or "both");
 
     /// <summary>
-    /// Runner eligibility fails closed until both verified identity/liveness and
-    /// authenticator-based two-factor authentication have been completed. Payout
-    /// account readiness is deliberately evaluated separately at payout time.
+    /// Runner eligibility fails closed until DFY manual document review is approved,
+    /// a document-verified date of birth confirms age 18+, and authenticator-based
+    /// two-factor authentication is enabled. Payout account readiness is evaluated
+    /// separately at payout time.
     /// </summary>
     public bool CanAcceptTasks(User user) =>
         !user.IsArchived &&
         user.EmailVerified &&
         (NormalizeUserType(user.UserType) is "runner" or "both") &&
         string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase) &&
+        user.DateOfBirth.HasValue &&
+        IsAtLeast18(user.DateOfBirth.Value, DateTime.UtcNow.Date) &&
         user.AuthenticatorTwoFactorEnabled;
 
     /// <summary>
@@ -88,7 +91,18 @@ public sealed class UserPolicyService : IUserPolicyService
         !user.IsArchived &&
         user.EmailVerified &&
         string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase) &&
+        user.DateOfBirth.HasValue &&
+        IsAtLeast18(user.DateOfBirth.Value, DateTime.UtcNow.Date) &&
         user.AuthenticatorTwoFactorEnabled;
+
+    public static bool IsAtLeast18(DateTime dateOfBirth, DateTime today)
+    {
+        var dob = dateOfBirth.Date;
+        if (dob > today.Date) return false;
+        var age = today.Year - dob.Year;
+        if (dob > today.Date.AddYears(-age)) age--;
+        return age >= 18 && age <= 110;
+    }
 
     private static string NormalizeUserType(string? userType) =>
         userType?.Trim().ToLowerInvariant() ?? string.Empty;

@@ -13,6 +13,8 @@ public class User
     public string PhoneNumber { get; set; } = string.Empty;
     public string UserType { get; set; } = string.Empty;
     public string? IdNumber { get; set; }
+    // Keyed HMAC only; raw document ID numbers are never copied from review submissions into this field.
+    public string? IdentityDocumentIdHmac { get; set; }
     public string? Address { get; set; }
     public string PasswordHash { get; set; } = string.Empty;
     public bool PasswordLoginEnabled { get; set; } = true;
@@ -37,7 +39,7 @@ public class User
     // These are separate runner-eligibility facts; a syntactically valid ID or bank account is not identity verification.
     public string IdentityVerificationStatus { get; set; } = "not_started";
     public string? IdentityVerificationProvider { get; set; }
-    // Stable non-PII reference sent as Sumsub externalUserId; it is never the ID number.
+    // Legacy external-verification correlation field; DFY's manual review does not populate it.
     public string? IdentityVerificationExternalUserId { get; set; }
     public string? IdentityVerificationApplicantId { get; set; }
     public DateTime? IdentityVerificationStartedAt { get; set; }

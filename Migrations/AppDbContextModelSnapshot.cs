@@ -1040,6 +1040,9 @@ namespace DoForYou.API.Migrations
                     b.Property<string>("IdNumber")
                         .HasColumnType("text");
 
+                    b.Property<string>("IdentityDocumentIdHmac")
+                        .HasColumnType("text");
+
                     b.Property<string>("IdentityVerificationStatus")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1196,6 +1199,9 @@ namespace DoForYou.API.Migrations
                         .HasFilter("\"IdentityVerificationExternalUserId\" IS NOT NULL")
                         .HasDatabaseName("IX_Users_IdentityVerificationExternalUserId");
 
+                    b.HasIndex("IdentityDocumentIdHmac")
+                        .HasDatabaseName("IX_Users_IdentityDocumentIdHmac");
+
                     b.HasIndex("GoogleSubject")
                         .IsUnique()
                         .HasDatabaseName("IX_Users_GoogleSubject");
@@ -1277,6 +1283,16 @@ namespace DoForYou.API.Migrations
                     b.Property<DateTime>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("ActorUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SubmissionId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DocumentSide")
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)");
+
                     b.Property<string>("ResultStatus")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1290,6 +1306,9 @@ namespace DoForYou.API.Migrations
                     b.HasIndex("Provider", "EventHash")
                         .IsUnique()
                         .HasDatabaseName("IX_IdentityVerificationEvents_Provider_EventHash");
+
+                    b.HasIndex("SubmissionId", "ActorUserId", "ReceivedAt")
+                        .HasDatabaseName("IX_IdentityVerificationEvents_Submission_Actor_ReceivedAt");
 
                     b.HasIndex("UserId", "ReceivedAt")
                         .HasDatabaseName("IX_IdentityVerificationEvents_UserId_ReceivedAt");
@@ -1315,6 +1334,144 @@ namespace DoForYou.API.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.IdentityVerificationSubmission", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<byte[]>("BackCiphertext")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("BackContentType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<byte[]>("BackNonce")
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("BackTag")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ConsentVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("DocumentType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("DocumentsDeleteAfter")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DocumentsPurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("FrontCiphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("FrontContentType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<byte[]>("FrontNonce")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("FrontTag")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ReviewReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("InternalReviewNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("DocumentIdHmac")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("DuplicateIdDetected")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("ReviewedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ReviewClaimedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReviewClaimExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ReviewClaimHeartbeatAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "SubmittedAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_Status_SubmittedAt");
+
+                    b.HasIndex("UserId", "SubmittedAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
+
+                    b.HasIndex("ReviewedByUserId")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
+                    b.HasIndex("DocumentIdHmac")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_DocumentIdHmac");
+
+                    b.HasIndex("ReviewClaimExpiresAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewClaimExpiresAt");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'pending'")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_Pending");
+
+                    b.ToTable("IdentityVerificationSubmissions");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.IdentityVerificationSubmission", b =>
+                {
+                    b.HasOne("DoForYou.API.Models.User", "ReviewedByUser")
+                        .WithMany()
+                        .HasForeignKey("ReviewedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoForYou.API.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ReviewedByUser");
 
                     b.Navigation("User");
                 });

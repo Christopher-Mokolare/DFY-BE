@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
     public DbSet<IdentityVerificationEvent> IdentityVerificationEvents { get; set; } = null!;
+    public DbSet<IdentityVerificationSubmission> IdentityVerificationSubmissions { get; set; } = null!;
 
     public override int SaveChanges()
     {
@@ -74,6 +75,10 @@ public class AppDbContext : DbContext
             .IsUnique()
             .HasDatabaseName("IX_Users_NormalizedEmail");
         modelBuilder.Entity<User>()
+            .HasIndex(user => user.IdentityDocumentIdHmac)
+            .HasDatabaseName("IX_Users_IdentityDocumentIdHmac");
+
+        modelBuilder.Entity<User>()
             .HasIndex(user => user.GoogleSubject)
             .IsUnique()
             .HasDatabaseName("IX_Users_GoogleSubject");
@@ -94,6 +99,12 @@ public class AppDbContext : DbContext
             .HasForeignKey(e => e.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.UserId)
+            .IsUnique()
+            .HasFilter("\"Status\" = 'pending'")
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_Pending");
+
         modelBuilder.Entity<IdentityVerificationEvent>()
             .HasIndex(e => new { e.Provider, e.EventHash })
             .IsUnique()
@@ -107,6 +118,42 @@ public class AppDbContext : DbContext
             .HasOne(e => e.User)
             .WithMany()
             .HasForeignKey(e => e.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.DocumentIdHmac)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_DocumentIdHmac");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.ReviewClaimExpiresAt)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewClaimExpiresAt");
+
+        modelBuilder.Entity<IdentityVerificationEvent>()
+            .HasIndex(e => new { e.SubmissionId, e.ActorUserId, e.ReceivedAt })
+            .HasDatabaseName("IX_IdentityVerificationEvents_Submission_Actor_ReceivedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => new { s.Status, s.SubmittedAt })
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_Status_SubmittedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => new { s.UserId, s.SubmittedAt })
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.ReviewedByUserId)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasOne(s => s.User)
+            .WithMany()
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasOne(s => s.ReviewedByUser)
+            .WithMany()
+            .HasForeignKey(s => s.ReviewedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<TaskIncident>()
