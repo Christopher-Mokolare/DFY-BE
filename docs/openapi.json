@@ -7534,8 +7534,7 @@
       },
       "ManualIdentityVerificationDecisionRequest": {
         "required": [
-          "decision",
-          "reason"
+          "decision"
         ],
         "type": "object",
         "properties": {
@@ -7544,10 +7543,17 @@
             "minLength": 0,
             "type": "string"
           },
-          "reason": {
-            "maxLength": 1000,
-            "minLength": 10,
-            "type": "string"
+          "reasonCode": {
+            "maxLength": 40,
+            "minLength": 0,
+            "type": "string",
+            "nullable": true
+          },
+          "runnerNote": {
+            "maxLength": 850,
+            "minLength": 0,
+            "type": "string",
+            "nullable": true
           },
           "internalNote": {
             "maxLength": 1000,

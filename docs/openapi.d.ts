@@ -6542,7 +6542,8 @@ export interface components {
         };
         ManualIdentityVerificationDecisionRequest: {
             decision: string;
-            reason: string;
+            reasonCode?: string | null;
+            runnerNote?: string | null;
             internalNote?: string | null;
         };
         MarkTaskReadRequest: {
