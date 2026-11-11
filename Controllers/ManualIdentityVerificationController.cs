@@ -1,0 +1,448 @@
+using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using DoForYou.API.Data;
+using DoForYou.API.DTOs;
+using DoForYou.API.Models;
+using DoForYou.API.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+
+namespace DoForYou.API.Controllers;
+
+/// <summary>
+/// First-party DFY runner identity-document submission and manual review.
+/// This controller does not call an external identity-verification provider.
+/// </summary>
+[ApiController]
+[Route("api/v1/manual-identity-verification")]
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+public sealed class ManualIdentityVerificationController(
+    AppDbContext context,
+    IIdentityDocumentEncryptionService encryption,
+    IConfiguration configuration,
+    ILogger<ManualIdentityVerificationController> logger) : ControllerBase
+{
+    private static readonly TimeSpan AttemptWindow = TimeSpan.FromHours(24);
+    private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
+    private const int MaxAttemptsPerWindow = 3;
+    private const int MaxDocumentBytes = 5 * 1024 * 1024;
+    private const string ManualProvider = "DFY_MANUAL";
+
+    private string ConsentVersion =>
+        Environment.GetEnvironmentVariable("IDENTITY_VERIFICATION_CONSENT_VERSION")?.Trim()
+        ?? configuration["IdentityVerification:ConsentVersion"]?.Trim()
+        ?? string.Empty;
+
+    [Authorize]
+    [HttpGet("status")]
+    public async Task<ActionResult<ApiResponse<object>>> GetStatus(CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        var user = await context.Users.AsNoTracking()
+            .Where(u => u.Id == userId.Value)
+            .Select(u => new
+            {
+                u.UserType, u.EmailVerified, u.IdentityVerificationStatus,
+                u.IdentityVerificationProvider, u.IdentityVerificationStartedAt,
+                u.IdentityVerificationUpdatedAt, u.IdentityVerificationAttemptCount,
+                u.IdentityVerificationAttemptWindowStartAt
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (user == null) return NotFound();
+
+        var latest = await context.IdentityVerificationSubmissions.AsNoTracking()
+            .Where(s => s.UserId == userId.Value)
+            .OrderByDescending(s => s.SubmittedAt)
+            .Select(s => new { s.Id, s.DocumentType, s.Status, s.SubmittedAt, s.ReviewReason })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var configured = encryption.IsConfigured && !string.IsNullOrWhiteSpace(ConsentVersion);
+        var providerPendingCanBeReplaced =
+            string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal);
+        var attemptsRemaining = AttemptsRemaining(user.IdentityVerificationAttemptCount, user.IdentityVerificationAttemptWindowStartAt);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new
+            {
+                status = user.IdentityVerificationStatus,
+                provider = ManualProvider,
+                startedAt = user.IdentityVerificationStartedAt,
+                updatedAt = user.IdentityVerificationUpdatedAt,
+                configured,
+                attemptsRemaining,
+                latestSubmission = latest,
+                canStart = configured && user.EmailVerified && IsRunner(user.UserType) &&
+                    (CanRestart(user.IdentityVerificationStatus) || providerPendingCanBeReplaced) &&
+                    attemptsRemaining > 0
+            }
+        });
+    }
+
+    [Authorize]
+    [EnableRateLimiting("auth")]
+    [HttpPost("submission")]
+    [RequestSizeLimit(11 * 1024 * 1024)]
+    [Consumes("multipart/form-data")]
+    public async Task<ActionResult<ApiResponse<object>>> Submit(
+        [FromForm] SubmitManualIdentityVerificationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        if (userId == null) return Unauthorized();
+
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+            {
+                Success = false,
+                Error = "DFY_IDENTITY_VERIFICATION_NOT_CONFIGURED",
+                Message = "DFY identity-document submission is not available yet."
+            });
+
+        if (!request.ConsentAccepted ||
+            !string.Equals(request.ConsentVersion, ConsentVersion, StringComparison.Ordinal))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Error = "IDENTITY_CONSENT_REQUIRED",
+                Message = "Review and accept the current DFY identity-document notice before submitting."
+            });
+
+        var user = await context.Users.FirstOrDefaultAsync(u => u.Id == userId.Value, cancellationToken);
+        if (user == null || user.IsArchived) return Unauthorized();
+        if (!user.EmailVerified)
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>
+            {
+                Success = false, Message = "Verify your email before submitting runner identity documents."
+            });
+        if (!IsRunner(user.UserType))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>
+            {
+                Success = false, Message = "Choose Runner or Both in your preferences before submitting identity documents."
+            });
+        if (string.Equals(user.IdentityVerificationStatus, "passed", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your runner identity review has already been approved." });
+        if (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your documents are already awaiting DFY review." });
+        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Your application is already awaiting DFY review." });
+
+        var now = DateTime.UtcNow;
+        var windowExpired = !user.IdentityVerificationAttemptWindowStartAt.HasValue ||
+            user.IdentityVerificationAttemptWindowStartAt.Value <= now.Subtract(AttemptWindow);
+        if (!windowExpired && user.IdentityVerificationAttemptCount >= MaxAttemptsPerWindow)
+            return StatusCode(StatusCodes.Status429TooManyRequests, new ApiResponse<object>
+            {
+                Success = false, Error = "IDENTITY_RETRY_LIMIT",
+                Message = "You have reached the runner identity-document submission limit. Contact support for assistance."
+            });
+
+        var documentType = request.DocumentType?.Trim().ToLowerInvariant();
+        if (documentType is not ("south_african_id" or "passport"))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African ID card or passport." });
+        if (request.FrontDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front of your identity document." });
+        if (documentType == "south_african_id" && request.BackDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African ID card." });
+        if (documentType == "passport" && request.BackDocument != null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A passport submission requires only its photo-information page." });
+
+        byte[] frontBytes;
+        string frontType;
+        byte[]? backBytes = null;
+        string? backType = null;
+        try
+        {
+            (frontBytes, frontType) = await ReadImageAsync(request.FrontDocument, cancellationToken);
+            if (request.BackDocument != null)
+                (backBytes, backType) = await ReadImageAsync(request.BackDocument, cancellationToken);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BadRequest(new ApiResponse<object> { Success = false, Message = ex.Message });
+        }
+
+        var encryptedFront = encryption.Encrypt(frontBytes);
+        var encryptedBack = backBytes == null ? null : encryption.Encrypt(backBytes);
+        CryptographicOperations.ZeroMemory(frontBytes);
+        if (backBytes != null) CryptographicOperations.ZeroMemory(backBytes);
+
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = user.Id,
+            DocumentType = documentType,
+            Status = "pending",
+            FrontCiphertext = encryptedFront.Ciphertext,
+            FrontNonce = encryptedFront.Nonce,
+            FrontTag = encryptedFront.Tag,
+            FrontContentType = frontType,
+            BackCiphertext = encryptedBack?.Ciphertext,
+            BackNonce = encryptedBack?.Nonce,
+            BackTag = encryptedBack?.Tag,
+            BackContentType = backType,
+            ConsentVersion = request.ConsentVersion,
+            SubmittedAt = now
+        };
+
+        user.IdentityVerificationStatus = "pending";
+        user.IdentityVerificationProvider = ManualProvider;
+        user.IdentityVerificationExternalUserId = null;
+        user.IdentityVerificationApplicantId = null;
+        user.IdentityVerificationStartedAt = now;
+        user.IdentityVerificationUpdatedAt = now;
+        user.IdentityVerificationLastEventAt = null;
+        user.IdentityVerificationAttemptWindowStartAt = windowExpired ? now : user.IdentityVerificationAttemptWindowStartAt;
+        user.IdentityVerificationAttemptCount = windowExpired ? 1 : user.IdentityVerificationAttemptCount + 1;
+
+        context.IdentityVerificationSubmissions.Add(submission);
+        context.UserConsentEvents.Add(new UserConsentEvent
+        {
+            UserId = user.Id,
+            ConsentType = "identity-verification",
+            Accepted = true,
+            Version = request.ConsentVersion,
+            RecordedAt = now,
+            Source = "runner-manual-identity-submission"
+        });
+        context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
+
+        await context.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("DFY identity documents submitted for review. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
+
+        return Accepted(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submissionId = submission.Id, status = submission.Status, submittedAt = submission.SubmittedAt },
+            Message = "Your identity documents were securely submitted. Runner eligibility remains locked until DFY completes its review."
+        });
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpGet("admin/pending")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPending(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var query = context.IdentityVerificationSubmissions.AsNoTracking()
+            .Where(s => s.Status == "pending")
+            .OrderBy(s => s.SubmittedAt);
+        var total = await query.CountAsync(cancellationToken);
+        var rows = await query.Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(s => new
+            {
+                s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt,
+                userName = s.User.FirstName + " " + s.User.LastName,
+                s.User.Email, s.User.DateOfBirth
+            })
+            .ToListAsync(cancellationToken);
+        return Ok(new ApiResponse<object> { Success = true, Data = new { submissions = rows, totalCount = total, page, pageSize } });
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpGet("admin/{id:int}/document/{side}")]
+    public async Task<IActionResult> GetDocument(int id, string side, CancellationToken cancellationToken)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Complete administrator authenticator verification before viewing identity documents." });
+
+        var submission = await context.IdentityVerificationSubmissions
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (submission == null) return NotFound();
+
+        byte[]? cipher;
+        byte[]? nonce;
+        byte[]? tag;
+        string? contentType;
+        if (side.Equals("front", StringComparison.OrdinalIgnoreCase))
+        {
+            cipher = submission.FrontCiphertext; nonce = submission.FrontNonce; tag = submission.FrontTag;
+            contentType = submission.FrontContentType;
+        }
+        else if (side.Equals("back", StringComparison.OrdinalIgnoreCase))
+        {
+            cipher = submission.BackCiphertext; nonce = submission.BackNonce; tag = submission.BackTag;
+            contentType = submission.BackContentType;
+        }
+        else return BadRequest();
+
+        if (cipher == null || nonce == null || tag == null || contentType == null) return NotFound();
+        byte[] plaintext;
+        try { plaintext = encryption.Decrypt(cipher, nonce, tag); }
+        catch (CryptographicException)
+        {
+            logger.LogError("Unable to decrypt DFY identity document for submission {SubmissionId}.", id);
+            return StatusCode(StatusCodes.Status500InternalServerError);
+        }
+
+        context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_document_accessed", "viewed"));
+        await context.SaveChangesAsync(cancellationToken);
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+        return File(plaintext, contentType);
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpPost("admin/{id:int}/decision")]
+    public async Task<ActionResult<ApiResponse<object>>> Decide(
+        int id,
+        [FromBody] ManualIdentityVerificationDecisionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>
+            {
+                Success = false, Message = "Complete administrator authenticator verification before reviewing identity applications."
+            });
+
+        var decision = request.Decision?.Trim().ToLowerInvariant();
+        if (decision is not ("approve" or "reject" or "request_information"))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose approve, reject or request_information." });
+        var reason = request.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10 || reason.Length > 1000)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Provide a review reason between 10 and 1000 characters." });
+
+        var submission = await context.IdentityVerificationSubmissions
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (submission == null) return NotFound();
+        if (submission.Status != "pending")
+            return Conflict(new ApiResponse<object> { Success = false, Message = "This application has already been reviewed or is no longer pending." });
+
+        var now = DateTime.UtcNow;
+        submission.ReviewedAt = now;
+        submission.ReviewedByUserId = adminId.Value;
+        submission.ReviewReason = reason;
+
+        var nextStatus = decision switch
+        {
+            "approve" => "passed",
+            "reject" => "failed",
+            _ => "more_info_requested"
+        };
+        submission.Status = decision == "request_information" ? "more_info_requested" : decision == "approve" ? "approved" : "rejected";
+        submission.DocumentsDeleteAfter = now.AddDays(90);
+        submission.User.IdentityVerificationStatus = nextStatus;
+        submission.User.IdentityVerificationProvider = ManualProvider;
+        submission.User.IdentityVerificationUpdatedAt = now;
+        submission.User.IdentityVerificationLastEventAt = now;
+
+        context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus));
+        await context.SaveChangesAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submissionId = submission.Id, status = nextStatus, reviewedAt = now },
+            Message = decision == "approve"
+                ? "DFY recorded the manual document review as approved."
+                : decision == "reject"
+                    ? "DFY recorded the manual document review as rejected."
+                    : "Additional information has been requested. The runner may submit a corrected application."
+        });
+    }
+
+    private async Task<bool> HasRecentAdminTwoFactorAsync(int adminId, CancellationToken cancellationToken)
+    {
+        var account = await context.Users.AsNoTracking()
+            .Where(u => u.Id == adminId && !u.IsArchived)
+            .Select(u => new { u.AuthenticatorTwoFactorEnabled, u.LastTwoFactorVerifiedAt })
+            .FirstOrDefaultAsync(cancellationToken);
+        return account?.AuthenticatorTwoFactorEnabled == true &&
+            account.LastTwoFactorVerifiedAt.HasValue &&
+            account.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.Subtract(AdminStepUpWindow);
+    }
+
+    private static async Task<(byte[] Bytes, string ContentType)> ReadImageAsync(IFormFile file, CancellationToken cancellationToken)
+    {
+        if (file.Length is <= 0 or > MaxDocumentBytes)
+            throw new InvalidDataException("Each identity-document image must be between 1 byte and 5 MB.");
+
+        await using var stream = new MemoryStream();
+        await file.CopyToAsync(stream, cancellationToken);
+        var bytes = stream.ToArray();
+        if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            return (bytes, "image/jpeg");
+        if (bytes.Length >= 8 && bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }))
+            return (bytes, "image/png");
+
+        CryptographicOperations.ZeroMemory(bytes);
+        throw new InvalidDataException("Upload a JPG or PNG image. PDF files and other formats are not accepted yet.");
+    }
+
+    private IdentityVerificationEvent CreateEvent(int userId, string eventType, string resultStatus)
+    {
+        var eventId = Guid.NewGuid().ToString("N");
+        return new IdentityVerificationEvent
+        {
+            UserId = userId,
+            Provider = ManualProvider,
+            EventHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(eventId))).ToLowerInvariant(),
+            EventType = eventType,
+            ResultStatus = resultStatus,
+            ReceivedAt = DateTime.UtcNow
+        };
+    }
+
+    private static bool IsRunner(string? userType) =>
+        string.Equals(userType?.Trim(), "runner", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(userType?.Trim(), "both", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CanRestart(string? status) =>
+        string.Equals(status, "not_started", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "expired", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status, "more_info_requested", StringComparison.OrdinalIgnoreCase);
+
+    private static int AttemptsRemaining(int count, DateTime? windowStart) =>
+        !windowStart.HasValue || windowStart.Value <= DateTime.UtcNow.Subtract(AttemptWindow)
+            ? MaxAttemptsPerWindow
+            : Math.Max(0, MaxAttemptsPerWindow - count);
+
+    private int? CurrentUserId()
+    {
+        var value = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        return int.TryParse(value, out var id) ? id : null;
+    }
+}
+
+public sealed class SubmitManualIdentityVerificationRequest
+{
+    [Required]
+    public bool ConsentAccepted { get; set; }
+
+    [Required, StringLength(40)]
+    public string ConsentVersion { get; set; } = string.Empty;
+
+    [Required, StringLength(32)]
+    public string DocumentType { get; set; } = string.Empty;
+
+    [Required]
+    public IFormFile? FrontDocument { get; set; }
+
+    public IFormFile? BackDocument { get; set; }
+}
+
+public sealed class ManualIdentityVerificationDecisionRequest
+{
+    [Required, StringLength(32)]
+    public string Decision { get; set; } = string.Empty;
+
+    [Required, StringLength(1000, MinimumLength = 10)]
+    public string Reason { get; set; } = string.Empty;
+}
