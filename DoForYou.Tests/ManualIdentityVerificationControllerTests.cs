@@ -186,7 +186,7 @@ public sealed class ManualIdentityVerificationControllerTests
         Assert.IsType<OkObjectResult>(claim.Result);
         var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
         {
-            Decision = "approve", VerifiedDateOfBirth = new Date(1980, 0, 1), RunnerNote = "Document details were reviewed and matched the runner profile.",
+            Decision = "approve", VerifiedDateOfBirth = new DateTime(1980, 1, 1), RunnerNote = "Document details were reviewed and matched the runner profile.",
             InternalNote = "Second reviewer confirmed the profile name and date of birth."
         }, CancellationToken.None);
 
