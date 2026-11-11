@@ -68,9 +68,10 @@ public sealed class UserPolicyService : IUserPolicyService
         (NormalizeUserType(user.UserType) is "creator" or "both");
 
     /// <summary>
-    /// Runner eligibility fails closed until both verified identity/liveness and
-    /// authenticator-based two-factor authentication have been completed. Payout
-    /// account readiness is deliberately evaluated separately at payout time.
+    /// Runner eligibility fails closed until DFY manual document review is approved,
+    /// a document-verified date of birth confirms age 18+, and authenticator-based
+    /// two-factor authentication is enabled. Payout account readiness is evaluated
+    /// separately at payout time.
     /// </summary>
     public bool CanAcceptTasks(User user) =>
         !user.IsArchived &&
