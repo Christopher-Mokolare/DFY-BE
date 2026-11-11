@@ -44,10 +44,12 @@ public sealed class IdentityReviewSlaService(
 
         foreach (var submission in pending)
         {
-            var dueAt = SouthAfricanBusinessCalendar.AddBusinessDays(
-                submission.SubmittedAt, 1,
+            var dueAt = SouthAfricanBusinessCalendar.AddBusinessHours(
+                submission.SubmittedAt, 8,
                 configuration["IdentityVerification:SouthAfricanPublicHolidays"]);
-            var nearAt = submission.SubmittedAt + TimeSpan.FromTicks((dueAt - submission.SubmittedAt).Ticks * 3 / 4);
+            var nearAt = SouthAfricanBusinessCalendar.AddBusinessHours(
+                submission.SubmittedAt, 6,
+                configuration["IdentityVerification:SouthAfricanPublicHolidays"]);
             var nearEvent = "sla_near_due_" + submission.Id;
             var overdueEvent = "sla_overdue_" + submission.Id;
             var escalationEvent = "sla_escalated_" + submission.Id;
@@ -73,8 +75,8 @@ public sealed class IdentityReviewSlaService(
                 await db.SaveChangesAsync(cancellationToken);
             }
 
-            var internalDueAt = SouthAfricanBusinessCalendar.AddBusinessDays(
-                dueAt, 1, configuration["IdentityVerification:SouthAfricanPublicHolidays"]);
+            var internalDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(
+                submission.SubmittedAt, 16, configuration["IdentityVerification:SouthAfricanPublicHolidays"]);
             if (now >= internalDueAt && !await HasEventAsync(db, submission.UserId, escalationEvent, cancellationToken))
             {
                 await notifications.NotifyAdminsAsync(
