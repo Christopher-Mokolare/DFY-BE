@@ -16,6 +16,7 @@ public class UserPolicyServiceTests
         PhoneNumber = "0821234567",
         UserType = userType,
         IdentityVerificationStatus = "passed",
+        DateOfBirth = new DateTime(1980, 1, 1),
         AuthenticatorTwoFactorEnabled = true
         // Address, ID and DOB are intentionally absent: none is a basic signup field.
     };
@@ -50,7 +51,7 @@ public class UserPolicyServiceTests
         user.DateOfBirth = null;
 
         Assert.True(_policy.CanCreateTasks(user));
-        Assert.True(_policy.CanAcceptTasks(user));
+        Assert.False(_policy.CanAcceptTasks(user));
     }
 
     [Fact]
@@ -89,7 +90,25 @@ public class UserPolicyServiceTests
         user.IdNumber = null;
         user.DateOfBirth = null;
 
+        Assert.False(_policy.CanAcceptTasks(user));
+    }
+
+
+    [Fact]
+    public void Runner_activation_requires_verified_date_of_birth_and_age_18_or_older()
+    {
+        var user = CompleteUser("runner");
+        user.DateOfBirth = null;
+        Assert.False(_policy.CanAcceptTasks(user));
+
+        user.DateOfBirth = DateTime.UtcNow.Date.AddYears(-18).AddDays(-1);
         Assert.True(_policy.CanAcceptTasks(user));
+
+        user.DateOfBirth = DateTime.UtcNow.Date.AddYears(-18).AddDays(1);
+        Assert.False(_policy.CanAcceptTasks(user));
+
+        user.DateOfBirth = DateTime.UtcNow.Date.AddDays(1);
+        Assert.False(_policy.CanAcceptTasks(user));
     }
 
     [Fact]
