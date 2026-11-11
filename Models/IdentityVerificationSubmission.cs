@@ -55,6 +55,11 @@ public sealed class IdentityVerificationSubmission
     [StringLength(1000)]
     public string? InternalReviewNote { get; set; }
 
+    [StringLength(64)]
+    public string? DocumentIdHmac { get; set; }
+
+    public bool DuplicateIdDetected { get; set; }
+
     public DateTime? DocumentsDeleteAfter { get; set; }
     public DateTime? DocumentsPurgedAt { get; set; }
 
