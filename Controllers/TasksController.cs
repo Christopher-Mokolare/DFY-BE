@@ -568,6 +568,18 @@ public class TasksController : ControllerBase
         var progressUpdates = await _context.TaskProgressUpdates.Include(p => p.User).Where(p => p.TaskId == task.Id).OrderByDescending(p => p.CreatedAt)
             .Select(p => new { id = p.Id, message = p.Message, timestamp = p.CreatedAt, userId = p.UserId, userName = $"{p.User.FirstName} {p.User.LastName}" }).ToListAsync();
 
+        var nowUtc = DateTime.UtcNow;
+        var activeIncidentHold = await _context.TaskIncidents.AsNoTracking()
+            .Where(i => i.TaskId == task.Id &&
+                        i.EscrowHoldPlacedAt != null &&
+                        i.EscrowHoldReleasedAt == null)
+            .OrderByDescending(i => i.EscrowHoldPlacedAt)
+            .Select(i => new { i.EscrowHoldPlacedAt, i.EscrowHoldDeadlineBefore })
+            .FirstOrDefaultAsync();
+        var effectiveDisputeDeadline = activeIncidentHold?.EscrowHoldDeadlineBefore.HasValue == true
+            ? activeIncidentHold.EscrowHoldDeadlineBefore.Value.Add(nowUtc - activeIncidentHold.EscrowHoldPlacedAt!.Value)
+            : task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
+
         var taskDto = new
         {
             id = task.Id, taskId = task.TaskId, title = task.TaskDescription, description = task.TaskDescription,
@@ -583,9 +595,20 @@ public class TasksController : ControllerBase
             canEdit = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
             canComplete = task.AcceptedByUserId == currentUserId && task.TaskStatus == "Claimed",
             canCancel = task.CreatedByUserId == currentUserId && task.TaskStatus == "PendingPayment",
-            canConfirm = task.CreatedByUserId == currentUserId && task.TaskStatus == "AwaitingConfirmation",
+            canConfirm = task.CreatedByUserId == currentUserId &&
+                task.TaskStatus == "AwaitingConfirmation" &&
+                task.EscrowStatus == "held" &&
+                task.PaymentStatus == "EscrowHeld",
             canMessage = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId,
-            canDispute = task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId
+            canDispute = task.CreatedByUserId == currentUserId &&
+                task.TaskStatus == "AwaitingConfirmation" &&
+                (task.EscrowStatus == "held" || task.EscrowStatus == "incident_hold") &&
+                task.PaymentStatus == "EscrowHeld" &&
+                effectiveDisputeDeadline.HasValue &&
+                nowUtc <= effectiveDisputeDeadline.Value,
+            canReportIncident = task.AcceptedByUserId != null &&
+                (task.CreatedByUserId == currentUserId || task.AcceptedByUserId == currentUserId) &&
+                task.TaskStatus is "Claimed" or "InProgress" or "AwaitingConfirmation"
         };
 
         return Ok(new ApiResponse<object> { Success = true, Data = taskDto, Message = "Task retrieved successfully" });

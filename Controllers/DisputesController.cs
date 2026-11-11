@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Models;
 using DoForYou.API.Services;
 using System.Security.Claims;
 using System.Text.Json;
@@ -33,17 +34,38 @@ public class DisputesController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId == null) return Unauthorized();
 
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == request.TaskId);
         if (task == null)
             return Ok(new ApiResponse<object> { Success = false, Message = "Task not found" });
 
-        if (task.CreatedByUserId != userId && task.AcceptedByUserId != userId)
-            return Ok(new ApiResponse<object> { Success = false, Message = "Not authorized to dispute this task" });
+        // Completion disputes are a creator protection, not a general task-issue
+        // channel. Runners must use the separate incident-report workflow.
+        if (task.CreatedByUserId != userId)
+            return Forbid();
+
+        var now = DateTime.UtcNow;
+        var activeIncidentHold = await _context.TaskIncidents
+            .AsNoTracking()
+            .Where(i => i.TaskId == task.Id &&
+                        i.EscrowHoldPlacedAt != null &&
+                        i.EscrowHoldReleasedAt == null)
+            .OrderByDescending(i => i.EscrowHoldPlacedAt)
+            .Select(i => new { i.Id, i.EscrowHoldPlacedAt, i.EscrowHoldDeadlineBefore })
+            .FirstOrDefaultAsync();
+        var disputeDeadline = activeIncidentHold?.EscrowHoldDeadlineBefore.HasValue == true
+            ? activeIncidentHold.EscrowHoldDeadlineBefore.Value.Add(now - activeIncidentHold.EscrowHoldPlacedAt!.Value)
+            : task.EscrowHoldUntil ?? task.CompletedAt?.AddHours(24);
 
         if (task.TaskStatus != "AwaitingConfirmation" ||
-            task.EscrowStatus != "held" ||
-            task.PaymentStatus != "EscrowHeld")
-            return Conflict(new ApiResponse<object> { Success = false, Message = "A dispute can only be raised for completed work while its escrow is held." });
+            task.EscrowStatus is not ("held" or "incident_hold") ||
+            task.PaymentStatus != "EscrowHeld" ||
+            !disputeDeadline.HasValue ||
+            now > disputeDeadline.Value)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "A completion dispute can only be raised by the task creator within the active 24-hour confirmation window while escrow is held or on an incident hold." });
 
         var existingOpenDispute = await _context.Disputes
             .AnyAsync(d => d.TaskId == task.Id && d.Status == "Open");
@@ -59,14 +81,93 @@ public class DisputesController : ControllerBase
             Status = "Open"
         };
 
-        // A dispute must stop the normal 24-hour creator auto-release path. The task remains
-        // completed/held so an admin can later release it into the Paystack payout flow.
-        task.EscrowStatus = "disputed";
-        task.PaymentStatus = "DisputePending";
-        task.UpdatedAt = DateTime.UtcNow;
+        // Atomically claim the task for the formal dispute. This competes with the
+        // escrow service's AwaitingConfirmation -> PayoutPending claim, so a payout
+        // and a dispute cannot both win the same task transition.
+        var eligibleTask = _context.Tasks.Where(t =>
+            t.Id == task.Id &&
+            t.TaskStatus == "AwaitingConfirmation" &&
+            (t.EscrowStatus == "held" || t.EscrowStatus == "incident_hold") &&
+            t.PaymentStatus == "EscrowHeld");
+        if (activeIncidentHold == null)
+        {
+            eligibleTask = eligibleTask.Where(t =>
+                (t.EscrowHoldUntil.HasValue && t.EscrowHoldUntil.Value >= now) ||
+                (!t.EscrowHoldUntil.HasValue && t.CompletedAt.HasValue && t.CompletedAt.Value.AddHours(24) >= now));
+        }
+
+        int claimed;
+        if (_context.Database.IsRelational())
+        {
+            claimed = await eligibleTask.ExecuteUpdateAsync(setters => setters
+                .SetProperty(t => t.EscrowStatus, "disputed")
+                .SetProperty(t => t.PaymentStatus, "DisputePending")
+                .SetProperty(t => t.UpdatedAt, now));
+        }
+        else
+        {
+            var eligible = await eligibleTask.FirstOrDefaultAsync();
+            if (eligible == null)
+                claimed = 0;
+            else
+            {
+                eligible.EscrowStatus = "disputed";
+                eligible.PaymentStatus = "DisputePending";
+                eligible.UpdatedAt = now;
+                claimed = 1;
+            }
+        }
+
+        if (claimed != 1)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The task is no longer eligible for a completion dispute. Refresh and review its current state." });
+
+        // If an incident hold was active (including one placed concurrently after
+        // the initial read), mark that operational hold as superseded. The escrow
+        // remains frozen by the formal dispute, not released back to the payout path.
+        var incidentHoldToEnd = await _context.TaskIncidents
+            .Where(i => i.TaskId == task.Id &&
+                        i.EscrowHoldPlacedAt != null &&
+                        i.EscrowHoldReleasedAt == null)
+            .OrderByDescending(i => i.EscrowHoldPlacedAt)
+            .FirstOrDefaultAsync();
+        if (incidentHoldToEnd != null)
+        {
+            await _context.Entry(incidentHoldToEnd).ReloadAsync();
+            if (!incidentHoldToEnd.EscrowHoldReleasedAt.HasValue)
+            {
+                incidentHoldToEnd.EscrowHoldReleasedAt = now;
+                incidentHoldToEnd.EscrowHoldReleaseReason = "Superseded by a formal creator completion dispute; escrow remains frozen under the dispute state.";
+                incidentHoldToEnd.AdminNotes = string.IsNullOrWhiteSpace(incidentHoldToEnd.AdminNotes)
+                    ? "Incident hold ended because the creator opened a formal completion dispute."
+                    : $"{incidentHoldToEnd.AdminNotes}\nIncident hold ended because the creator opened a formal completion dispute.";
+                _context.AuditLogs.Add(new AuditLog
+                {
+                    UserId = userId.Value,
+                    Action = "TaskIncidentHoldSupersededByDispute",
+                    EntityType = "TaskIncident",
+                    EntityId = incidentHoldToEnd.Id,
+                    OldValues = JsonSerializer.Serialize(new { escrowStatus = "incident_hold" }),
+                    NewValues = JsonSerializer.Serialize(new { escrowStatus = "disputed", disputeStatus = "Open" }),
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
+        }
 
         _context.Disputes.Add(dispute);
+        _context.AuditLogs.Add(new AuditLog
+        {
+            UserId = userId.Value,
+            Action = "CompletionDisputeRaised",
+            EntityType = "Task",
+            EntityId = task.Id,
+            OldValues = JsonSerializer.Serialize(new { taskStatus = "AwaitingConfirmation", escrowStatus = task.EscrowStatus, paymentStatus = "EscrowHeld" }),
+            NewValues = JsonSerializer.Serialize(new { escrowStatus = "disputed", paymentStatus = "DisputePending", category = request.Category }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
 
         var reporter = await _context.Users.FindAsync(userId.Value);
         var reporterName = reporter != null ? $"{reporter.FirstName} {reporter.LastName}" : "A user";

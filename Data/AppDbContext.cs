@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<TaskMessage> TaskMessages { get; set; }
     public DbSet<TaskProgressUpdate> TaskProgressUpdates { get; set; }
     public DbSet<Dispute> Disputes { get; set; }
+    public DbSet<TaskIncident> TaskIncidents { get; set; } = null!;
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
     public DbSet<BusinessRule> BusinessRules { get; set; }
     public DbSet<Notification> Notifications { get; set; }
@@ -107,6 +108,18 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(e => e.UserId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<TaskIncident>()
+            .HasOne(i => i.Task)
+            .WithMany()
+            .HasForeignKey(i => i.TaskId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<TaskIncident>()
+            .HasIndex(i => new { i.ReporterUserId, i.CreatedAt });
+
+        modelBuilder.Entity<TaskIncident>()
+            .HasIndex(i => new { i.TaskId, i.CreatedAt });
 
         modelBuilder.Entity<Models.Task>()
             .HasQueryFilter(t => !t.IsDeleted);

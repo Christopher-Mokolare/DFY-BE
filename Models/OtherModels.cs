@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace DoForYou.API.Models;
 
 public class Category
@@ -204,4 +206,40 @@ public class SupportTicket
     public DateTime? ResolvedAt { get; set; }
 
     public User? User { get; set; }
+}
+
+/// <summary>
+/// A participant's report of a task-related safety, conduct, scope or delivery incident.
+/// Incidents are operational reports and do not change payment or escrow state.
+/// </summary>
+public class TaskIncident
+{
+    public int Id { get; set; }
+    public int TaskId { get; set; }
+    [MaxLength(64)]
+    public string TaskReference { get; set; } = string.Empty;
+    public int ReporterUserId { get; set; }
+    public int CreatorUserId { get; set; }
+    public int RunnerUserId { get; set; }
+    [MaxLength(64)]
+    public string Category { get; set; } = string.Empty;
+    [MaxLength(2000)]
+    public string Description { get; set; } = string.Empty;
+    [MaxLength(24)]
+    public string Status { get; set; } = "Open";
+    public string? EvidenceMessageIdsJson { get; set; }
+    [MaxLength(1000)]
+    public string? AdminNotes { get; set; }
+    public int? ReviewedByAdminId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ReviewedAt { get; set; }
+    public DateTime? EscrowHoldPlacedAt { get; set; }
+    public DateTime? EscrowHoldReleasedAt { get; set; }
+    public int? EscrowHoldPlacedByAdminId { get; set; }
+    public DateTime? EscrowHoldDeadlineBefore { get; set; }
+    [MaxLength(500)]
+    public string? EscrowHoldReason { get; set; }
+    [MaxLength(500)]
+    public string? EscrowHoldReleaseReason { get; set; }
+    public Task Task { get; set; } = null!;
 }

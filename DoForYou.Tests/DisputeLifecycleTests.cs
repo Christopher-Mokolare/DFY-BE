@@ -105,10 +105,229 @@ public class DisputeLifecycleTests
             Category = "Abuse"
         });
 
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task RunnerCannotRaiseCreatorCompletionDispute()
+    {
+        using var context = CreateContext(nameof(RunnerCannotRaiseCreatorCompletionDispute));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, runner.Id);
+        var result = await controller.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The creator changed the scope after I accepted.",
+            Category = "Scope change"
+        });
+
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task CreatorCannotDisputeAfterConfirmationWindowExpires()
+    {
+        using var context = CreateContext(nameof(CreatorCannotDisputeAfterConfirmationWindowExpires));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        task.EscrowHoldUntil = DateTime.UtcNow.AddMinutes(-1);
+        task.CompletedAt = DateTime.UtcNow.AddHours(-25);
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, creator.Id);
+        var result = await controller.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The work does not match the agreed requirements.",
+            Category = "Quality"
+        });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task RunnerIncidentReportIsStoredWithoutChangingEscrowOrPayment()
+    {
+        using var context = CreateContext(nameof(RunnerIncidentReportIsStoredWithoutChangingEscrowOrPayment));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Claimed", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateIncidentController(context, runner.Id);
+        var result = await controller.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The creator added additional work after the task was accepted."
+        });
+
         var ok = Assert.IsType<OkObjectResult>(result.Result);
         var response = Assert.IsType<ApiResponse<object>>(ok.Value);
-        Assert.False(response.Success);
-        Assert.Empty(await context.Disputes.ToListAsync());
+        Assert.True(response.Success);
+        var incident = Assert.Single(context.TaskIncidents);
+        Assert.Equal(runner.Id, incident.ReporterUserId);
+        Assert.Equal("Open", incident.Status);
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("Claimed", task.TaskStatus);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task AdminIncidentHoldBlocksReleaseAndExtendsConfirmationDeadlineWhenReleased()
+    {
+        using var context = CreateContext(nameof(AdminIncidentHoldBlocksReleaseAndExtendsConfirmationDeadlineWhenReleased));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var admin = CreateUser(3, "admin", "admin@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, admin);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var participantController = CreateIncidentController(context, runner.Id);
+        var report = await participantController.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The agreed task scope changed after acceptance and needs support review."
+        });
+        Assert.IsType<OkObjectResult>(report.Result);
+        var incident = Assert.Single(context.TaskIncidents);
+        var originalDeadline = task.EscrowHoldUntil!.Value;
+
+        var adminController = CreateIncidentController(context, admin.Id, "Admin");
+        var hold = await adminController.PlaceEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "Reviewing the runner's documented scope-change evidence."
+        });
+        Assert.IsType<OkObjectResult>(hold.Result);
+        Assert.Equal("incident_hold", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+
+        var releaseWhileHeld = await new EscrowService(context, NullLogger<EscrowService>.Instance)
+            .ReleaseEscrowAsync(task.Id, force: true);
+        Assert.False(releaseWhileHeld);
+
+        var closeWhileHeld = await adminController.Review(incident.Id, new ReviewTaskIncidentRequest
+        {
+            Status = "Resolved",
+            AdminNotes = "The review is complete but the financial hold remains active."
+        });
+        Assert.IsType<ConflictObjectResult>(closeWhileHeld.Result);
+
+        incident.EscrowHoldPlacedAt = DateTime.UtcNow.AddMinutes(-15);
+        await context.SaveChangesAsync();
+        var release = await adminController.ReleaseEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "The incident review is complete and the hold can safely be removed."
+        });
+
+        Assert.IsType<OkObjectResult>(release.Result);
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.True(task.EscrowHoldUntil >= originalDeadline.AddMinutes(14));
+        Assert.NotNull(incident.EscrowHoldReleasedAt);
+        var automaticReleaseBeforeExtendedDeadline = await new EscrowService(context, NullLogger<EscrowService>.Instance)
+            .ReleaseEscrowAsync(task.Id, force: false);
+        Assert.False(automaticReleaseBeforeExtendedDeadline);
+        Assert.Equal(2, await context.AuditLogs.CountAsync());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task CreatorCanOpenFormalDisputeWhileIncidentHoldIsActive()
+    {
+        using var context = CreateContext(nameof(CreatorCanOpenFormalDisputeWhileIncidentHoldIsActive));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var admin = CreateUser(3, "admin", "admin@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, admin);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var runnerController = CreateIncidentController(context, runner.Id);
+        var report = await runnerController.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Scope change",
+            Description = "The task scope changed after acceptance and needs a support review."
+        });
+        Assert.IsType<OkObjectResult>(report.Result);
+        var incident = Assert.Single(context.TaskIncidents);
+
+        var adminController = CreateIncidentController(context, admin.Id, "Admin");
+        var hold = await adminController.PlaceEscrowHold(incident.Id, new IncidentEscrowHoldRequest
+        {
+            Reason = "Reviewing the runner's submitted scope-change evidence."
+        });
+        Assert.IsType<OkObjectResult>(hold.Result);
+        Assert.Equal("incident_hold", task.EscrowStatus);
+
+        // Simulate the original confirmation deadline passing while the hold is active.
+        // The effective dispute clock must remain paused for the full hold duration.
+        incident.EscrowHoldPlacedAt = DateTime.UtcNow.AddHours(-25);
+        incident.EscrowHoldDeadlineBefore = DateTime.UtcNow.AddHours(-1);
+        await context.SaveChangesAsync();
+
+        var creatorController = CreateController(context, creator.Id);
+        var dispute = await creatorController.RaiseDispute(new RaiseDisputeRequest
+        {
+            TaskId = task.TaskId,
+            Issue = "The completed work does not match the agreed requirements.",
+            Category = "Quality"
+        });
+
+        var ok = Assert.IsType<OkObjectResult>(dispute.Result);
+        var response = Assert.IsType<ApiResponse<object>>(ok.Value);
+        Assert.True(response.Success);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.NotNull(incident.EscrowHoldReleasedAt);
+        Assert.Contains("formal creator completion dispute", incident.EscrowHoldReleaseReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, await context.AuditLogs.CountAsync());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task NonParticipantCannotSubmitTaskIncident()
+    {
+        using var context = CreateContext(nameof(NonParticipantCannotSubmitTaskIncident));
+        var creator = CreateUser(1, "creator", "creator@test.com");
+        var runner = CreateUser(2, "runner", "runner@test.com");
+        var stranger = CreateUser(3, "runner", "stranger@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Claimed", "EscrowHeld", "held");
+        context.Users.AddRange(creator, runner, stranger);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateIncidentController(context, stranger.Id);
+        var result = await controller.Report(task.TaskId, new CreateTaskIncidentRequest
+        {
+            Category = "Safety concern",
+            Description = "An unrelated user is attempting to report this task."
+        });
+
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Empty(await context.TaskIncidents.ToListAsync());
         Assert.Equal("held", task.EscrowStatus);
         Assert.Equal("EscrowHeld", task.PaymentStatus);
     }
@@ -158,6 +377,20 @@ public class DisputeLifecycleTests
         UpdatedAt = DateTime.UtcNow,
         CompletedAt = taskStatus == "AwaitingConfirmation" ? DateTime.UtcNow : null
     };
+
+    private static TaskIncidentsController CreateIncidentController(AppDbContext context, int userId, string role = "User")
+    {
+        var controller = new TaskIncidentsController(context, new NoOpNotificationService());
+        var http = new DefaultHttpContext();
+        http.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [
+                new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+                new Claim(ClaimTypes.Role, role)
+            ],
+            "TestAuth"));
+        controller.ControllerContext = new ControllerContext { HttpContext = http };
+        return controller;
+    }
 
     private static DisputesController CreateController(AppDbContext context, int userId)
     {
