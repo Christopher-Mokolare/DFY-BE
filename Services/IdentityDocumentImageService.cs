@@ -18,9 +18,10 @@ public sealed class IdentityDocumentImageService : IIdentityDocumentImageService
 
     public (byte[] Bytes, string ContentType) NormalizeAndStripMetadata(ReadOnlySpan<byte> source, string contentType)
     {
-        using var codec = SKCodec.Create(source.ToArray());
+        using var encodedData = SKData.CreateCopy(source.ToArray());
+        using var codec = SKCodec.Create(encodedData);
         if (codec == null) throw new InvalidDataException("The identity document image could not be decoded.");
-        if (codec.Origin != SKEncodedOrigin.TopLeft)
+        if (codec.EncodedOrigin != SKEncodedOrigin.TopLeft)
             throw new InvalidDataException("Rotate the identity document image upright and save it before uploading.");
         using var bitmap = SKBitmap.Decode(source.ToArray());
         ValidateDimensions(bitmap);
@@ -33,8 +34,9 @@ public sealed class IdentityDocumentImageService : IIdentityDocumentImageService
 
     public byte[] ApplyWatermark(ReadOnlySpan<byte> source, string contentType, string watermarkText)
     {
-        using var codec = SKCodec.Create(source.ToArray());
-        if (codec == null || codec.Origin != SKEncodedOrigin.TopLeft)
+        using var encodedData = SKData.CreateCopy(source.ToArray());
+        using var codec = SKCodec.Create(encodedData);
+        if (codec == null || codec.EncodedOrigin != SKEncodedOrigin.TopLeft)
             throw new InvalidDataException("The identity document image could not be safely decoded for watermarking.");
         using var bitmap = SKBitmap.Decode(source.ToArray());
         ValidateDimensions(bitmap);
