@@ -26,7 +26,7 @@ public sealed class IdentityReviewSlaService(
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { logger.LogError(ex, "DFY Document Review SLA monitor failed."); }
 
-            try { await Task.Delay(PollInterval, stoppingToken); }
+            try { await System.Threading.Tasks.Task.Delay(PollInterval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
     }
