@@ -1402,6 +1402,9 @@ namespace DoForYou.API.Migrations
                     b.HasIndex("UserId", "SubmittedAt")
                         .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
 
+                    b.HasIndex("ReviewedByUserId")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
                     b.ToTable("IdentityVerificationSubmissions");
                 });
 
