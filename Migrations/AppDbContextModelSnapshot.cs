@@ -1319,6 +1319,110 @@ namespace DoForYou.API.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("DoForYou.API.Models.IdentityVerificationSubmission", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<byte[]>("BackCiphertext")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("BackContentType")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<byte[]>("BackNonce")
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("BackTag")
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ConsentVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("DocumentType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime?>("DocumentsDeleteAfter")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DocumentsPurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<byte[]>("FrontCiphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("FrontContentType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<byte[]>("FrontNonce")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("FrontTag")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("ReviewReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int?>("ReviewedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status", "SubmittedAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_Status_SubmittedAt");
+
+                    b.HasIndex("UserId", "SubmittedAt")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
+
+                    b.ToTable("IdentityVerificationSubmissions");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.IdentityVerificationSubmission", b =>
+                {
+                    b.HasOne("DoForYou.API.Models.User", "ReviewedByUser")
+                        .WithMany()
+                        .HasForeignKey("ReviewedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoForYou.API.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ReviewedByUser");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("DoForYou.API.Models.WalletTransaction", b =>
                 {
                     b.Property<int>("Id")
