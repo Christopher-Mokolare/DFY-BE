@@ -47,6 +47,9 @@ public sealed class IdentityVerificationSubmission
     [StringLength(1000)]
     public string? ReviewReason { get; set; }
 
+    [StringLength(1000)]
+    public string? InternalReviewNote { get; set; }
+
     public DateTime? DocumentsDeleteAfter { get; set; }
     public DateTime? DocumentsPurgedAt { get; set; }
 
