@@ -22,6 +22,8 @@ public interface IIdentityVerificationService
     async Task<IdentityProviderSession> CreateProviderSessionAsync(string externalUserId, string verifiedEmail, CancellationToken cancellationToken) =>
         new(await CreateSdkAccessTokenAsync(externalUserId, verifiedEmail, cancellationToken), null, null);
     bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm);
+    bool VerifyWebhookRawSignature(ReadOnlySpan<byte> rawBody, string? digest, string? timestamp) =>
+        VerifyWebhookSignature(rawBody, digest, timestamp);
 }
 
 public sealed class SumsubIdentityVerificationService(
