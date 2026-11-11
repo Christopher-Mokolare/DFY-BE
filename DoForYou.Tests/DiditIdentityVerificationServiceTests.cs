@@ -66,6 +66,7 @@ public sealed class DiditIdentityVerificationServiceTests
         using var body = JsonDocument.Parse(seenBody!);
         Assert.Equal(WorkflowId, body.RootElement.GetProperty("workflow_id").GetString());
         Assert.Equal("dfy-user-42", body.RootElement.GetProperty("vendor_data").GetString());
+        Assert.Equal("ZAF", body.RootElement.GetProperty("expected_details").GetProperty("id_country").GetString());
         Assert.Equal("4c5c7f3a-5c5c-4c5c-8f3a-4c5c7f3a5c5c|https://verify.didit.me/session/test", result);
     }
 
