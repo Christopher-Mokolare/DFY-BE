@@ -480,9 +480,9 @@ public sealed class ManualIdentityVerificationController(
         {
             s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt,
             s.userName, s.Email, s.DateOfBirth,
-            reviewDueAt = CalculateReviewDueAt(s.SubmittedAt),
+            reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessDays(s.SubmittedAt, 1, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
             reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
-            isOverdue = now > CalculateReviewDueAt(s.SubmittedAt)
+            isOverdue = now > SouthAfricanBusinessCalendar.AddBusinessDays(s.SubmittedAt, 1, configuration["IdentityVerification:SouthAfricanPublicHolidays"])
         }).ToList();
         return Ok(new ApiResponse<object> { Success = true, Data = new { submissions, totalCount = total, page, pageSize } });
     }
@@ -656,42 +656,6 @@ public sealed class ManualIdentityVerificationController(
                     ? "DFY recorded the manual document review as rejected."
                     : "Additional information has been requested. The runner may submit a corrected application."
         });
-    }
-
-    private DateTime CalculateReviewDueAt(DateTime submittedAt)
-    {
-        // South African public holidays are maintained here for the current and next calendar year.
-        // Additional dates can be supplied through IdentityVerification:SouthAfricanPublicHolidays
-        // (comma-separated yyyy-MM-dd values) and must be refreshed annually.
-        var holidays = new HashSet<DateOnly>
-        {
-            new(2026, 1, 1), new(2026, 3, 21), new(2026, 4, 3), new(2026, 4, 6),
-            new(2026, 4, 27), new(2026, 5, 1), new(2026, 6, 16), new(2026, 8, 10),
-            new(2026, 9, 24), new(2026, 11, 4), new(2026, 12, 16), new(2026, 12, 25),
-            new(2026, 12, 26),
-            new(2027, 1, 1), new(2027, 3, 22), new(2027, 3, 26), new(2027, 3, 29),
-            new(2027, 4, 27), new(2027, 5, 1), new(2027, 6, 16), new(2027, 8, 9),
-            new(2027, 9, 24), new(2027, 12, 16), new(2027, 12, 25), new(2027, 12, 26),
-            new(2027, 12, 27)
-        };
-        var configuredHolidays = configuration["IdentityVerification:SouthAfricanPublicHolidays"];
-        if (!string.IsNullOrWhiteSpace(configuredHolidays))
-        {
-            foreach (var value in configuredHolidays.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                if (DateOnly.TryParse(value, out var date)) holidays.Add(date);
-        }
-
-        var due = DateTime.SpecifyKind(submittedAt, DateTimeKind.Utc);
-        var addedBusinessDays = 0;
-        while (addedBusinessDays < 1)
-        {
-            due = due.AddDays(1);
-            var date = DateOnly.FromDateTime(due);
-            if (due.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday || holidays.Contains(date))
-                continue;
-            addedBusinessDays++;
-        }
-        return due;
     }
 
     private async System.Threading.Tasks.Task SendEmailSafelyAsync(string? recipient, string subject, string body, CancellationToken cancellationToken)
