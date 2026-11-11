@@ -1377,6 +1377,10 @@ namespace DoForYou.API.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<string>("InternalReviewNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<int?>("ReviewedByUserId")
                         .HasColumnType("integer");
 
