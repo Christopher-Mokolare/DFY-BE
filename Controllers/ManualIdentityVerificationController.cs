@@ -32,7 +32,7 @@ public sealed class ManualIdentityVerificationController(
     private static readonly TimeSpan AdminStepUpWindow = TimeSpan.FromMinutes(15);
     private const int MaxAttemptsPerWindow = 3;
     private const int MaxDocumentBytes = 5 * 1024 * 1024;
-    private const string ManualProvider = "DFY_MANUAL";
+    private const string ManualProvider = "manual_document_review";
 
     private string ConsentVersion =>
         Environment.GetEnvironmentVariable("IDENTITY_VERIFICATION_CONSENT_VERSION")?.Trim()
