@@ -78,6 +78,7 @@ public sealed class ManualIdentityVerificationController(
                 startedAt = user.IdentityVerificationStartedAt,
                 updatedAt = user.IdentityVerificationUpdatedAt,
                 configured,
+                consentVersion = ConsentVersion,
                 attemptsRemaining,
                 latestSubmission = latest,
                 canStart = configured && user.EmailVerified && IsRunner(user.UserType) &&
