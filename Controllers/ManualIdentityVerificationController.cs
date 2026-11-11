@@ -341,7 +341,8 @@ public sealed class ManualIdentityVerificationController(
         if (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your documents are already awaiting DFY review." });
-        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your application is already awaiting DFY review." });
 
         var now = DateTime.UtcNow;
