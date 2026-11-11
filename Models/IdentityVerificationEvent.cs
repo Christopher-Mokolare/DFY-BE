@@ -3,8 +3,8 @@ using System.ComponentModel.DataAnnotations;
 namespace DoForYou.API.Models;
 
 /// <summary>
-/// Minimal audit metadata for signed identity-provider callbacks.
-/// Raw webhook bodies and identity-document data are deliberately not persisted.
+/// Minimal audit metadata for DFY's first-party manual identity-review workflow.
+/// Raw identity-document bytes and decrypted payloads are never persisted in this audit table.
 /// </summary>
 public sealed class IdentityVerificationEvent
 {
@@ -12,7 +12,7 @@ public sealed class IdentityVerificationEvent
     public int UserId { get; set; }
 
     [Required, StringLength(24)]
-    public string Provider { get; set; } = "Sumsub";
+    public string Provider { get; set; } = "DFY_MANUAL";
 
     [Required, StringLength(64)]
     public string EventHash { get; set; } = string.Empty;
