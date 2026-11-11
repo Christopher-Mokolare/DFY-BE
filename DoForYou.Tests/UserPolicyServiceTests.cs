@@ -159,7 +159,7 @@ public class UserPolicyServiceTests
     }
 
     [Fact]
-    public void Payout_is_held_when_email_identity_or_authenticator_gate_is_missing()
+    public void Payout_is_held_when_email_identity_age_or_authenticator_gate_is_missing()
     {
         var user = CompleteUser("runner");
         Assert.True(_policy.CanReceivePayout(user));
@@ -172,6 +172,11 @@ public class UserPolicyServiceTests
         Assert.False(_policy.CanReceivePayout(user));
 
         user.IdentityVerificationStatus = "passed";
+        user.DateOfBirth = DateTime.UtcNow.Date.AddYears(-17);
+        Assert.False(_policy.CanReceivePayout(user));
+
+        user.DateOfBirth = DateTime.UtcNow.Date.AddYears(-18).AddDays(-1);
+        Assert.True(_policy.CanReceivePayout(user));
         user.AuthenticatorTwoFactorEnabled = false;
         Assert.False(_policy.CanReceivePayout(user));
 
