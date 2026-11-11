@@ -235,6 +235,7 @@ public sealed class ManualIdentityVerificationControllerTests
         var first = CreateController(context, admin1.Id);
         var second = CreateController(context, admin2.Id);
         Assert.IsType<OkObjectResult>((await first.ClaimReview(submission.Id, CancellationToken.None)).Result);
+        Assert.IsType<OkObjectResult>((await first.HeartbeatReview(submission.Id, CancellationToken.None)).Result);
         Assert.IsType<ConflictObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
 
         var release = await first.ReleaseReview(submission.Id, CancellationToken.None);
