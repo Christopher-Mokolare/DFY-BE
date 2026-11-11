@@ -184,7 +184,7 @@ public sealed class ManualIdentityVerificationControllerTests
         var controller = CreateController(context, admin.Id);
         var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
         {
-            Decision = "approve", Reason = "Document details were reviewed and matched the runner profile.",
+            Decision = "approve", RunnerNote = "Document details were reviewed and matched the runner profile.",
             InternalNote = "Second reviewer confirmed the profile name and date of birth."
         }, CancellationToken.None);
 
@@ -222,7 +222,7 @@ public sealed class ManualIdentityVerificationControllerTests
         var controller = CreateController(context, admin.Id);
         var result = await controller.Decide(submission.Id, new ManualIdentityVerificationDecisionRequest
         {
-            Decision = "approve", Reason = "Document details were reviewed and matched the runner profile."
+            Decision = "approve", RunnerNote = "Document details were reviewed and matched the runner profile."
         }, CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(result.Result).StatusCode);
