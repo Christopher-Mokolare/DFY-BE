@@ -105,7 +105,7 @@ public sealed class ManualIdentityVerificationControllerTests
 
         Assert.IsType<AcceptedResult>(result.Result);
         Assert.Equal("pending", runner.IdentityVerificationStatus);
-        Assert.Equal("DFY_MANUAL", runner.IdentityVerificationProvider);
+        Assert.Equal("manual_document_review", runner.IdentityVerificationProvider);
         var submission = await context.IdentityVerificationSubmissions.SingleAsync();
         Assert.NotEmpty(submission.FrontCiphertext);
         Assert.NotEqual(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02, 0x03 }, submission.FrontCiphertext);
