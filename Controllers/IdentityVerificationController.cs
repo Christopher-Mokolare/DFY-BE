@@ -520,8 +520,20 @@ public sealed class IdentityVerificationController(
             !string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal))
             return StatusCode(StatusCodes.Status503ServiceUnavailable);
 
+        const int maxWebhookBytes = 1024 * 1024;
+        if (Request.ContentLength > maxWebhookBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge);
+
         await using var bodyBuffer = new MemoryStream();
-        await Request.Body.CopyToAsync(bodyBuffer, cancellationToken);
+        var readBuffer = new byte[8192];
+        while (true)
+        {
+            var read = await Request.Body.ReadAsync(readBuffer.AsMemory(0, readBuffer.Length), cancellationToken);
+            if (read == 0) break;
+            if (bodyBuffer.Length + read > maxWebhookBytes)
+                return StatusCode(StatusCodes.Status413PayloadTooLarge);
+            await bodyBuffer.WriteAsync(readBuffer.AsMemory(0, read), cancellationToken);
+        }
         var rawBody = bodyBuffer.ToArray();
         var signature = Request.Headers["X-Signature-V2"].ToString();
         var previousSignature = Request.Headers["X-Signature-V2-Previous"].ToString();
