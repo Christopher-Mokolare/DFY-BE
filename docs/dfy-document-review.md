@@ -65,3 +65,7 @@ Pending cases use an exclusive ten-minute reviewer lease. The owner must heartbe
 ## Required staging malware-scanner configuration
 
 Document uploads fail closed unless a private ClamAV daemon is reachable. Configure `DFY_KYC_CLAMAV_HOST` to the private hostname of the staging ClamAV service and `DFY_KYC_CLAMAV_PORT` to its INSTREAM port (normally 3310). Do not expose the daemon publicly. The API performs a ClamAV INSTREAM scan before image normalization/encryption; an infected result is rejected and a scanner outage prevents submission. These settings must be provisioned on staging only and verified with a clean test image and an EICAR test file before enabling runner submissions.
+ 
+## South African ID checksum and duplicate investigation
+
+For Smart ID card and green barcoded ID book approvals, the reviewer enters the 13-digit number read from the document. The backend validates its checksum and encoded adult date of birth, then computes a keyed HMAC using the independent `DFY_KYC_ID_HMAC_KEY` secret. Only the HMAC is stored for duplicate matching; the raw ID number is not persisted by this review flow. A match against another submission, a previously approved fingerprint or a legacy user ID number sets a duplicate-investigation flag and blocks approval without automatically rejecting the runner. Configure a random base64 key of at least 32 bytes on staging only.
