@@ -90,7 +90,7 @@ public sealed class DiditIdentityVerificationService(
 
         try
         {
-            using var document = JsonDocument.Parse(rawBody);
+            using var document = JsonDocument.Parse(rawBody.ToArray());
             var timestamp = ReadString(document.RootElement, "timestamp");
             if (string.IsNullOrWhiteSpace(timestamp) ||
                 !string.Equals(timestamp, digestAlgorithm.Trim(), StringComparison.Ordinal))
