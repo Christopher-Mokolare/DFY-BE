@@ -11,7 +11,6 @@ Configure these values as Render environment secrets on the **staging backend on
 - `DIDIT_WEBHOOK_SECRET`: the current signing secret for the Didit webhook destination.
 - `DIDIT_WEBHOOK_PREVIOUS_SECRET` (optional): the previous signing secret during Didit's 24-hour rotation overlap.
 - `IDENTITY_VERIFICATION_CONSENT_VERSION`: the exact approved notice version presented to runners.
-- `DIDIT_WEBHOOK_URL` (optional): the public HTTPS callback URL, if configured in the Didit session workflow.
 
 Do not put these values in source control, frontend environment variables, mobile app configuration, issue comments, or logs.
 
