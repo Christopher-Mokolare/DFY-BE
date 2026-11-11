@@ -515,7 +515,7 @@ public sealed class IdentityVerificationController(
             var status = ReadString(root, "status");
             var eventId = ReadString(root, "event_id");
             var createdAt = ReadString(root, "created_at");
-            if (!string.Equals(webhookType, "status.updated", StringComparison.Ordinal))
+            if (webhookType is not ("status.updated" or "data.updated"))
                 return Accepted(new { accepted = true });
             if (string.IsNullOrWhiteSpace(sessionId) ||
                 string.IsNullOrWhiteSpace(vendorData) ||
@@ -618,8 +618,8 @@ public sealed class IdentityVerificationController(
         {
             "Declined" => "failed",
             "In Review" => "manual_review",
-            "Expired" or "Kyc Expired" => "expired",
-            "Resubmitted" or "In Progress" or "Not Started" => "pending",
+            "Expired" or "Kyc Expired" or "Abandoned" => "expired",
+            "Resubmitted" or "In Progress" or "Not Started" or "Awaiting User" => "pending",
             _ => "ignored"
         };
     }
