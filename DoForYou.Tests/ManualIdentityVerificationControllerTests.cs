@@ -89,9 +89,10 @@ public sealed class ManualIdentityVerificationControllerTests
         using var sourceEncoded = sourceImage.Encode(SKEncodedImageFormat.Jpeg, 90);
         var normalized = service.NormalizeAndStripMetadata(sourceEncoded.ToArray(), "image/jpeg");
 
-        using var normalizedCodec = SKCodec.Create(normalized.Bytes);
+        using var normalizedData = SKData.CreateCopy(normalized.Bytes);
+        using var normalizedCodec = SKCodec.Create(normalizedData);
         Assert.NotNull(normalizedCodec);
-        Assert.Equal(SKEncodedOrigin.TopLeft, normalizedCodec!.Origin);
+        Assert.Equal(SKEncodedOrigin.TopLeft, normalizedCodec!.EncodedOrigin);
 
         var watermarked = service.ApplyWatermark(normalized.Bytes, normalized.ContentType, "DFY CONFIDENTIAL CASE 12");
         Assert.NotEqual(normalized.Bytes, watermarked);
