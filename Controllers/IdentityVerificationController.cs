@@ -279,10 +279,24 @@ public sealed class IdentityVerificationController(
         }
 
         var externalUserId = $"dfy-user-{user.Id}";
-        string accessToken;
+        string? accessToken = null;
+        string? diditSessionId = null;
+        string? diditUrl = null;
         try
         {
-            accessToken = await identityVerification.CreateSdkAccessTokenAsync(externalUserId, user.Email, cancellationToken);
+            var providerSession = await identityVerification.CreateSdkAccessTokenAsync(externalUserId, user.Email, cancellationToken);
+            if (string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal))
+            {
+                var parts = providerSession.Split('|', 2);
+                if (parts.Length != 2 || string.IsNullOrWhiteSpace(parts[0]) || string.IsNullOrWhiteSpace(parts[1]))
+                    throw new InvalidOperationException("The identity-verification provider returned an invalid hosted session.");
+                diditSessionId = parts[0];
+                diditUrl = parts[1];
+            }
+            else
+            {
+                accessToken = providerSession;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -318,9 +332,9 @@ public sealed class IdentityVerificationController(
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(u => u.IdentityVerificationHandoffTokenHash, (string?)null)
                     .SetProperty(u => u.IdentityVerificationHandoffExpiry, (DateTime?)null)
-                    .SetProperty(u => u.IdentityVerificationProvider, "Sumsub")
+                    .SetProperty(u => u.IdentityVerificationProvider, identityVerification.ProviderName)
                     .SetProperty(u => u.IdentityVerificationExternalUserId, externalUserId)
-                    .SetProperty(u => u.IdentityVerificationApplicantId, (string?)null)
+                    .SetProperty(u => u.IdentityVerificationApplicantId, diditSessionId)
                     .SetProperty(u => u.IdentityVerificationStatus, "pending")
                     .SetProperty(u => u.IdentityVerificationStartedAt, startedAt)
                     .SetProperty(u => u.IdentityVerificationUpdatedAt, startedAt)
@@ -343,9 +357,9 @@ public sealed class IdentityVerificationController(
             {
                 trackedUser.IdentityVerificationHandoffTokenHash = null;
                 trackedUser.IdentityVerificationHandoffExpiry = null;
-                trackedUser.IdentityVerificationProvider = "Sumsub";
+                trackedUser.IdentityVerificationProvider = identityVerification.ProviderName;
                 trackedUser.IdentityVerificationExternalUserId = externalUserId;
-                trackedUser.IdentityVerificationApplicantId = null;
+                trackedUser.IdentityVerificationApplicantId = diditSessionId;
                 trackedUser.IdentityVerificationStatus = "pending";
                 trackedUser.IdentityVerificationStartedAt = startedAt;
                 trackedUser.IdentityVerificationUpdatedAt = startedAt;
@@ -370,7 +384,9 @@ public sealed class IdentityVerificationController(
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Data = new { accessToken, expiresInSeconds = 600, provider = "Sumsub" },
+            Data = string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal)
+                ? new { verificationUrl = diditUrl, sessionId = diditSessionId, provider = "Didit" } as object
+                : new { accessToken, expiresInSeconds = 600, provider = "Sumsub" },
             Message = "Verification session opened."
         });
     }
@@ -456,6 +472,147 @@ public sealed class IdentityVerificationController(
                     Message = "The verification provider could not refresh this session. Return to your profile and retry."
                 });
         }
+    }
+
+    /// <summary>
+    /// Validates Didit's V2 HMAC webhook and correlates the session to the exact
+    /// runner/session created by DFY. Only a fully approved configured workflow
+    /// can grant identity eligibility.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("didit/webhook")]
+    public async Task<IActionResult> DiditWebhook(CancellationToken cancellationToken)
+    {
+        if (!identityVerification.IsConfigured ||
+            !string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        await using var bodyBuffer = new MemoryStream();
+        await Request.Body.CopyToAsync(bodyBuffer, cancellationToken);
+        var rawBody = bodyBuffer.ToArray();
+        if (!identityVerification.VerifyWebhookSignature(
+                rawBody,
+                Request.Headers["X-Signature-V2"].ToString(),
+                Request.Headers["X-Timestamp"].ToString()))
+        {
+            logger.LogWarning("Rejected Didit identity webhook with invalid signature or timestamp.");
+            return Unauthorized();
+        }
+
+        JsonDocument document;
+        try { document = JsonDocument.Parse(rawBody); }
+        catch (JsonException) { return BadRequest(); }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return BadRequest();
+            var sessionId = ReadString(root, "session_id");
+            var vendorData = ReadString(root, "vendor_data");
+            var workflowId = ReadString(root, "workflow_id");
+            var webhookType = ReadString(root, "webhook_type");
+            var status = ReadString(root, "status");
+            var timestamp = ReadString(root, "timestamp");
+            if (string.IsNullOrWhiteSpace(sessionId) ||
+                string.IsNullOrWhiteSpace(vendorData) ||
+                string.IsNullOrWhiteSpace(workflowId) ||
+                string.IsNullOrWhiteSpace(status) ||
+                !string.Equals(workflowId, identityVerification.ExpectedLevelName, StringComparison.Ordinal))
+                return Accepted(new { accepted = true });
+
+            if (!long.TryParse(timestamp, NumberStyles.None, CultureInfo.InvariantCulture, out var unixSeconds))
+                return BadRequest();
+            DateTime providerEventAt;
+            try { providerEventAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds).UtcDateTime; }
+            catch (ArgumentOutOfRangeException) { return BadRequest(); }
+
+            var eventHash = Convert.ToHexString(SHA256.HashData(rawBody)).ToLowerInvariant();
+            if (await context.IdentityVerificationEvents.AsNoTracking()
+                    .AnyAsync(e => e.Provider == "Didit" && e.EventHash == eventHash, cancellationToken))
+                return Ok(new { accepted = true, duplicate = true });
+
+            var user = await context.Users.FirstOrDefaultAsync(u =>
+                u.IdentityVerificationApplicantId == sessionId &&
+                u.IdentityVerificationProvider == "Didit" &&
+                u.IdentityVerificationExternalUserId == vendorData,
+                cancellationToken);
+            if (user == null)
+                return Accepted(new { accepted = true });
+
+            var resultStatus = ResolveDiditStatus(root, status);
+            var eventRecord = new IdentityVerificationEvent
+            {
+                UserId = user.Id,
+                Provider = "Didit",
+                EventHash = eventHash,
+                ProviderApplicantId = Clip(sessionId, 120),
+                EventType = Clip(webhookType ?? "status.updated", 60) ?? "status.updated",
+                ResultStatus = resultStatus,
+                ReceivedAt = DateTime.UtcNow
+            };
+
+            if (providerEventAt >= (user.IdentityVerificationStartedAt ?? DateTime.MinValue) &&
+                providerEventAt > (user.IdentityVerificationLastEventAt ?? DateTime.MinValue) &&
+                resultStatus != "ignored")
+            {
+                user.IdentityVerificationStatus = resultStatus;
+                user.IdentityVerificationUpdatedAt = DateTime.UtcNow;
+                user.IdentityVerificationLastEventAt = providerEventAt;
+            }
+
+            context.IdentityVerificationEvents.Add(eventRecord);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                context.ChangeTracker.Clear();
+                if (await context.IdentityVerificationEvents.AsNoTracking()
+                        .AnyAsync(e => e.Provider == "Didit" && e.EventHash == eventHash, cancellationToken))
+                    return Ok(new { accepted = true, duplicate = true });
+                logger.LogError("Could not persist a signed Didit identity event.");
+                return StatusCode(StatusCodes.Status500InternalServerError);
+            }
+
+            return Ok(new { accepted = true });
+        }
+    }
+
+    private static string ResolveDiditStatus(JsonElement root, string providerStatus)
+    {
+        if (string.Equals(providerStatus, "Approved", StringComparison.Ordinal))
+        {
+            if (!root.TryGetProperty("decision", out var decision) || decision.ValueKind != JsonValueKind.Object)
+                return "manual_review";
+
+            static bool AllApproved(JsonElement parent, string name)
+            {
+                if (!parent.TryGetProperty(name, out var items) || items.ValueKind != JsonValueKind.Array)
+                    return false;
+                var values = items.EnumerateArray().ToArray();
+                return values.Length > 0 && values.All(item =>
+                    item.ValueKind == JsonValueKind.Object &&
+                    item.TryGetProperty("status", out var state) &&
+                    state.ValueKind == JsonValueKind.String &&
+                    string.Equals(state.GetString(), "Approved", StringComparison.Ordinal));
+            }
+
+            return AllApproved(decision, "id_verifications") &&
+                   AllApproved(decision, "liveness_checks") &&
+                   AllApproved(decision, "face_matches")
+                ? "passed"
+                : "manual_review";
+        }
+
+        return providerStatus switch
+        {
+            "Declined" => "failed",
+            "In Review" => "manual_review",
+            "Expired" => "expired",
+            "Resubmitted" or "In Progress" or "Not Started" => "pending",
+            _ => "ignored"
+        };
     }
 
     [AllowAnonymous]
