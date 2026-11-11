@@ -1040,6 +1040,9 @@ namespace DoForYou.API.Migrations
                     b.Property<string>("IdNumber")
                         .HasColumnType("text");
 
+                    b.Property<string>("IdentityDocumentIdHmac")
+                        .HasColumnType("text");
+
                     b.Property<string>("IdentityVerificationStatus")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1195,6 +1198,9 @@ namespace DoForYou.API.Migrations
                         .IsUnique()
                         .HasFilter("\"IdentityVerificationExternalUserId\" IS NOT NULL")
                         .HasDatabaseName("IX_Users_IdentityVerificationExternalUserId");
+
+                    b.HasIndex("IdentityDocumentIdHmac")
+                        .HasDatabaseName("IX_Users_IdentityDocumentIdHmac");
 
                     b.HasIndex("GoogleSubject")
                         .IsUnique()
@@ -1394,6 +1400,13 @@ namespace DoForYou.API.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<string>("DocumentIdHmac")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("DuplicateIdDetected")
+                        .HasColumnType("boolean");
+
                     b.Property<int?>("ReviewedByUserId")
                         .HasColumnType("integer");
 
@@ -1430,6 +1443,9 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("ReviewedByUserId")
                         .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
+                    b.HasIndex("DocumentIdHmac")
+                        .HasDatabaseName("IX_IdentityVerificationSubmissions_DocumentIdHmac");
 
                     b.HasIndex("ReviewClaimExpiresAt")
                         .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewClaimExpiresAt");
