@@ -64,8 +64,9 @@ public sealed class ManualIdentityVerificationController(
             .FirstOrDefaultAsync(cancellationToken);
 
         var configured = encryption.IsConfigured && !string.IsNullOrWhiteSpace(ConsentVersion);
-        var providerPendingCanBeReplaced =
-            string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
+        var legacyProviderStateCanBeReplaced =
+            (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase)) &&
             !string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal);
         var attemptsRemaining = AttemptsRemaining(user.IdentityVerificationAttemptCount, user.IdentityVerificationAttemptWindowStartAt);
 
@@ -84,7 +85,7 @@ public sealed class ManualIdentityVerificationController(
                 handoffPending = user.IdentityVerificationHandoffTokenHash != null && user.IdentityVerificationHandoffExpiry > DateTime.UtcNow,
                 latestSubmission = latest,
                 canStart = configured && user.EmailVerified && IsRunner(user.UserType) &&
-                    (CanRestart(user.IdentityVerificationStatus) || providerPendingCanBeReplaced) &&
+                    (CanRestart(user.IdentityVerificationStatus) || legacyProviderStateCanBeReplaced) &&
                     attemptsRemaining > 0 &&
                     !(user.IdentityVerificationHandoffTokenHash != null && user.IdentityVerificationHandoffExpiry > DateTime.UtcNow)
             }
@@ -118,7 +119,8 @@ public sealed class ManualIdentityVerificationController(
         if (string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your documents are already awaiting DFY review." });
-        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(user.IdentityVerificationStatus, "manual_review", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(user.IdentityVerificationProvider, ManualProvider, StringComparison.Ordinal))
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your application is already awaiting DFY review." });
 
         var now = DateTime.UtcNow;
