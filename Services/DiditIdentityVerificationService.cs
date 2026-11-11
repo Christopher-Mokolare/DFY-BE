@@ -21,7 +21,6 @@ public sealed class DiditIdentityVerificationService(
     private string WorkflowId => ReadSetting("DIDIT_WORKFLOW_ID", "Didit:WorkflowId");
     private string WebhookSecret => ReadSetting("DIDIT_WEBHOOK_SECRET", "Didit:WebhookSecret");
     private string PreviousWebhookSecret => ReadSetting("DIDIT_WEBHOOK_PREVIOUS_SECRET", "Didit:PreviousWebhookSecret");
-    private string CallbackUrl => ReadSetting("DIDIT_WEBHOOK_URL", "Didit:WebhookUrl");
     public string ProviderName => "Didit";
     public string ConsentVersion => ReadSetting("IDENTITY_VERIFICATION_CONSENT_VERSION", "IdentityVerification:ConsentVersion");
     public string ExpectedLevelName => WorkflowId;
@@ -56,10 +55,6 @@ public sealed class DiditIdentityVerificationService(
             ["workflow_id"] = WorkflowId,
             ["vendor_data"] = externalUserId
         };
-        if (Uri.TryCreate(CallbackUrl, UriKind.Absolute, out var callback) &&
-            callback.Scheme == Uri.UriSchemeHttps)
-            requestData["callback"] = callback.ToString();
-
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(ApiBaseUrl), "/v3/session/"));
         request.Headers.TryAddWithoutValidation("x-api-key", ApiKey);
         request.Content = new StringContent(JsonSerializer.Serialize(requestData), Encoding.UTF8, "application/json");
