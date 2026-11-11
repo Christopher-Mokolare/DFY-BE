@@ -70,6 +70,13 @@ namespace DoForYou.API.Migrations
                 name: "IX_IdentityVerificationSubmissions_ReviewedByUserId",
                 table: "IdentityVerificationSubmissions",
                 column: "ReviewedByUserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_IdentityVerificationSubmissions_UserId_Pending",
+                table: "IdentityVerificationSubmissions",
+                column: "UserId",
+                unique: true,
+                filter: "\"Status\" = 'pending'");
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
