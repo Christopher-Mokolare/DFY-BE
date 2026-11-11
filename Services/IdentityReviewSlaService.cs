@@ -91,7 +91,7 @@ public sealed class IdentityReviewSlaService(
     private static System.Threading.Tasks.Task<bool> HasEventAsync(
         AppDbContext db, int userId, string eventType, CancellationToken cancellationToken) =>
         db.IdentityVerificationEvents.AnyAsync(
-            e => e.UserId == userId && e.Provider == "DFY_MANUAL" && e.EventType == eventType,
+            e => e.UserId == userId && e.Provider == "manual_document_review" && e.EventType == eventType,
             cancellationToken);
 
     private static IdentityVerificationEvent CreateEvent(int userId, string eventType, string resultStatus)
@@ -100,7 +100,7 @@ public sealed class IdentityReviewSlaService(
         return new IdentityVerificationEvent
         {
             UserId = userId,
-            Provider = "DFY_MANUAL",
+            Provider = "manual_document_review",
             EventHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant(),
             EventType = eventType,
             ResultStatus = resultStatus,
