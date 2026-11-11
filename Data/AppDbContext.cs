@@ -119,6 +119,10 @@ public class AppDbContext : DbContext
             .HasDatabaseName("IX_IdentityVerificationSubmissions_UserId_SubmittedAt");
 
         modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.ReviewedByUserId)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_ReviewedByUserId");
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
             .HasOne(s => s.User)
             .WithMany()
             .HasForeignKey(s => s.UserId)
