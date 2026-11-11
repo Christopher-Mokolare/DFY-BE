@@ -174,7 +174,7 @@ public sealed class ManualIdentityVerificationController(
         [FromForm] SubmitManualIdentityVerificationHandoffRequest request,
         CancellationToken cancellationToken)
     {
-        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion))
+        if (!encryption.IsConfigured || string.IsNullOrWhiteSpace(ConsentVersion) || malwareScanner?.IsConfigured != true)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object> { Success = false, Message = "DFY document submission is not available yet." });
         var now = DateTime.UtcNow;
         var handoffHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.HandoffCode))).ToLowerInvariant();
@@ -452,6 +452,15 @@ public sealed class ManualIdentityVerificationController(
         catch (InvalidDataException ex)
         {
             return BadRequest(new ApiResponse<object> { Success = false, Message = ex.Message });
+        }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            logger.LogError(ex, "DFY malware scanning or image normalization failed for a document submission.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+            {
+                Success = false, Error = "IDENTITY_DOCUMENT_SCANNER_UNAVAILABLE",
+                Message = "Secure document checks are temporarily unavailable. Please try again later."
+            });
         }
 
         var encryptedFront = encryption.Encrypt(frontBytes);
