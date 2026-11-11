@@ -11,7 +11,6 @@ Configure these values as Render environment secrets on the **staging backend on
 - `DIDIT_API_KEY`: Didit API key for the staging/sandbox application.
 - `DIDIT_WORKFLOW_ID`: the published workflow ID for the DFY runner workflow.
 - `DIDIT_WEBHOOK_SECRET`: the current signing secret for the Didit webhook destination.
-- `DIDIT_WEBHOOK_PREVIOUS_SECRET` (optional): the previous signing secret during Didit's 24-hour rotation overlap.
 - `IDENTITY_VERIFICATION_CONSENT_VERSION`: the exact approved notice version presented to runners.
 
 Do not put these values in source control, frontend environment variables, mobile app configuration, issue comments, or logs.
@@ -42,9 +41,8 @@ Subscribe to `status.updated` and `data.updated`, and select webhook version `v3
 Store the destination's `secret_shared_key` as `DIDIT_WEBHOOK_SECRET`.
 
 The receiver:
-- Verifies the complete payload with `X-Signature-V2` HMAC-SHA256.
-- Checks that `X-Timestamp` matches the signed body timestamp and is within five minutes.
-- Supports Didit's `X-Signature-V2-Previous` header during secret rotation.
+- Verifies the complete payload with `X-Signature-V2` HMAC-SHA256, with Didit's documented raw-body `X-Signature` as a fallback.
+- Checks that `X-Timestamp` matches the body timestamp and is within five minutes.
 - Correlates session ID, workflow ID and `vendor_data` to the same DFY runner.
 - Deduplicates on Didit's stable `event_id`.
 - Uses `created_at` for event ordering, not the retry-refreshed dispatch timestamp.
