@@ -370,8 +370,8 @@ public class IdentityVerificationControllerTests
 
         // Didit refreshes timestamp on retries but retains the same event_id.
         var retryJson = json.Replace(
-            $"\\"timestamp\\":{timestamp}",
-            $"\\"timestamp\\":{timestamp + 1}",
+            $"\"timestamp\":{timestamp}",
+            $"\"timestamp\":{timestamp + 1}",
             StringComparison.Ordinal);
         var replay = await SendDiditWebhook(CreateController(context, provider), retryJson, (timestamp + 1).ToString(CultureInfo.InvariantCulture));
         Assert.IsType<OkObjectResult>(replay);
