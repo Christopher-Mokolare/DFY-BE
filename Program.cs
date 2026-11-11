@@ -139,6 +139,7 @@ builder.Services.AddScoped<IUserPolicyService, UserPolicyService>();
 builder.Services.AddSingleton<IAuthenticatorService, AuthenticatorService>();
 builder.Services.AddHttpClient<IIdentityVerificationService, SumsubIdentityVerificationService>();
 builder.Services.AddSingleton<IIdentityDocumentEncryptionService, IdentityDocumentEncryptionService>();
+builder.Services.AddHostedService<IdentityDocumentRetentionService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHttpClient("Brevo", client =>
 {
