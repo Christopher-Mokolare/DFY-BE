@@ -75,6 +75,10 @@ public class AppDbContext : DbContext
             .IsUnique()
             .HasDatabaseName("IX_Users_NormalizedEmail");
         modelBuilder.Entity<User>()
+            .HasIndex(user => user.IdentityDocumentIdHmac)
+            .HasDatabaseName("IX_Users_IdentityDocumentIdHmac");
+
+        modelBuilder.Entity<User>()
             .HasIndex(user => user.GoogleSubject)
             .IsUnique()
             .HasDatabaseName("IX_Users_GoogleSubject");
@@ -115,6 +119,10 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(e => e.UserId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<IdentityVerificationSubmission>()
+            .HasIndex(s => s.DocumentIdHmac)
+            .HasDatabaseName("IX_IdentityVerificationSubmissions_DocumentIdHmac");
 
         modelBuilder.Entity<IdentityVerificationSubmission>()
             .HasIndex(s => s.ReviewClaimExpiresAt)
