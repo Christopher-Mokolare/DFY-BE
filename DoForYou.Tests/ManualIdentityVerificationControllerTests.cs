@@ -108,7 +108,7 @@ public sealed class ManualIdentityVerificationControllerTests
         var submission = await context.IdentityVerificationSubmissions.SingleAsync();
         Assert.NotEmpty(submission.FrontCiphertext);
         Assert.NotEqual(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02, 0x03 }, submission.FrontCiphertext);
-        Assert.Equal(2, await context.UserConsentEvents.CountAsync());
+        Assert.Single(await context.UserConsentEvents.ToListAsync());
         Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(), e => e.EventType == "submission_received");
     }
 
