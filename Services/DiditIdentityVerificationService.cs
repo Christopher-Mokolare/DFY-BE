@@ -21,6 +21,7 @@ public sealed class DiditIdentityVerificationService(
     private string WorkflowId => ReadSetting("DIDIT_WORKFLOW_ID", "Didit:WorkflowId");
     private string WebhookSecret => ReadSetting("DIDIT_WEBHOOK_SECRET", "Didit:WebhookSecret");
     private string CallbackUrl => ReadSetting("DIDIT_WEBHOOK_URL", "Didit:WebhookUrl");
+    public string ProviderName => "Didit";
     public string ConsentVersion => ReadSetting("IDENTITY_VERIFICATION_CONSENT_VERSION", "IdentityVerification:ConsentVersion");
     public string ExpectedLevelName => WorkflowId;
 
@@ -167,7 +168,7 @@ public sealed class DiditIdentityVerificationService(
                 else if (element.TryGetDecimal(out var number))
                 {
                     if (decimal.Truncate(number) == number)
-                        writer.WriteNumberValue(number.ToString("0", CultureInfo.InvariantCulture));
+                        writer.WriteRawValue(number.ToString("0", CultureInfo.InvariantCulture));
                     else
                         writer.WriteNumberValue(number);
                 }
