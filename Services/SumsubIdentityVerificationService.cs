@@ -13,6 +13,7 @@ namespace DoForYou.API.Services;
 public interface IIdentityVerificationService
 {
     bool IsConfigured { get; }
+    string ProviderName => "Sumsub";
     string ConsentVersion { get; }
     string ExpectedLevelName { get; }
     Task<string> CreateSdkAccessTokenAsync(string externalUserId, string verifiedEmail, CancellationToken cancellationToken);
