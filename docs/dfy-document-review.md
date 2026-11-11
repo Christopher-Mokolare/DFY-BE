@@ -52,3 +52,12 @@ Documents are encrypted at rest and scheduled for deletion 90 days after a decis
 
 ## Release policy
 Staging only. Do not merge draft PRs, alter production data, deploy production, or enable production identity checks without explicit approval.
+
+
+## Runner minimum age
+
+Runner activation and runner payout eligibility are restricted to adults aged 18 or older. Ordinary account registration remains available to users aged 16–17. The reviewer must enter the date of birth printed on the submitted identity document when approving a runner application; the backend rejects an approval below age 18 and stores the document-reviewed date of birth on the user record. Runner task and payout capability checks independently enforce the adult-age gate. Do not treat a self-declared date of birth or a valid-looking ID checksum as proof of identity ownership.
+
+## Reviewer ownership and access audit
+
+Pending cases use an exclusive ten-minute reviewer lease. The owner must heartbeat the lease while reviewing; an expired lease may be claimed by another authorised administrator. Document retrieval and decisions require the active claim owner and recent administrator authenticator verification. Audit events record the administrator actor, submission, and viewed document side without copying document content.
