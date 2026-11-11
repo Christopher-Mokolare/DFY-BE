@@ -550,12 +550,39 @@ public sealed class ManualIdentityVerificationController(
         var decision = request.Decision?.Trim().ToLowerInvariant();
         if (decision is not ("approve" or "reject" or "request_information"))
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose approve, reject or request_information." });
-        var reason = request.Reason?.Trim() ?? string.Empty;
+        var reasonCode = request.ReasonCode?.Trim().ToLowerInvariant() ?? string.Empty;
+        var runnerNote = request.RunnerNote?.Trim() ?? string.Empty;
         var internalNote = request.InternalNote?.Trim();
         if (internalNote?.Length > 1000)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Internal administrator notes cannot exceed 1000 characters." });
-        if (reason.Length < 10 || reason.Length > 1000)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Provide a review reason between 10 and 1000 characters." });
+
+        var reasonLabels = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["document_unclear"] = "Document image is unclear",
+            ["back_side_missing"] = "Required back side is missing",
+            ["document_expired"] = "Document is expired",
+            ["name_mismatch"] = "Name does not match the profile",
+            ["id_number_unreadable"] = "ID number is unreadable",
+            ["suspected_tampering"] = "Document requires additional authenticity review",
+            ["other"] = "Other review reason"
+        };
+        string reason;
+        if (decision == "approve")
+        {
+            reason = string.IsNullOrWhiteSpace(runnerNote)
+                ? "DFY manual document review completed and approved."
+                : runnerNote;
+        }
+        else
+        {
+            if (!reasonLabels.TryGetValue(reasonCode, out var reasonLabel))
+                return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a valid standard review reason." });
+            if (runnerNote.Length < 10 || runnerNote.Length > 850)
+                return BadRequest(new ApiResponse<object> { Success = false, Message = "Provide runner-facing instructions between 10 and 850 characters." });
+            reason = reasonCode + ": " + reasonLabel + "\n" + runnerNote;
+        }
+        if (reason.Length > 1000)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "The runner-facing review reason cannot exceed 1000 characters." });
 
         var now = DateTime.UtcNow;
         var nextStatus = decision switch
@@ -798,8 +825,11 @@ public sealed class ManualIdentityVerificationDecisionRequest
     [Required, StringLength(32)]
     public string Decision { get; set; } = string.Empty;
 
-    [Required, StringLength(1000, MinimumLength = 10)]
-    public string Reason { get; set; } = string.Empty;
+    [StringLength(40)]
+    public string? ReasonCode { get; set; }
+
+    [StringLength(850)]
+    public string? RunnerNote { get; set; }
 
     [StringLength(1000)]
     public string? InternalNote { get; set; }
