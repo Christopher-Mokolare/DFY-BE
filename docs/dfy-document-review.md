@@ -61,3 +61,7 @@ Runner activation and runner payout eligibility are restricted to adults aged 18
 ## Reviewer ownership and access audit
 
 Pending cases use an exclusive ten-minute reviewer lease. The owner must heartbeat the lease while reviewing; an expired lease may be claimed by another authorised administrator. Document retrieval and decisions require the active claim owner and recent administrator authenticator verification. Audit events record the administrator actor, submission, and viewed document side without copying document content.
+
+## Required staging malware-scanner configuration
+
+Document uploads fail closed unless a private ClamAV daemon is reachable. Configure `DFY_KYC_CLAMAV_HOST` to the private hostname of the staging ClamAV service and `DFY_KYC_CLAMAV_PORT` to its INSTREAM port (normally 3310). Do not expose the daemon publicly. The API performs a ClamAV INSTREAM scan before image normalization/encryption; an infected result is rejected and a scanner outage prevents submission. These settings must be provisioned on staging only and verified with a clean test image and an EICAR test file before enabling runner submissions.
