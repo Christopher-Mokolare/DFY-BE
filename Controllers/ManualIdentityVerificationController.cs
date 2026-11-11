@@ -191,14 +191,14 @@ public sealed class ManualIdentityVerificationController(
             return BadRequest(new ApiResponse<object> { Success = false, Error = "IDENTITY_CONSENT_REQUIRED", Message = "The identity-document consent has expired. Return to your profile and start again." });
 
         var documentType = request.DocumentType?.Trim().ToLowerInvariant();
-        if (documentType is not ("south_african_id" or "passport"))
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African ID card or passport." });
+        if (documentType is not ("south_african_id_card" or "south_african_id_book" or "passport"))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African Smart ID card, green barcoded ID book or passport." });
         if (request.FrontDocument == null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front of your identity document." });
-        if (documentType == "south_african_id" && request.BackDocument == null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African ID card." });
-        if (documentType == "passport" && request.BackDocument != null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "A passport submission requires only its photo-information page." });
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front or photo-information page of your identity document." });
+        if (documentType == "south_african_id_card" && request.BackDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African Smart ID card." });
+        if (documentType != "south_african_id_card" && request.BackDocument != null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A green ID book or passport submission requires only its photo-information page." });
 
         byte[] frontBytes;
         string frontType;
@@ -357,14 +357,14 @@ public sealed class ManualIdentityVerificationController(
             });
 
         var documentType = request.DocumentType?.Trim().ToLowerInvariant();
-        if (documentType is not ("south_african_id" or "passport"))
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African ID card or passport." });
+        if (documentType is not ("south_african_id_card" or "south_african_id_book" or "passport"))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a South African Smart ID card, green barcoded ID book or passport." });
         if (request.FrontDocument == null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front of your identity document." });
-        if (documentType == "south_african_id" && request.BackDocument == null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African ID card." });
-        if (documentType == "passport" && request.BackDocument != null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "A passport submission requires only its photo-information page." });
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload the front or photo-information page of your identity document." });
+        if (documentType == "south_african_id_card" && request.BackDocument == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Upload both sides of your South African Smart ID card." });
+        if (documentType != "south_african_id_card" && request.BackDocument != null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A green ID book or passport submission requires only its photo-information page." });
 
         byte[] frontBytes;
         string frontType;
