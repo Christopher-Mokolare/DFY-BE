@@ -1,10 +1,9 @@
-using SixLabors.Fonts;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Drawing.Processing;
+using SkiaSharp;
 
 namespace DoForYou.API.Services;
 
@@ -46,27 +45,34 @@ public sealed class IdentityDocumentImageService : IIdentityDocumentImageService
 
     public byte[] ApplyWatermark(ReadOnlySpan<byte> source, string contentType, string watermarkText)
     {
-        using var image = Image.Load<Rgba32>(source.ToArray());
-        ValidateDimensions(image);
-        image.Mutate(operation => operation.AutoOrient());
-        var fontSize = Math.Clamp(image.Width / 42f, 14f, 34f);
-        var font = SystemFonts.CreateFont("DejaVu Sans", fontSize, FontStyle.Bold);
-        var watermarkColor = Color.FromRgba(150, 0, 0, 105);
-        var lineHeight = Math.Max(fontSize * 2.5f, image.Height / 5f);
-        image.Mutate(operation =>
-        {
-            for (var y = fontSize; y < image.Height; y += lineHeight)
-                operation.DrawText(watermarkText, font, watermarkColor, new PointF(fontSize, y));
-        });
+        using var bitmap = SKBitmap.Decode(source.ToArray());
+        if (bitmap == null || bitmap.Width < 300 || bitmap.Height < 200 ||
+            (long)bitmap.Width * bitmap.Height > MaximumPixels)
+            throw new InvalidDataException("The identity document image could not be safely decoded for watermarking.");
 
-        using var output = new MemoryStream();
-        if (contentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase))
-            image.SaveAsJpeg(output, new JpegEncoder { Quality = 90 });
-        else if (contentType.Equals("image/png", StringComparison.OrdinalIgnoreCase))
-            image.SaveAsPng(output, new PngEncoder());
-        else
-            throw new InvalidDataException("Unsupported identity document image format.");
-        return output.ToArray();
+        using var canvas = new SKCanvas(bitmap);
+        using var typeface = SKTypeface.FromFamilyName("Arial", SKFontStyle.Bold) ?? SKTypeface.Default;
+        using var paint = new SKPaint
+        {
+            Color = new SKColor(150, 0, 0, 105),
+            TextSize = Math.Clamp(bitmap.Width / 42f, 14f, 34f),
+            IsAntialias = true,
+            Typeface = typeface
+        };
+        var lineHeight = Math.Max(paint.TextSize * 2.5f, bitmap.Height / 5f);
+        for (var y = paint.TextSize * 1.5f; y < bitmap.Height; y += lineHeight)
+            canvas.DrawText(watermarkText, paint.TextSize, y, paint);
+        canvas.Flush();
+
+        using var image = SKImage.FromBitmap(bitmap);
+        var format = contentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase)
+            ? SKEncodedImageFormat.Jpeg
+            : contentType.Equals("image/png", StringComparison.OrdinalIgnoreCase)
+                ? SKEncodedImageFormat.Png
+                : throw new InvalidDataException("Unsupported identity document image format.");
+        using var encoded = image.Encode(format, 90);
+        if (encoded == null) throw new InvalidDataException("The identity document watermark could not be encoded.");
+        return encoded.ToArray();
     }
 
     private static void StripMetadata(Image<Rgba32> image)
