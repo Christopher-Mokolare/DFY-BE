@@ -2603,7 +2603,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/identity-verification/status": {
+    "/api/v1/manual-identity-verification/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -2640,7 +2640,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/identity-verification/session": {
+    "/api/v1/manual-identity-verification/handoff": {
         parameters: {
             query?: never;
             header?: never;
@@ -2658,9 +2658,9 @@ export interface paths {
             };
             requestBody?: {
                 content: {
-                    "application/json": components["schemas"]["StartIdentityVerificationRequest"];
-                    "text/json": components["schemas"]["StartIdentityVerificationRequest"];
-                    "application/*+json": components["schemas"]["StartIdentityVerificationRequest"];
+                    "application/json": components["schemas"]["StartManualIdentityVerificationRequest"];
+                    "text/json": components["schemas"]["StartManualIdentityVerificationRequest"];
+                    "application/*+json": components["schemas"]["StartManualIdentityVerificationRequest"];
                 };
             };
             responses: {
@@ -2683,7 +2683,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/identity-verification/exchange": {
+    "/api/v1/manual-identity-verification/submission/handoff": {
         parameters: {
             query?: never;
             header?: never;
@@ -2701,9 +2701,14 @@ export interface paths {
             };
             requestBody?: {
                 content: {
-                    "application/json": components["schemas"]["ExchangeIdentityVerificationRequest"];
-                    "text/json": components["schemas"]["ExchangeIdentityVerificationRequest"];
-                    "application/*+json": components["schemas"]["ExchangeIdentityVerificationRequest"];
+                    "multipart/form-data": {
+                        HandoffCode: string;
+                        DocumentType: string;
+                        /** Format: binary */
+                        FrontDocument: string;
+                        /** Format: binary */
+                        BackDocument?: string;
+                    };
                 };
             };
             responses: {
@@ -2726,7 +2731,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/identity-verification/refresh": {
+    "/api/v1/manual-identity-verification/submission": {
         parameters: {
             query?: never;
             header?: never;
@@ -2738,6 +2743,56 @@ export interface paths {
         post: {
             parameters: {
                 query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "multipart/form-data": {
+                        ConsentAccepted: boolean;
+                        ConsentVersion: string;
+                        DocumentType: string;
+                        /** Format: binary */
+                        FrontDocument: string;
+                        /** Format: binary */
+                        BackDocument?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ObjectApiResponse"];
+                        "application/json": components["schemas"]["ObjectApiResponse"];
+                        "text/json": components["schemas"]["ObjectApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manual-identity-verification/admin/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                    pageSize?: number;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2757,26 +2812,29 @@ export interface paths {
                 };
             };
         };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/identity-verification/sumsub/webhook": {
+    "/api/v1/manual-identity-verification/admin/{id}/document/{side}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        post: {
+        get: {
             parameters: {
                 query?: never;
                 header?: never;
-                path?: never;
+                path: {
+                    id: number;
+                    side: string;
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -2787,6 +2845,53 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/manual-identity-verification/admin/{id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ManualIdentityVerificationDecisionRequest"];
+                    "text/json": components["schemas"]["ManualIdentityVerificationDecisionRequest"];
+                    "application/*+json": components["schemas"]["ManualIdentityVerificationDecisionRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ObjectApiResponse"];
+                        "application/json": components["schemas"]["ObjectApiResponse"];
+                        "text/json": components["schemas"]["ObjectApiResponse"];
+                    };
                 };
             };
         };
@@ -6393,9 +6498,6 @@ export interface components {
             currentPassword?: string | null;
             code: string;
         };
-        ExchangeIdentityVerificationRequest: {
-            handoffCode: string;
-        };
         ForgotPasswordRequest: {
             /** Format: email */
             email: string;
@@ -6437,6 +6539,10 @@ export interface components {
             email: string;
             password: string;
             secondFactorCode?: string | null;
+        };
+        ManualIdentityVerificationDecisionRequest: {
+            decision: string;
+            reason: string;
         };
         MarkTaskReadRequest: {
             /** Format: int32 */
@@ -6508,7 +6614,7 @@ export interface components {
         SendMessageRequest: {
             content?: string | null;
         };
-        StartIdentityVerificationRequest: {
+        StartManualIdentityVerificationRequest: {
             consentAccepted: boolean;
             consentVersion: string;
         };
