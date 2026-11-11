@@ -232,6 +232,39 @@ public class IdentityVerificationControllerTests
     }
 
     [Fact]
+    public async Task Refresh_returns_a_hosted_Didit_session_for_the_authenticated_pending_runner()
+    {
+        await using var context = CreateContext();
+        var user = NewRunner(82);
+        user.IdentityVerificationStatus = "pending";
+        user.IdentityVerificationProvider = "Didit";
+        user.IdentityVerificationExternalUserId = $"dfy-user-{user.Id}";
+        user.IdentityVerificationApplicantId = "old-didit-session";
+        context.Users.Add(user);
+        await context.SaveChangesAsync();
+
+        var provider = new FakeIdentityService
+        {
+            ProviderName = "Didit",
+            SessionId = "new-didit-session",
+            VerificationUrl = "https://verify.didit.me/en/session/new"
+        };
+        var controller = CreateController(context, provider);
+        AddAuthenticatedUser(controller, user.Id);
+
+        var action = await controller.RefreshProviderSession(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(action.Result);
+        var response = Assert.IsType<ApiResponse<object>>(ok.Value);
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(response.Data));
+        Assert.Equal("Didit", payload.RootElement.GetProperty("provider").GetString());
+        Assert.Equal("new-didit-session", payload.RootElement.GetProperty("sessionId").GetString());
+        Assert.Equal("https://verify.didit.me/en/session/new", payload.RootElement.GetProperty("verificationUrl").GetString());
+        Assert.Equal("new-didit-session", user.IdentityVerificationApplicantId);
+        Assert.Equal(1, provider.TokenRequests);
+    }
+
+    [Fact]
     public async Task Refresh_denies_non_pending_or_mismatched_provider_sessions()
     {
         await using var context = CreateContext();
@@ -443,6 +476,8 @@ public class IdentityVerificationControllerTests
         public string ConsentVersion => IdentityVerificationControllerTests.ConsentVersion;
         public string ExpectedLevelName => "sandbox-runner-level";
         public string ProviderName { get; set; } = "Sumsub";
+        public string SessionId { get; set; } = "test-didit-session";
+        public string VerificationUrl { get; set; } = "https://verify.didit.me/session/test";
         public string AccessToken { get; set; } = "provider-test-token";
         public bool AcceptWebhook { get; set; } = true;
         public int TokenRequests { get; private set; }
@@ -453,6 +488,18 @@ public class IdentityVerificationControllerTests
             Assert.Contains("@example.com", verifiedEmail, StringComparison.Ordinal);
             TokenRequests++;
             return Task.FromResult(AccessToken);
+        }
+
+        public async Task<IdentityProviderSession> CreateProviderSessionAsync(string externalUserId, string verifiedEmail, CancellationToken cancellationToken)
+        {
+            if (string.Equals(ProviderName, "Didit", StringComparison.Ordinal))
+            {
+                Assert.StartsWith("dfy-user-", externalUserId, StringComparison.Ordinal);
+                TokenRequests++;
+                return new IdentityProviderSession(null, SessionId, VerificationUrl);
+            }
+            var token = await CreateSdkAccessTokenAsync(externalUserId, verifiedEmail, cancellationToken);
+            return new IdentityProviderSession(token, null, null);
         }
 
         public bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm) =>
