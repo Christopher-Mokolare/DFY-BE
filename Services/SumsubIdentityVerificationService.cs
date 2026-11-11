@@ -10,6 +10,8 @@ namespace DoForYou.API.Services;
 /// Only server-side Sumsub calls are performed here. The provider's app token,
 /// secret and webhook HMAC key must never be shipped to either client.
 /// </summary>
+public sealed record IdentityProviderSession(string? AccessToken, string? SessionId, string? VerificationUrl);
+
 public interface IIdentityVerificationService
 {
     bool IsConfigured { get; }
@@ -17,6 +19,8 @@ public interface IIdentityVerificationService
     string ConsentVersion { get; }
     string ExpectedLevelName { get; }
     Task<string> CreateSdkAccessTokenAsync(string externalUserId, string verifiedEmail, CancellationToken cancellationToken);
+    async Task<IdentityProviderSession> CreateProviderSessionAsync(string externalUserId, string verifiedEmail, CancellationToken cancellationToken) =>
+        new(await CreateSdkAccessTokenAsync(externalUserId, verifiedEmail, cancellationToken), null, null);
     bool VerifyWebhookSignature(ReadOnlySpan<byte> rawBody, string? digest, string? digestAlgorithm);
 }
 
