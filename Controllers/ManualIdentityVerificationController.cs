@@ -527,7 +527,7 @@ public sealed class ManualIdentityVerificationController(
         var rows = await query.Skip((page - 1) * pageSize).Take(pageSize)
             .Select(s => new
             {
-                s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt,
+                s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
                 userName = s.User.FirstName + " " + s.User.LastName,
                 s.User.Email, s.User.DateOfBirth
             })
@@ -535,7 +535,7 @@ public sealed class ManualIdentityVerificationController(
         var now = DateTime.UtcNow;
         var submissions = rows.Select(s => new
         {
-            s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt,
+            s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
             s.userName, s.Email, s.DateOfBirth,
             reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
             reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
@@ -760,6 +760,71 @@ public sealed class ManualIdentityVerificationController(
                 return BadRequest(new ApiResponse<object> { Success = false, Message = "Runner activation requires a document-verified date of birth showing an age of at least 18." });
         }
 
+
+        string? approvedIdHmac = null;
+        IdentityVerificationSubmission? preflightSubmission = null;
+        if (decision == "approve")
+        {
+            preflightSubmission = await context.IdentityVerificationSubmissions
+                .Include(s => s.User)
+                .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+            if (preflightSubmission == null) return NotFound();
+            if (preflightSubmission.Status != "pending" ||
+                preflightSubmission.ReviewClaimedByUserId != adminId.Value ||
+                !preflightSubmission.ReviewClaimExpiresAt.HasValue ||
+                preflightSubmission.ReviewClaimExpiresAt.Value <= DateTime.UtcNow)
+                return Conflict(new ApiResponse<object> { Success = false, Message = "Claim this pending case before approving it." });
+
+            if (preflightSubmission.DocumentType is "south_african_id_card" or "south_african_id_book")
+            {
+                if (documentIdService?.IsConfigured != true)
+                    return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+                    {
+                        Success = false, Error = "IDENTITY_DUPLICATE_CHECK_NOT_CONFIGURED",
+                        Message = "South African ID duplicate checks are not configured. Approval is paused until the secure fingerprint key is configured."
+                    });
+
+                var idNumber = request.SouthAfricanIdNumber?.Trim() ?? string.Empty;
+                var policy = new UserPolicyService();
+                if (!policy.IsValidSouthAfricanId(idNumber) ||
+                    !policy.TryGetAdultDateOfBirthFromSouthAfricanId(idNumber, out var idDateOfBirth))
+                    return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter the valid 13-digit South African ID number shown on the document. The checksum and adult date of birth must be valid." });
+                if (idDateOfBirth.Date != request.VerifiedDateOfBirth!.Value.Date)
+                    return BadRequest(new ApiResponse<object> { Success = false, Message = "The date of birth entered does not match the date encoded in the South African ID number." });
+
+                approvedIdHmac = documentIdService.ComputeHmac(idNumber);
+                var duplicateSubmission = await context.IdentityVerificationSubmissions.AsNoTracking()
+                    .AnyAsync(s => s.UserId != preflightSubmission.UserId && s.DocumentIdHmac == approvedIdHmac, cancellationToken);
+                var duplicateApprovedUser = await context.Users.AsNoTracking()
+                    .AnyAsync(u => u.Id != preflightSubmission.UserId && u.IdentityDocumentIdHmac == approvedIdHmac, cancellationToken);
+                var legacyIdNumbers = await context.Users.AsNoTracking()
+                    .Where(u => u.Id != preflightSubmission.UserId && u.IdNumber != null)
+                    .Select(u => u.IdNumber!)
+                    .ToListAsync(cancellationToken);
+                var duplicateLegacyUser = legacyIdNumbers.Any(existing =>
+                    policy.IsValidSouthAfricanId(existing) &&
+                    string.Equals(documentIdService.ComputeHmac(existing), approvedIdHmac, StringComparison.Ordinal));
+
+                if (duplicateSubmission || duplicateApprovedUser || duplicateLegacyUser)
+                {
+                    preflightSubmission.DocumentIdHmac = approvedIdHmac;
+                    preflightSubmission.DuplicateIdDetected = true;
+                    context.IdentityVerificationEvents.Add(CreateEvent(
+                        preflightSubmission.UserId, "duplicate_id_flagged", "investigation_required", adminId.Value, id));
+                    await context.SaveChangesAsync(cancellationToken);
+                    return Conflict(new ApiResponse<object>
+                    {
+                        Success = false, Error = "IDENTITY_DUPLICATE_REVIEW_REQUIRED",
+                        Message = "A possible duplicate South African ID number was found. This is a review flag, not an automatic rejection. Do not approve this case; escalate it for a separate identity investigation."
+                    });
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(request.SouthAfricanIdNumber))
+            {
+                return BadRequest(new ApiResponse<object> { Success = false, Message = "Only South African ID card and green barcoded ID book reviews accept a South African ID number." });
+            }
+        }
+
         var reasonLabels = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["document_unclear"] = "Document image is unclear",
@@ -832,7 +897,12 @@ public sealed class ManualIdentityVerificationController(
                 .Include(s => s.User)
                 .FirstAsync(s => s.Id == id, cancellationToken);
             reviewedUserId = submission.UserId;
-            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
+            if (decision == "approve")
+            {
+                submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
+                submission.DocumentIdHmac = approvedIdHmac;
+                submission.User.IdentityDocumentIdHmac = approvedIdHmac ?? submission.User.IdentityDocumentIdHmac;
+            }
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
@@ -861,7 +931,12 @@ public sealed class ManualIdentityVerificationController(
             submission.ReviewClaimedByUserId = null;
             submission.ReviewClaimHeartbeatAt = null;
             submission.ReviewClaimExpiresAt = null;
-            if (decision == "approve") submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
+            if (decision == "approve")
+            {
+                submission.User.DateOfBirth = request.VerifiedDateOfBirth!.Value.Date;
+                submission.DocumentIdHmac = approvedIdHmac;
+                submission.User.IdentityDocumentIdHmac = approvedIdHmac ?? submission.User.IdentityDocumentIdHmac;
+            }
             submission.User.IdentityVerificationStatus = nextStatus;
             submission.User.IdentityVerificationProvider = ManualProvider;
             submission.User.IdentityVerificationUpdatedAt = now;
@@ -1048,6 +1123,9 @@ public sealed class ManualIdentityVerificationDecisionRequest
 
     [StringLength(850)]
     public string? RunnerNote { get; set; }
+
+    [StringLength(13, MinimumLength = 13)]
+    public string? SouthAfricanIdNumber { get; set; }
 
     [StringLength(1000)]
     public string? InternalNote { get; set; }
