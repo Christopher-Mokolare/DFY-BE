@@ -535,11 +535,11 @@ public sealed class IdentityVerificationController(
             await bodyBuffer.WriteAsync(readBuffer.AsMemory(0, read), cancellationToken);
         }
         var rawBody = bodyBuffer.ToArray();
-        var signature = Request.Headers["X-Signature-V2"].ToString();
-        var previousSignature = Request.Headers["X-Signature-V2-Previous"].ToString();
+        var signatureV2 = Request.Headers["X-Signature-V2"].ToString();
+        var rawSignature = Request.Headers["X-Signature"].ToString();
         var timestampHeader = Request.Headers["X-Timestamp"].ToString();
-        if (!identityVerification.VerifyWebhookSignature(rawBody, signature, timestampHeader) &&
-            !identityVerification.VerifyWebhookSignature(rawBody, previousSignature, timestampHeader))
+        if (!identityVerification.VerifyWebhookSignature(rawBody, signatureV2, timestampHeader) &&
+            !identityVerification.VerifyWebhookRawSignature(rawBody, rawSignature, timestampHeader))
         {
             logger.LogWarning("Rejected Didit identity webhook with invalid signature or timestamp.");
             return Unauthorized();
