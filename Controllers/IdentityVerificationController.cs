@@ -392,8 +392,8 @@ public sealed class IdentityVerificationController(
     }
 
     /// <summary>
-    /// Mints a fresh short-lived Sumsub SDK token for the already-authenticated
-    /// runner's pending verification. It never accepts a caller-supplied user ID.
+    /// Creates a fresh provider session for the already-authenticated runner's
+    /// pending verification. It never accepts a caller-supplied user ID.
     /// </summary>
     [Authorize]
     [EnableRateLimiting("auth")]
@@ -425,14 +425,15 @@ public sealed class IdentityVerificationController(
                 u.IsArchived,
                 u.IdentityVerificationProvider,
                 u.IdentityVerificationStatus,
-                u.IdentityVerificationExternalUserId
+                u.IdentityVerificationExternalUserId,
+                u.IdentityVerificationApplicantId
             })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (user == null || user.IsArchived) return Unauthorized();
         if (!user.EmailVerified ||
             !IsRunnerPreference(user.UserType) ||
-            !string.Equals(user.IdentityVerificationProvider, "Sumsub", StringComparison.Ordinal) ||
+            !string.Equals(user.IdentityVerificationProvider, identityVerification.ProviderName, StringComparison.Ordinal) ||
             !string.Equals(user.IdentityVerificationStatus, "pending", StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(user.IdentityVerificationExternalUserId, $"dfy-user-{user.Id}", StringComparison.Ordinal))
         {
@@ -446,14 +447,46 @@ public sealed class IdentityVerificationController(
 
         try
         {
-            var accessToken = await identityVerification.CreateSdkAccessTokenAsync(
+            var providerSession = await identityVerification.CreateProviderSessionAsync(
                 user.IdentityVerificationExternalUserId!,
                 user.Email,
                 cancellationToken);
+
+            if (string.Equals(identityVerification.ProviderName, "Didit", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(providerSession.SessionId) ||
+                    string.IsNullOrWhiteSpace(providerSession.VerificationUrl))
+                    throw new InvalidOperationException("The identity-verification provider returned an invalid hosted session.");
+
+                var trackedUser = await context.Users.FirstOrDefaultAsync(u =>
+                    u.Id == user.Id &&
+                    u.IdentityVerificationProvider == "Didit" &&
+                    u.IdentityVerificationStatus == "pending" &&
+                    u.IdentityVerificationExternalUserId == user.IdentityVerificationExternalUserId,
+                    cancellationToken);
+                if (trackedUser == null) return Conflict(new ApiResponse<object>
+                {
+                    Success = false,
+                    Error = "IDENTITY_REFRESH_NOT_ALLOWED",
+                    Message = "Your verification session changed. Return to your profile and check its status."
+                });
+
+                trackedUser.IdentityVerificationApplicantId = providerSession.SessionId;
+                trackedUser.IdentityVerificationUpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync(cancellationToken);
+
+                return Ok(new ApiResponse<object>
+                {
+                    Success = true,
+                    Data = new { verificationUrl = providerSession.VerificationUrl, sessionId = providerSession.SessionId, provider = "Didit" },
+                    Message = "Verification session refreshed."
+                });
+            }
+
             return Ok(new ApiResponse<object>
             {
                 Success = true,
-                Data = new { accessToken, expiresInSeconds = 600, provider = "Sumsub" },
+                Data = new { accessToken = providerSession.AccessToken, expiresInSeconds = 600, provider = "Sumsub" },
                 Message = "Verification session refreshed."
             });
         }
