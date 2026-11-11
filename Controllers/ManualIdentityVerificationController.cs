@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using SixLabors.ImageSharp;
+using System.Net.Sockets;
 
 namespace DoForYou.API.Controllers;
 
@@ -229,24 +230,30 @@ public sealed class ManualIdentityVerificationController(
                     backType = normalizedBack.ContentType;
                 }
             }
-            if (imageService != null)
-            {
-                var normalizedFront = imageService.NormalizeAndStripMetadata(frontBytes, frontType);
-                CryptographicOperations.ZeroMemory(frontBytes);
-                frontBytes = normalizedFront.Bytes;
-                frontType = normalizedFront.ContentType;
-                if (backBytes != null && backType != null)
-                {
-                    var normalizedBack = imageService.NormalizeAndStripMetadata(backBytes, backType);
-                    CryptographicOperations.ZeroMemory(backBytes);
-                    backBytes = normalizedBack.Bytes;
-                    backType = normalizedBack.ContentType;
-                }
-            }
         }
         catch (InvalidDataException ex)
         {
             return BadRequest(new ApiResponse<object> { Success = false, Message = ex.Message });
+        }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            logger.LogError(ex, "DFY malware scanning or image normalization failed for a document submission.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+            {
+                Success = false,
+                Error = "IDENTITY_DOCUMENT_SCANNER_UNAVAILABLE",
+                Message = "Secure document checks are temporarily unavailable. Please try again later."
+            });
+        }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            logger.LogError(ex, "DFY malware scanning or image normalization failed for a document submission.");
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new ApiResponse<object>
+            {
+                Success = false,
+                Error = "IDENTITY_DOCUMENT_SCANNER_UNAVAILABLE",
+                Message = "Secure document checks are temporarily unavailable. Please try again later."
+            });
         }
 
         var encryptedFront = encryption.Encrypt(frontBytes);
@@ -425,6 +432,22 @@ public sealed class ManualIdentityVerificationController(
             (frontBytes, frontType) = await ReadImageAsync(request.FrontDocument, cancellationToken);
             if (request.BackDocument != null)
                 (backBytes, backType) = await ReadImageAsync(request.BackDocument, cancellationToken);
+            await malwareScanner!.ScanAsync(frontBytes, cancellationToken);
+            if (backBytes != null) await malwareScanner.ScanAsync(backBytes, cancellationToken);
+            if (imageService != null)
+            {
+                var normalizedFront = imageService.NormalizeAndStripMetadata(frontBytes, frontType);
+                CryptographicOperations.ZeroMemory(frontBytes);
+                frontBytes = normalizedFront.Bytes;
+                frontType = normalizedFront.ContentType;
+                if (backBytes != null && backType != null)
+                {
+                    var normalizedBack = imageService.NormalizeAndStripMetadata(backBytes, backType);
+                    CryptographicOperations.ZeroMemory(backBytes);
+                    backBytes = normalizedBack.Bytes;
+                    backType = normalizedBack.ContentType;
+                }
+            }
         }
         catch (InvalidDataException ex)
         {
