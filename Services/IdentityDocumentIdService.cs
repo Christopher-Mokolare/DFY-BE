@@ -53,14 +53,16 @@ public sealed class IdentityDocumentIdService(IConfiguration configuration) : II
             throw new ArgumentException("A 13-digit South African ID number is required.", nameof(southAfricanIdNumber));
         }
 
+        var idBytes = Encoding.UTF8.GetBytes(normalized);
         try
         {
-            var digest = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(normalized));
+            var digest = HMACSHA256.HashData(key, idBytes);
             return Convert.ToHexString(digest).ToLowerInvariant();
         }
         finally
         {
             CryptographicOperations.ZeroMemory(key);
+            CryptographicOperations.ZeroMemory(idBytes);
         }
     }
 }
