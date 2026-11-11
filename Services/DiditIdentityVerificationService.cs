@@ -53,7 +53,8 @@ public sealed class DiditIdentityVerificationService(
         var requestData = new Dictionary<string, object?>
         {
             ["workflow_id"] = WorkflowId,
-            ["vendor_data"] = externalUserId
+            ["vendor_data"] = externalUserId,
+            ["expected_details"] = new { id_country = "ZAF" }
         };
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(ApiBaseUrl), "/v3/session/"));
         request.Headers.TryAddWithoutValidation("x-api-key", ApiKey);
