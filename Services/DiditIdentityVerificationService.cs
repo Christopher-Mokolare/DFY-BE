@@ -66,6 +66,8 @@ public sealed class DiditIdentityVerificationService(
         var root = document.RootElement;
         var sessionId = ReadString(root, "session_id");
         var url = ReadString(root, "url");
+        if (!string.IsNullOrWhiteSpace(url) && url.StartsWith("verify.didit.me/", StringComparison.OrdinalIgnoreCase))
+            url = "https://" + url;
         if (string.IsNullOrWhiteSpace(sessionId) ||
             !Guid.TryParse(sessionId, out _) ||
             !Uri.TryCreate(url, UriKind.Absolute, out var verificationUri) ||
