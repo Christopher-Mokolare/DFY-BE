@@ -766,7 +766,6 @@ export interface paths {
                 query?: {
                     page?: number;
                     pageSize?: number;
-                    filter?: "all" | "near-deadline" | "overdue" | "claimed-by-me" | "unclaimed" | "resubmission";
                 };
                 header?: never;
                 path?: never;
@@ -2793,6 +2792,7 @@ export interface paths {
                 query?: {
                     page?: number;
                     pageSize?: number;
+                    filter?: string;
                 };
                 header?: never;
                 path?: never;

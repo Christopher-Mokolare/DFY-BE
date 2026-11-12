@@ -933,22 +933,6 @@
               "format": "int32",
               "default": 20
             }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "all",
-                "near-deadline",
-                "overdue",
-                "claimed-by-me",
-                "unclaimed",
-                "resubmission"
-              ],
-              "default": "all"
-            }
           }
         ],
         "responses": {
@@ -3116,6 +3100,14 @@
               "type": "integer",
               "format": "int32",
               "default": 20
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "all"
             }
           }
         ],
