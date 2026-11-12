@@ -991,6 +991,7 @@ public sealed class ManualIdentityVerificationController(
         string title,
         string message)
     {
+        if (channel == "email" && string.IsNullOrWhiteSpace(recipientEmail)) return;
         db.IdentityNotificationOutbox.Add(new IdentityNotificationOutbox
         {
             IdempotencyKey = idempotencyKey,
