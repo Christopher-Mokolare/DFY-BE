@@ -108,7 +108,7 @@ public sealed class IdentityNotificationOutboxService(
                 else
                 {
                     item.Status = "pending";
-                    var delayMinutes = Math.Min(360, Math.Pow(2, Math.Min(item.AttemptCount, 8)));
+                    var delayMinutes = GetRetryDelay(item.AttemptCount).TotalMinutes;
                     item.AvailableAt = failedAt.AddMinutes(delayMinutes);
                     logger.LogWarning(ex, "DFY identity notification {OutboxId} delivery failed; retry {Attempt} scheduled.", item.Id, item.AttemptCount);
                 }
@@ -147,10 +147,16 @@ public sealed class IdentityNotificationOutboxService(
         throw new InvalidOperationException("Unsupported identity notification channel.");
     }
 
+    public static TimeSpan GetRetryDelay(int attemptCount)
+    {
+        var boundedAttempt = Math.Clamp(attemptCount, 1, MaxAttempts);
+        return TimeSpan.FromMinutes(Math.Pow(2, boundedAttempt));
+    }
+
     private static string SafeError(Exception exception)
     {
-        // Do not persist provider response bodies, credentials, or message content.
-        var value = exception.GetType().Name + ": " + exception.Message;
-        return value.Length <= 500 ? value : value[..500];
+        // Persist only the exception type. Provider messages can contain recipient
+        // addresses, response payloads, or other data that should not enter the outbox.
+        return exception.GetType().Name + ": delivery failed";
     }
 }
