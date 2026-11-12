@@ -1429,5 +1429,6 @@ private static AppDbContext CreateContext(string name)
         public TaskResult NotifyPayoutCompletedAsync(int runnerId, string taskDescription, decimal amount, int? taskId = null) => TaskResult.CompletedTask;
         public TaskResult NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null) => TaskResult.CompletedTask;
         public TaskResult NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null) => TaskResult.CompletedTask;
+        public TaskResult CreateNotificationFromOutboxAsync(long outboxId, int userId, string type, string title, string message, CancellationToken cancellationToken = default) => TaskResult.CompletedTask;
     }
 }
