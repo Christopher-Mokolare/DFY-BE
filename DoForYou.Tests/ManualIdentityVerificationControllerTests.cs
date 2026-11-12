@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using DoForYou.API.Controllers;
 using DoForYou.API.Data;
 using DoForYou.API.Models;
@@ -194,6 +195,52 @@ public sealed class ManualIdentityVerificationControllerTests
 
         Assert.Equal(StatusCodes.Status400BadRequest, Assert.IsType<BadRequestObjectResult>(result.Result).StatusCode);
         Assert.Empty(await context.IdentityVerificationSubmissions.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Pending_queue_filters_by_reviewer_and_returns_authoritative_counts()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(150);
+        var admin = new User
+        {
+            Id = 950, FirstName = "Review", LastName = "Owner", Email = "review-owner@example.test",
+            NormalizedEmail = "review-owner@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin"
+        };
+        context.Users.AddRange(runner, admin);
+        var priorRequest = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "more_info_requested",
+            FrontCiphertext = [1], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion,
+            SubmittedAt = DateTime.UtcNow.AddDays(-2)
+        };
+        var resubmission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "pending",
+            FrontCiphertext = [2], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion,
+            SubmittedAt = DateTime.UtcNow.AddHours(-1), ReviewClaimedByUserId = admin.Id,
+            ReviewClaimExpiresAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        context.IdentityVerificationSubmissions.AddRange(priorRequest, resubmission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id)
+            .GetPending(1, 20, "claimed-by-me", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var response = Assert.IsType<DoForYou.API.DTOs.ApiResponse<object>>(ok.Value);
+        var data = JsonSerializer.SerializeToElement(response.Data);
+        Assert.Equal(1, data.GetProperty("submissions").GetArrayLength());
+        Assert.Equal(1, data.GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, data.GetProperty("queueCounts").GetProperty("claimedByMe").GetInt32());
+        Assert.Equal(1, data.GetProperty("queueCounts").GetProperty("resubmission").GetInt32());
+        var row = data.GetProperty("submissions")[0];
+        Assert.True(row.GetProperty("isClaimedByMe").GetBoolean());
+        Assert.True(row.GetProperty("isResubmission").GetBoolean());
+        Assert.Equal("Review Owner", row.GetProperty("claimedByName").GetString());
     }
 
     [Fact]

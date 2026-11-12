@@ -523,32 +523,110 @@ public sealed class ManualIdentityVerificationController(
     public async Task<ActionResult<ApiResponse<object>>> GetPending(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] string filter = "all",
         CancellationToken cancellationToken = default)
     {
+        var supportedFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "all", "near-deadline", "overdue", "claimed-by-me", "unclaimed", "resubmission"
+        };
+        if (!supportedFilters.Contains(filter))
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Choose a supported identity-review queue filter." });
+
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
-        var query = context.IdentityVerificationSubmissions.AsNoTracking()
+        var now = DateTime.UtcNow;
+        var holidays = configuration["IdentityVerification:SouthAfricanPublicHolidays"];
+        var pendingRows = await context.IdentityVerificationSubmissions.AsNoTracking()
             .Where(s => s.Status == "pending")
-            .OrderBy(s => s.SubmittedAt);
-        var total = await query.CountAsync(cancellationToken);
-        var rows = await query.Skip((page - 1) * pageSize).Take(pageSize)
+            .OrderBy(s => s.SubmittedAt)
             .Select(s => new
             {
                 s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
+                s.ReviewClaimedByUserId, s.ReviewClaimExpiresAt,
                 userName = s.User.FirstName + " " + s.User.LastName,
                 s.User.Email
             })
             .ToListAsync(cancellationToken);
-        var now = DateTime.UtcNow;
-        var submissions = rows.Select(s => new
+
+        var pendingUserIds = pendingRows.Select(s => s.UserId).Distinct().ToArray();
+        var priorInformationRequests = new Dictionary<int, List<DateTime>>();
+        if (pendingUserIds.Length > 0)
         {
-            s.Id, s.UserId, s.DocumentType, s.Status, s.SubmittedAt, s.DuplicateIdDetected,
-            s.userName, s.Email,
-            reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"]),
-            reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
-            isOverdue = now > SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, configuration["IdentityVerification:SouthAfricanPublicHolidays"])
+            var priorRequests = await context.IdentityVerificationSubmissions.AsNoTracking()
+                .Where(s => pendingUserIds.Contains(s.UserId) && s.Status == "more_info_requested")
+                .Select(s => new { s.UserId, s.SubmittedAt })
+                .ToListAsync(cancellationToken);
+            priorInformationRequests = priorRequests
+                .GroupBy(s => s.UserId)
+                .ToDictionary(g => g.Key, g => g.Select(s => s.SubmittedAt).ToList());
+        }
+        var claimOwnerIds = pendingRows
+            .Where(s => s.ReviewClaimExpiresAt > now && s.ReviewClaimedByUserId.HasValue)
+            .Select(s => s.ReviewClaimedByUserId!.Value)
+            .Distinct()
+            .ToArray();
+        var claimOwners = claimOwnerIds.Length == 0
+            ? new Dictionary<int, string>()
+            : await context.Users.AsNoTracking()
+                .Where(u => claimOwnerIds.Contains(u.Id))
+                .Select(u => new { u.Id, Name = u.FirstName + " " + u.LastName })
+                .ToDictionaryAsync(u => u.Id, u => u.Name, cancellationToken);
+
+        var submissions = pendingRows.Select(s =>
+        {
+            var reviewDueAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 8, holidays);
+            var nearDeadlineAt = SouthAfricanBusinessCalendar.AddBusinessHours(s.SubmittedAt, 6, holidays);
+            var isOverdue = now >= reviewDueAt;
+            var isClaimed = s.ReviewClaimedByUserId.HasValue && s.ReviewClaimExpiresAt > now;
+            return new
+            {
+                s.Id,
+                s.UserId,
+                s.DocumentType,
+                s.Status,
+                s.SubmittedAt,
+                s.DuplicateIdDetected,
+                s.userName,
+                s.Email,
+                reviewDueAt,
+                reviewAgeMinutes = Math.Max(0, (int)(now - s.SubmittedAt).TotalMinutes),
+                isOverdue,
+                isNearDeadline = now >= nearDeadlineAt && !isOverdue,
+                isResubmission = priorInformationRequests.TryGetValue(s.UserId, out var previousRequests) &&
+                    previousRequests.Any(previousSubmittedAt => previousSubmittedAt < s.SubmittedAt),
+                isClaimed,
+                isClaimedByMe = isClaimed && s.ReviewClaimedByUserId == CurrentUserId(),
+                claimedByName = isClaimed && s.ReviewClaimedByUserId.HasValue &&
+                    claimOwners.TryGetValue(s.ReviewClaimedByUserId.Value, out var ownerName) ? ownerName : null,
+                claimExpiresAt = isClaimed ? s.ReviewClaimExpiresAt : null
+            };
         }).ToList();
-        return Ok(new ApiResponse<object> { Success = true, Data = new { submissions, totalCount = total, page, pageSize } });
+
+        var queueCounts = new
+        {
+            total = submissions.Count,
+            nearDeadline = submissions.Count(s => s.isNearDeadline),
+            overdue = submissions.Count(s => s.isOverdue),
+            claimedByMe = submissions.Count(s => s.isClaimedByMe),
+            unclaimed = submissions.Count(s => !s.isClaimed),
+            resubmission = submissions.Count(s => s.isResubmission)
+        };
+        var filtered = filter.ToLowerInvariant() switch
+        {
+            "near-deadline" => submissions.Where(s => s.isNearDeadline).ToList(),
+            "overdue" => submissions.Where(s => s.isOverdue).ToList(),
+            "claimed-by-me" => submissions.Where(s => s.isClaimedByMe).ToList(),
+            "unclaimed" => submissions.Where(s => !s.isClaimed).ToList(),
+            "resubmission" => submissions.Where(s => s.isResubmission).ToList(),
+            _ => submissions
+        };
+        var pageRows = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submissions = pageRows, totalCount = filtered.Count, page, pageSize, filter, queueCounts }
+        });
     }
 
 
