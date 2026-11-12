@@ -357,6 +357,9 @@ namespace DoForYou.API.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<long?>("OutboxId")
+                        .HasColumnType("bigint");
+
                     b.Property<int?>("RelatedTaskId")
                         .HasColumnType("integer");
 
@@ -377,7 +380,90 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId");
 
+                    b.HasIndex("OutboxId")
+                        .IsUnique()
+                        .HasFilter("\"OutboxId\" IS NOT NULL")
+                        .HasDatabaseName("IX_Notifications_OutboxId");
+
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.IdentityNotificationOutbox", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("AvailableAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("LastError")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int?>("RecipientUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RecipientEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_IdentityNotificationOutbox_IdempotencyKey");
+
+                    b.HasIndex("LeaseExpiresAt")
+                        .HasDatabaseName("IX_IdentityNotificationOutbox_LeaseExpiresAt");
+
+                    b.HasIndex("Status", "AvailableAt")
+                        .HasDatabaseName("IX_IdentityNotificationOutbox_Status_AvailableAt");
+
+                    b.ToTable("IdentityNotificationOutbox");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.Payment", b =>
