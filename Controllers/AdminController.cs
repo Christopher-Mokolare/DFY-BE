@@ -5,6 +5,7 @@ using DoForYou.API.Data;
 using DoForYou.API.DTOs;
 using DoForYou.API.Services;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace DoForYou.API.Controllers;
@@ -872,6 +873,7 @@ public class AdminController : ControllerBase
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role unchanged." });
 
         user.Roles = role;
+        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         await _context.SaveChangesAsync();
         await WriteAuditAsync("UpdateUserRole", "User", userId, oldRole, $"{role}; reason={reason}");
 
