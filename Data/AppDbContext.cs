@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
     public DbSet<IdentityVerificationEvent> IdentityVerificationEvents { get; set; } = null!;
     public DbSet<IdentityVerificationSubmission> IdentityVerificationSubmissions { get; set; } = null!;
+    public DbSet<IdentityNotificationOutbox> IdentityNotificationOutbox { get; set; } = null!;
 
     public override int SaveChanges()
     {
@@ -70,6 +71,25 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<IdentityNotificationOutbox>()
+            .HasIndex(item => item.IdempotencyKey)
+            .IsUnique()
+            .HasDatabaseName("IX_IdentityNotificationOutbox_IdempotencyKey");
+
+        modelBuilder.Entity<IdentityNotificationOutbox>()
+            .HasIndex(item => new { item.Status, item.AvailableAt })
+            .HasDatabaseName("IX_IdentityNotificationOutbox_Status_AvailableAt");
+
+        modelBuilder.Entity<IdentityNotificationOutbox>()
+            .HasIndex(item => item.LeaseExpiresAt)
+            .HasDatabaseName("IX_IdentityNotificationOutbox_LeaseExpiresAt");
+
+        modelBuilder.Entity<Notification>()
+            .HasIndex(item => item.OutboxId)
+            .IsUnique()
+            .HasFilter("\"OutboxId\" IS NOT NULL")
+            .HasDatabaseName("IX_Notifications_OutboxId");
+
         modelBuilder.Entity<User>()
             .HasIndex(user => user.NormalizedEmail)
             .IsUnique()

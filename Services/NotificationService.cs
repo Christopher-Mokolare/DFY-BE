@@ -15,6 +15,7 @@ public interface INotificationService
     System.Threading.Tasks.Task NotifyPayoutCompletedAsync(int runnerId, string taskDescription, decimal amount, int? taskId = null);
     System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null);
     System.Threading.Tasks.Task NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null);
+    System.Threading.Tasks.Task CreateNotificationFromOutboxAsync(long outboxId, int userId, string type, string title, string message, CancellationToken cancellationToken = default);
 }
 
 public class NotificationService : INotificationService
@@ -60,6 +61,33 @@ public class NotificationService : INotificationService
             relatedTaskId = notification.RelatedTaskId,
             relatedTaskStringId
         });
+    }
+
+    public async System.Threading.Tasks.Task CreateNotificationFromOutboxAsync(long outboxId, int userId, string type, string title, string message, CancellationToken cancellationToken = default)
+    {
+        var notification = await _context.Notifications.FirstOrDefaultAsync(item => item.OutboxId == outboxId, cancellationToken);
+        if (notification == null)
+        {
+            notification = new Notification
+            {
+                UserId = userId, Type = type, Title = title, Message = message,
+                IsRead = false, OutboxId = outboxId
+            };
+            _context.Notifications.Add(notification);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
+        var relatedTaskStringId = notification.RelatedTaskId.HasValue
+            ? await _context.Tasks.Where(task => task.Id == notification.RelatedTaskId.Value)
+                .Select(task => task.TaskId).FirstOrDefaultAsync(cancellationToken)
+            : null;
+        await _hubContext.Clients.User(userId.ToString()).SendAsync("NewNotification", new
+        {
+            id = notification.Id, type = notification.Type, title = notification.Title,
+            message = notification.Message, isRead = notification.IsRead,
+            createdAt = notification.CreatedAt, relatedTaskId = notification.RelatedTaskId,
+            relatedTaskStringId
+        }, cancellationToken);
     }
 
     public async System.Threading.Tasks.Task NotifyTaskClaimedAsync(int creatorId, string taskDescription, string runnerName, int? taskId = null)

@@ -143,6 +143,7 @@ builder.Services.AddSingleton<IIdentityDocumentMalwareScanner, ClamAvIdentityDoc
 builder.Services.AddSingleton<IIdentityDocumentIdService, IdentityDocumentIdService>();
 builder.Services.AddHostedService<IdentityDocumentRetentionService>();
 builder.Services.AddHostedService<IdentityReviewSlaService>();
+builder.Services.AddHostedService<IdentityNotificationOutboxService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHttpClient("Brevo", client =>
 {

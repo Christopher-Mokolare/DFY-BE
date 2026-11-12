@@ -307,22 +307,30 @@ public sealed class ManualIdentityVerificationController(
             context.IdentityVerificationSubmissions.Add(submission);
             context.IdentityVerificationEvents.Add(CreateEvent(user.Id, "submission_received", "pending"));
             await context.SaveChangesAsync(cancellationToken);
-            if (transaction != null) await transaction.CommitAsync(cancellationToken);
-            await NotifySafelyAsync(service => service.CreateNotificationAsync(
-                user.Id, "identity_review_submitted", "DFY Document Review received",
-                "Your documents were securely submitted. DFY aims to review submissions within one business day; we will notify you when there is an update."), "runner submission confirmation");
-            await NotifySafelyAsync(service => service.NotifyAdminsAsync(
-                "identity_review_new", "New DFY Document Review",
-                $"Runner {user.Id} submitted document review case {submission.Id}."), "administrator new-case alert");
-            await SendEmailSafelyAsync(user.Email, "We received your DFY Document Review submission",
-                "Your identity documents were securely submitted. DFY aims to review submissions within one business day. We will notify you when there is an update.", cancellationToken);
-            var adminEmails = await context.Users.AsNoTracking()
+
+            const string runnerSubmissionTitle = "DFY Document Review received";
+            const string runnerSubmissionMessage = "Your documents were securely submitted. DFY aims to review submissions within one business day; we will notify you when there is an update.";
+            EnqueueIdentityNotification(context, $"identity-submission:{submission.Id}:runner:in-app",
+                "in_app", user.Id, user.Email, "identity_review_submitted", runnerSubmissionTitle, runnerSubmissionMessage);
+            EnqueueIdentityNotification(context, $"identity-submission:{submission.Id}:runner:email",
+                "email", user.Id, user.Email, "identity_review_submitted", runnerSubmissionTitle, runnerSubmissionMessage);
+
+            var adminRecipients = await context.Users.AsNoTracking()
                 .Where(u => !u.IsArchived && u.Roles != null && u.Roles.Contains("Admin"))
-                .Select(u => u.Email)
+                .Select(u => new { u.Id, u.Email })
                 .ToListAsync(cancellationToken);
-            foreach (var adminEmail in adminEmails.Distinct(StringComparer.OrdinalIgnoreCase))
-                await SendEmailSafelyAsync(adminEmail, "New DFY Document Review submission",
-                    $"A runner submitted document review case {submission.Id}. Sign in to the DFY administrator dashboard to review it.", cancellationToken);
+            foreach (var admin in adminRecipients)
+            {
+                var adminMessage = $"Runner {user.Id} submitted document review case {submission.Id}.";
+                EnqueueIdentityNotification(context, $"identity-submission:{submission.Id}:admin:{admin.Id}:in-app",
+                    "in_app", admin.Id, admin.Email, "identity_review_new", "New DFY Document Review", adminMessage);
+                EnqueueIdentityNotification(context, $"identity-submission:{submission.Id}:admin:{admin.Id}:email",
+                    "email", admin.Id, admin.Email, "identity_review_new", "New DFY Document Review",
+                    $"A runner submitted document review case {submission.Id}. Sign in to the DFY administrator dashboard to review it.");
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
             logger.LogInformation("DFY identity documents submitted using a one-time handoff. Submission {SubmissionId}, user {UserId}.", submission.Id, user.Id);
 
             return Accepted(new ApiResponse<object>
@@ -907,6 +915,23 @@ public sealed class ManualIdentityVerificationController(
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
             context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
+            var runnerTitle = decision switch
+            {
+                "approve" => "DFY Document Review approved",
+                "reject" => "DFY Document Review unsuccessful",
+                _ => "More information required for DFY Document Review"
+            };
+            var runnerMessage = decision switch
+            {
+                "approve" => "DFY has completed its manual document review. Your runner eligibility has been updated.",
+                "reject" => "DFY could not approve this document submission. Review reason: " + reason,
+                _ => "DFY needs you to update your submission. Please follow these instructions: " + reason
+            };
+            EnqueueIdentityNotification(context, $"identity-review:{submission.Id}:{decision}:runner:in-app",
+                "in_app", submission.UserId, submission.User.Email, "identity_review_" + decision, runnerTitle, runnerMessage);
+            if (!string.IsNullOrWhiteSpace(submission.User.Email))
+                EnqueueIdentityNotification(context, $"identity-review:{submission.Id}:{decision}:runner:email",
+                    "email", submission.UserId, submission.User.Email, "identity_review_" + decision, runnerTitle, runnerMessage);
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
@@ -944,27 +969,6 @@ public sealed class ManualIdentityVerificationController(
             await context.SaveChangesAsync(cancellationToken);
         }
 
-        var runnerTitle = decision switch
-        {
-            "approve" => "DFY Document Review approved",
-            "reject" => "DFY Document Review unsuccessful",
-            _ => "More information required for DFY Document Review"
-        };
-        var runnerMessage = decision switch
-        {
-            "approve" => "DFY has completed its manual document review. Your runner eligibility has been updated.",
-            "reject" => "DFY could not approve this document submission. Review reason: " + reason,
-            _ => "DFY needs you to update your submission. Please follow these instructions: " + reason
-        };
-        await NotifySafelyAsync(service => service.CreateNotificationAsync(
-            reviewedUserId, "identity_review_" + decision, runnerTitle, runnerMessage), "runner review decision notification");
-        var runnerEmail = await context.Users.AsNoTracking()
-            .Where(u => u.Id == reviewedUserId)
-            .Select(u => u.Email)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (!string.IsNullOrWhiteSpace(runnerEmail))
-            await SendEmailSafelyAsync(runnerEmail, runnerTitle, runnerMessage, cancellationToken);
-
         return Ok(new ApiResponse<object>
         {
             Success = true,
@@ -974,6 +978,33 @@ public sealed class ManualIdentityVerificationController(
                 : decision == "reject"
                     ? "DFY recorded the manual document review as rejected."
                     : "Additional information has been requested. The runner may submit a corrected application."
+        });
+    }
+
+    private static void EnqueueIdentityNotification(
+        AppDbContext db,
+        string idempotencyKey,
+        string channel,
+        int recipientUserId,
+        string? recipientEmail,
+        string type,
+        string title,
+        string message)
+    {
+        if (channel == "email" && string.IsNullOrWhiteSpace(recipientEmail)) return;
+        db.IdentityNotificationOutbox.Add(new IdentityNotificationOutbox
+        {
+            IdempotencyKey = idempotencyKey,
+            Channel = channel,
+            RecipientUserId = recipientUserId,
+            RecipientEmail = string.IsNullOrWhiteSpace(recipientEmail) ? null : recipientEmail.Trim(),
+            Type = type,
+            Title = title,
+            Message = message,
+            Status = "pending",
+            AttemptCount = 0,
+            AvailableAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
         });
     }
 
