@@ -418,8 +418,9 @@ namespace DoForYou.API.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
-                    b.Property<DateTime?>("LastError")
-                        .HasColumnType("timestamp with time zone");
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<DateTime?>("LeaseExpiresAt")
                         .HasColumnType("timestamp with time zone");
