@@ -1054,5 +1054,6 @@ public class AuthRecoveryTests
         public System.Threading.Tasks.Task NotifyPayoutCompletedAsync(int runnerId, string taskDescription, decimal amount, int? taskId = null) => System.Threading.Tasks.Task.CompletedTask;
         public System.Threading.Tasks.Task NotifyNewMessageAsync(int recipientId, string taskDescription, string senderName, int? taskId = null) => System.Threading.Tasks.Task.CompletedTask;
         public System.Threading.Tasks.Task NotifyAdminsAsync(string type, string title, string message, int? relatedTaskId = null) => System.Threading.Tasks.Task.CompletedTask;
+        public System.Threading.Tasks.Task CreateNotificationFromOutboxAsync(long outboxId, int userId, string type, string title, string message, CancellationToken cancellationToken = default) => System.Threading.Tasks.Task.CompletedTask;
     }
 }
