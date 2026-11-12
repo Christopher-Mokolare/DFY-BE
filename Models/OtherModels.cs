@@ -124,6 +124,7 @@ public class Notification
     public bool IsRead { get; set; }
     public int? RelatedTaskId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public long? OutboxId { get; set; }
 
     public User User { get; set; } = null!;
     public Models.Task? RelatedTask { get; set; }
