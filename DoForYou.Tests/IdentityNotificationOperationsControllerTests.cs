@@ -11,11 +11,12 @@ public sealed class IdentityNotificationOperationsControllerTests
     [Fact]
     public void Dead_letter_operations_require_authenticated_admin_role()
     {
-        var authorization = typeof(IdentityNotificationOperationsController)
-            .GetCustomAttribute<AuthorizeAttribute>();
+        var authorizations = typeof(IdentityNotificationOperationsController)
+            .GetCustomAttributes<AuthorizeAttribute>()
+            .ToArray();
 
-        Assert.NotNull(authorization);
-        Assert.Equal("Admin", authorization!.Roles);
+        Assert.Contains(authorizations, authorization => authorization.Roles == "Admin");
+        Assert.Contains(authorizations, authorization => authorization.Policy == "AdminMfa");
     }
 
     [Theory]
