@@ -66,6 +66,26 @@ public sealed class AdminMfaAuthorizationHandlerTests
         Assert.False(context.HasSucceeded);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Suspended_Admin_is_denied_even_with_verified_email_and_MFA()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-mfa-suspended-{Guid.NewGuid():N}").Options;
+        await using var db = new AppDbContext(options);
+        db.Users.Add(new User
+        {
+            Id = 4, Email = "suspended-admin@example.com", NormalizedEmail = "suspended-admin@example.com",
+            Roles = "Admin", EmailVerified = true, AuthenticatorTwoFactorEnabled = true,
+            IsSuspended = true
+        });
+        await db.SaveChangesAsync();
+
+        var context = CreateAuthorizationContext(4);
+        await new AdminMfaAuthorizationHandler(db).HandleAsync(context);
+
+        Assert.False(context.HasSucceeded);
+    }
+
     private static AuthorizationHandlerContext CreateAuthorizationContext(int userId)
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
