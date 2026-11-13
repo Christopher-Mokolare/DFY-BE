@@ -132,12 +132,17 @@ public class AppDbContext : DbContext
         {
             entity.HasIndex(line => new { line.JournalId, line.LineNumber }).IsUnique();
             entity.HasIndex(line => line.AccountId);
-            entity.ToTable(table => table.HasCheckConstraint(
-                "CK_FinancialJournalLines_OneSidedPositiveAmount",
-                "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))"));
-            entity.ToTable(table => table.HasCheckConstraint(
-                "CK_FinancialJournalLines_NonNegativeAmounts",
-                "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0"));
+            entity.Property(line => line.Debit).HasPrecision(18, 2);
+            entity.Property(line => line.Credit).HasPrecision(18, 2);
+            entity.ToTable(table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_FinancialJournalLines_OneSidedPositiveAmount",
+                    "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))");
+                table.HasCheckConstraint(
+                    "CK_FinancialJournalLines_NonNegativeAmounts",
+                    "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0");
+            });
             entity.HasOne(line => line.Journal)
                 .WithMany(journal => journal.Lines)
                 .HasForeignKey(line => line.JournalId)
