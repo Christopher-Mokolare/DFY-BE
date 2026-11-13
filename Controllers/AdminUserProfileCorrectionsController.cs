@@ -94,6 +94,15 @@ public sealed class AdminUserProfileCorrectionsController(
             if (string.IsNullOrWhiteSpace(frontendBaseUrl))
                 return StatusCode(StatusCodes.Status503ServiceUnavailable,
                     new ApiResponse<object> { Success = false, Message = "Email verification is not configured. No profile changes were made." });
+            var windowExpired = !target.EmailVerificationSendWindowStartAt.HasValue ||
+                target.EmailVerificationSendWindowStartAt.Value <= DateTime.UtcNow.AddHours(-24);
+            if (!windowExpired && target.EmailVerificationSendCount >= 5)
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    new ApiResponse<object> { Success = false, Message = "This account has reached its email-verification delivery limit. Try again after the 24-hour window resets." });
+            if (target.EmailVerificationSentAt.HasValue &&
+                target.EmailVerificationSentAt.Value > DateTime.UtcNow.AddSeconds(-60))
+                return StatusCode(StatusCodes.Status429TooManyRequests,
+                    new ApiResponse<object> { Success = false, Message = "Wait at least one minute before sending another email-verification message." });
         }
 
         var now = DateTime.UtcNow;
@@ -120,8 +129,13 @@ public sealed class AdminUserProfileCorrectionsController(
             target.EmailVerificationToken = HashToken(verificationToken);
             target.EmailVerificationExpiry = now.AddHours(24);
             target.EmailVerificationSentAt = now;
-            target.EmailVerificationSendWindowStartAt = now;
-            target.EmailVerificationSendCount = 1;
+            if (!target.EmailVerificationSendWindowStartAt.HasValue ||
+                target.EmailVerificationSendWindowStartAt.Value <= now.AddHours(-24))
+            {
+                target.EmailVerificationSendWindowStartAt = now;
+                target.EmailVerificationSendCount = 0;
+            }
+            target.EmailVerificationSendCount++;
             target.SecurityStamp = CreateSecureToken();
             target.FailedLoginAttempts = 0;
             target.FailedLoginWindowStartAt = null;
