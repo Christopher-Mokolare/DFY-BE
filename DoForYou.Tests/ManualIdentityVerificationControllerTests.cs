@@ -377,6 +377,13 @@ public sealed class ManualIdentityVerificationControllerTests
 
         var release = await first.ReleaseReview(submission.Id, CancellationToken.None);
         Assert.IsType<OkObjectResult>(release.Result);
+        Assert.Null(submission.ReviewClaimedByUserId);
+        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
+            item => item.EventType == "review_claim_released" && item.ActorUserId == admin1.Id && item.SubmissionId == submission.Id);
+        var releaseAudit = await context.AuditLogs.SingleAsync();
+        Assert.Equal("AdminIdentityReviewClaimReleased", releaseAudit.Action);
+        Assert.Equal(admin1.Id, releaseAudit.UserId);
+        Assert.Equal(submission.Id, releaseAudit.EntityId);
         Assert.IsType<OkObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
     }
 
