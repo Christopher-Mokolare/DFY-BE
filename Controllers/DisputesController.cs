@@ -288,17 +288,12 @@ public class DisputesController : ControllerBase
             reason.Length > 500)
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Action, resolution and a reason between 5 and 500 characters are required." });
 
-        if (action is "release_to_runner" or "refund_creator")
-        {
-            // Both outcomes can move funds. A single SuperAdmin must not execute
-            // either path until the independent two-person financial approval
-            // workflow is implemented and wired to the idempotent provider flow.
+        if (action == "release_to_runner")
             return Conflict(new ApiResponse<bool>
             {
                 Success = false,
-                Message = "Financial dispute resolution is temporarily blocked pending two-person approval. No funds were moved."
+                Message = "Exceptional escrow release from dispute remains blocked until its dedicated two-person dispute-release workflow is delivered. No funds were moved."
             });
-        }
 
         var dispute = await _context.Disputes
             .Include(d => d.Task)
@@ -311,6 +306,60 @@ public class DisputesController : ControllerBase
         var task = dispute.Task;
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute task not found" });
+
+        Models.FinancialApprovalRequest? refundApproval = null;
+        if (action == "refund_creator")
+        {
+            refundApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item =>
+                item.TaskId == task.Id && item.Action == "refund_creator" &&
+                item.Status == "Approved" && item.ExpiresAt > DateTime.UtcNow);
+            if (refundApproval == null || refundApproval.RequestedByUserId == actorId ||
+                refundApproval.DecidedByUserId == actorId ||
+                !refundApproval.DecidedByUserId.HasValue)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "A current, independently approved two-person refund request is required. No refund was submitted." });
+
+            var approver = await _context.Users.AsNoTracking()
+                .Where(user => user.Id == refundApproval.DecidedByUserId.Value && !user.IsArchived && !user.IsSuspended)
+                .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+                .FirstOrDefaultAsync();
+            var approverIsFreshSuperAdmin = approver?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+                approver.AuthenticatorTwoFactorEnabled &&
+                approver.LastTwoFactorVerifiedAt.HasValue &&
+                approver.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+            if (!approverIsFreshSuperAdmin)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The approving SuperAdmin is no longer active or their authenticator verification is stale. Obtain a new independent approval." });
+
+            await using var refundApprovalTransaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync()
+                : null;
+            var claimedApproval = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == refundApproval.Id && item.Status == "Approved" &&
+                    item.ExpiresAt > DateTime.UtcNow && item.RequestedByUserId != actorId &&
+                    item.DecidedByUserId != actorId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Executing")
+                    .SetProperty(item => item.ExecutionStartedAt, DateTime.UtcNow)
+                    .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1));
+            if (claimedApproval != 1)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The refund approval was already consumed or expired. Refresh before retrying." });
+
+            refundApproval.Status = "Executing";
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = "FinancialRefundExecutionStarted",
+                EntityType = "FinancialApprovalRequest",
+                EntityId = refundApproval.Id,
+                OldValues = "Approved",
+                NewValues = $"Executing; taskId={task.Id}; disputeId={dispute.Id}; requester={refundApproval.RequestedByUserId}; approver={refundApproval.DecidedByUserId}; reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            await _context.SaveChangesAsync();
+            if (refundApprovalTransaction != null)
+                await refundApprovalTransaction.CommitAsync();
+        }
 
         if (action == "release_to_runner")
         {
