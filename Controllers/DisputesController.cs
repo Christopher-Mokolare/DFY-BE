@@ -400,8 +400,8 @@ public class DisputesController : ControllerBase
                 .Where(p => p.TaskId == task.Id &&
                     p.Provider == "Paystack" &&
                     p.Status == "Completed" &&
-                    p.TransactionId != null &&
-                    p.Amount == task.Budget)
+                    p.TransactionId == financialApproval!.PaymentTransactionId &&
+                    p.Amount == financialApproval.Amount)
                 .OrderByDescending(p => p.CompletedAt ?? p.CreatedAt)
                 .ToListAsync();
 
