@@ -30,29 +30,7 @@ public static class DatabaseSeeder
         // Administrative accounts are provisioned only through the explicit, audited bootstrap flow.
         // Never create a privileged account or password from source-controlled seed data.
 
-        // Seed Test User
-        if (!await context.Users.AnyAsync(u => u.Email == "2co.mokolare@gmail.com"))
-        {
-            var testUser = new User
-            {
-                FirstName = "Obakeng",
-                LastName = "Mokolare",
-                Email = "2co.mokolare@gmail.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("password123"),
-                IsVerified = true,
-                ProfileCompleted = true,
-                EmailVerified = true,
-                PhoneVerified = true,
-                Roles = "User",
-                UserType = "both",
-                PhoneNumber = "0795258611",
-                IdNumber = "9001015009087",
-                Address = "123 Test Street, Johannesburg",
-                DateOfBirth = new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-            };
-
-            context.Users.Add(testUser);
-            await context.SaveChangesAsync();
-        }
+        // Demo accounts must be provisioned through an explicit staging-only workflow.
+        // Never seed passwords, contact details, identity numbers or privileged roles from source.
     }
 }
