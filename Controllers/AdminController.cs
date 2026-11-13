@@ -1599,13 +1599,13 @@ public class AdminController : ControllerBase
                 user.IsArchived,
                 user.ArchivedAt,
                 user.ArchivedReason
-            }),
+            }) + $"; reason={reason}",
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
             UserAgent = Request.Headers.UserAgent.ToString()
         });
 
         await _context.SaveChangesAsync();
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User restored." });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = user.IsSuspended ? "User restored but remains suspended; reinstate separately." : "User restored. Active sessions have been revoked." });
     }
 
     [HttpGet("audit-logs")]
