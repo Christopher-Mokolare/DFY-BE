@@ -503,6 +503,51 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/admin/users/{userId}/suspension": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    userId: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UpdateUserSuspensionRequest"];
+                    "text/json": components["schemas"]["UpdateUserSuspensionRequest"];
+                    "application/*+json": components["schemas"]["UpdateUserSuspensionRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["BooleanApiResponse"];
+                        "application/json": components["schemas"]["BooleanApiResponse"];
+                        "text/json": components["schemas"]["BooleanApiResponse"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/admin/users/{userId}/role": {
         parameters: {
             query?: never;
@@ -778,7 +823,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UserLifecycleReasonRequest"];
+                    "text/json": components["schemas"]["UserLifecycleReasonRequest"];
+                    "application/*+json": components["schemas"]["UserLifecycleReasonRequest"];
+                };
+            };
             responses: {
                 /** @description OK */
                 200: {
@@ -816,7 +867,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["UserLifecycleReasonRequest"];
+                    "text/json": components["schemas"]["UserLifecycleReasonRequest"];
+                    "application/*+json": components["schemas"]["UserLifecycleReasonRequest"];
+                };
+            };
             responses: {
                 /** @description OK */
                 200: {
@@ -7323,6 +7380,10 @@ export interface components {
             isVerified?: boolean;
             reason: string;
         };
+        UpdateUserSuspensionRequest: {
+            isSuspended?: boolean;
+            reason: string;
+        };
         UserDto: {
             /** Format: int32 */
             id?: number;
@@ -7357,6 +7418,9 @@ export interface components {
             identityVerificationStatus?: string | null;
             authenticatorTwoFactorEnabled?: boolean;
             hasGoogleLogin?: boolean;
+        };
+        UserLifecycleReasonRequest: {
+            reason: string;
         };
         UserPreferencesRequest: {
             canCreateTasks?: boolean;
