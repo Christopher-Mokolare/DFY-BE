@@ -215,6 +215,7 @@ public class DisputesController : ControllerBase
 
     [HttpGet]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> GetAllDisputes(
         [FromQuery] string? status = null,
         [FromQuery] int page = 1,
@@ -254,6 +255,7 @@ public class DisputesController : ControllerBase
 
     [HttpPatch("{id}/resolve")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] JsonElement request)
     {
         var action = request.TryGetProperty("action", out var actionElement) ? actionElement.GetString()?.Trim() : null;
