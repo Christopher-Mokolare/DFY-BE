@@ -313,6 +313,11 @@ public class AdminControllerTests
             new AdminActionReasonRequest { Reason = "Exceptional escrow release after completed dispute review" });
         var requestOk = Assert.IsType<OkObjectResult>(requested.Result);
         var requestId = (int)requestOk.Value!.GetType().GetProperty("Data")!.GetValue(requestOk.Value)!;
+        var duplicateRequest = await requesterController.RequestFinancialApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Duplicate exceptional release request" });
+        Assert.IsType<ConflictObjectResult>(duplicateRequest.Result);
+        Assert.Single(context.FinancialApprovalRequests);
 
         var selfApproval = await requesterController.ApproveFinancialRequest(
             requestId,
@@ -327,6 +332,14 @@ public class AdminControllerTests
         Assert.Equal("Approved", (await context.FinancialApprovalRequests.SingleAsync()).Status);
         Assert.Empty(context.Payouts);
 
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow.AddMinutes(-16);
+        await context.SaveChangesAsync();
+        var staleApproverExecution = await CreateController(context, requester.Id).ExecuteFinancialApproval(requestId);
+        Assert.IsType<ForbidResult>(staleApproverExecution.Result);
+        Assert.Empty(context.Payouts);
+
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        await context.SaveChangesAsync();
         var escrow = new DoForYou.API.Services.EscrowService(
             context,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<DoForYou.API.Services.EscrowService>.Instance);
