@@ -45,7 +45,7 @@ namespace DoForYou.API.Migrations
                 table: "DuplicateAccountCases",
                 columns: new[] { "PrimaryUserId", "CandidateUserId" },
                 unique: true,
-                filter: "\\"Status\\" = 'Open'");
+                filter: "\"Status\" = 'Open'")
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
