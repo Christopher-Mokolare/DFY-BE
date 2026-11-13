@@ -1091,6 +1091,8 @@ public class AdminController : ControllerBase
                 user.emailVerified,
                 user.authenticatorTwoFactorEnabled,
                 user.isArchived,
+                user.isSuspended,
+                user.suspendedAt,
                 user.lastLoginAt,
                 user.createdAt
             };
@@ -1118,12 +1120,65 @@ public class AdminController : ControllerBase
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
 
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
+        if (user.IsArchived || user.IsSuspended)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Restore and reinstate the account before changing its admin verification status." });
+
         var old = user.IsVerified;
         user.IsVerified = request.IsVerified;
         await _context.SaveChangesAsync();
-        await WriteAuditAsync(request.IsVerified ? "VerifyUser" : "UnverifyUser", "User", userId, old.ToString(), $"{request.IsVerified}; reason={request.Reason.Trim()}");
+        await WriteAuditAsync(request.IsVerified ? "VerifyUser" : "UnverifyUser", "User", userId, old.ToString(), $"{request.IsVerified}; reason={reason}");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User status updated" });
+    }
+
+    [HttpPatch("users/{userId}/suspension")]
+    public async Task<ActionResult<ApiResponse<bool>>> UpdateUserSuspension(
+        int userId,
+        [FromBody] UpdateUserSuspensionRequest request)
+    {
+        var actorId = GetAdminId();
+        if (actorId == null) return Unauthorized();
+
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        var target = await _context.Users.FirstOrDefaultAsync(user => user.Id == userId);
+        if (target == null) return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found." });
+        if (target.IsArchived)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Restore the account before changing its suspension state." });
+        if (target.Id == actorId || target.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(role => role is "Admin" or "SuperAdmin") == true)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Administrators cannot suspend themselves or another administrative account through user management." });
+        if (target.IsSuspended == request.IsSuspended)
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Account suspension state is unchanged." });
+
+        var oldState = target.IsSuspended ? "Suspended" : "Active";
+        target.IsSuspended = request.IsSuspended;
+        target.SuspendedAt = request.IsSuspended ? DateTime.UtcNow : null;
+        target.SuspendedReason = request.IsSuspended ? reason : null;
+        target.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId,
+            Action = request.IsSuspended ? "SuspendUser" : "ReinstateUser",
+            EntityType = "User",
+            EntityId = target.Id,
+            OldValues = oldState,
+            NewValues = $"{(request.IsSuspended ? "Suspended" : "Active")}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = request.IsSuspended ? "Account suspended and active sessions revoked." : "Account reinstated. The user must sign in again."
+        });
     }
 
     [HttpPatch("users/{userId}/role")]
@@ -1477,6 +1532,7 @@ public class AdminController : ControllerBase
         user.IsArchived = true;
         user.ArchivedAt = DateTime.UtcNow;
         user.ArchivedReason = "Archived by an administrator through user management";
+        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
         _context.AuditLogs.Add(new Models.AuditLog
         {
@@ -1519,6 +1575,7 @@ public class AdminController : ControllerBase
         user.IsArchived = false;
         user.ArchivedAt = null;
         user.ArchivedReason = null;
+        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
         _context.AuditLogs.Add(new Models.AuditLog
         {
