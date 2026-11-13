@@ -2862,34 +2862,13 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("withdrawal-requests")]
-    public async Task<ActionResult<ApiResponse<object>>> GetWithdrawalRequests([FromQuery] string? status = null)
+    public ActionResult<ApiResponse<object>> GetWithdrawalRequests([FromQuery] string? status = null)
     {
-        var query = _context.WithdrawalRequests
-            .Include(w => w.User)
-            .Include(w => w.BankAccount)
-            .AsQueryable();
-
-        if (!string.IsNullOrEmpty(status))
-            query = query.Where(w => w.Status == status);
-
-        var requests = await query
-            .OrderByDescending(w => w.CreatedAt)
-            .Select(w => new
-            {
-                id = w.Id,
-                userId = w.UserId,
-                userName = $"{w.User.FirstName} {w.User.LastName}",
-                amount = w.Amount,
-                fee = w.Fee,
-                status = w.Status,
-                reference = w.Reference,
-                bankName = w.BankAccount.BankName,
-                accountNumber = "****",
-                createdAt = w.CreatedAt
-            })
-            .ToListAsync();
-
-        return Ok(new ApiResponse<object> { Success = true, Data = requests });
+        return StatusCode(StatusCodes.Status410Gone, new ApiResponse<object>
+        {
+            Success = false,
+            Message = "Runner wallet withdrawals are retired. Runner earnings are managed through the verified-bank-account payout and two-person financial approval workflows."
+        });
     }
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
