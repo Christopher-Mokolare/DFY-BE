@@ -4714,6 +4714,120 @@
         }
       }
     },
+    "/api/v1/admin/super-admin/invitations": {
+      "post": {
+        "tags": [
+          "SuperAdminInvitations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdminInvitationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdminInvitationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdminInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "SuperAdminInvitations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/super-admin/invitations/{id}/revoke": {
+      "post": {
+        "tags": [
+          "SuperAdminInvitations"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeAdminInvitationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeAdminInvitationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeAdminInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/super-admin/invitations/accept": {
+      "post": {
+        "tags": [
+          "SuperAdminInvitations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptAdminInvitationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptAdminInvitationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptAdminInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/support/tickets": {
       "post": {
         "tags": [
@@ -7238,6 +7352,16 @@
   },
   "components": {
     "schemas": {
+      "AcceptAdminInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AccountResetPasswordRequest": {
         "required": [
           "newPassword",
@@ -7559,6 +7683,20 @@
           },
           "termsAccepted": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAdminInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -8191,6 +8329,16 @@
             "nullable": true
           },
           "adminNotes": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokeAdminInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
             "type": "string",
             "nullable": true
           }
