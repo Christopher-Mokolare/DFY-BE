@@ -327,6 +327,28 @@ public class PaystackSettlementReconciliationTests
         Assert.Contains("partial", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Fact]
+    public async Task GetDisputesAsync_MarksResultsIncompleteWhenPaginationMetadataIsMissing()
+    {
+        var handler = new StubHandler(_ => JsonResponse("""
+            {
+              "status": true,
+              "message": "Disputes retrieved",
+              "data": []
+            }
+            """));
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetDisputesAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-20T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Contains("pagination metadata", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static PaystackProvider CreateProvider(StubHandler handler)
     {
         var configuration = new ConfigurationBuilder()
