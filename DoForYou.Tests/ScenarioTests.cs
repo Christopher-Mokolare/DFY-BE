@@ -436,18 +436,20 @@ public class ScenarioTests
         Assert.IsType<OkResult>(success);
         Assert.Equal("Completed", payout.Status);
         var payoutJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
             .SingleAsync(journal => journal.EventType == "runner_payout_completed");
-        Assert.Equal(170m, await payoutJournal.Lines.SumAsync(line => line.Debit));
-        Assert.Equal(170m, await payoutJournal.Lines.SumAsync(line => line.Credit));
+        Assert.Equal(170m, payoutJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(170m, payoutJournal.Lines.Sum(line => line.Credit));
 
         var reversed = await InvokeWebhook(controller,
             """{"event":"transfer.reversed","data":{"reference":"DFY-PAYOUT-DFY-PAYOUT-LEDGER-1","transfer_code":"TRF-LEDGER-1","amount":17000,"currency":"ZAR"}}""");
         Assert.IsType<OkResult>(reversed);
         Assert.Equal("Returned", payout.Status);
         var reversal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
             .SingleAsync(journal => journal.EventType == "reversal" && journal.ReversalOfJournalId == payoutJournal.Id);
-        Assert.Equal(170m, await reversal.Lines.SumAsync(line => line.Debit));
-        Assert.Equal(170m, await reversal.Lines.SumAsync(line => line.Credit));
+        Assert.Equal(170m, reversal.Lines.Sum(line => line.Debit));
+        Assert.Equal(170m, reversal.Lines.Sum(line => line.Credit));
         Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2100"));
     }
 
