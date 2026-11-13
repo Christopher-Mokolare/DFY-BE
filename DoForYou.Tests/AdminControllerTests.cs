@@ -413,6 +413,41 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task User_history_includes_profile_correction_before_and_after_audit()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"user-profile-history-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var admin = CreateUser(151, "Admin");
+        var user = CreateUser(152, "User");
+        context.Users.AddRange(admin, user);
+        context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = admin.Id,
+            Action = "AdminUserProfileCorrected",
+            EntityType = "User",
+            EntityId = user.Id,
+            OldValues = "{\"email\":\"old@example.test\"}",
+            NewValues = "{\"email\":\"new@example.test\",\"reason\":\"Verified support correction\"}",
+            IpAddress = "192.0.2.10",
+            UserAgent = "test-agent",
+            CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id).GetUserTaskHistory(user.Id);
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var data = ok.Value!.GetType().GetProperty("Data")!.GetValue(ok.Value)!;
+        var changes = (System.Collections.IEnumerable)data.GetType().GetProperty("profileChanges")!.GetValue(data)!;
+
+        Assert.Single(changes.Cast<object>());
+        var change = changes.Cast<object>().Single();
+        Assert.Equal(admin.Id, change.GetType().GetProperty("UserId")!.GetValue(change));
+        Assert.Equal("AdminUserProfileCorrected", context.AuditLogs.Single().Action);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task SuperAdmins_can_request_two_person_refund_approval_only_for_open_unpaid_disputes()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
