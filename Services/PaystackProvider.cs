@@ -204,7 +204,7 @@ public sealed class PaystackProvider(
         catch (Exception ex)
         {
             logger.LogError(ex, "Paystack refund failed for transaction {TransactionId}", transactionId);
-            return new(false, null, transactionId, null, null, "Unable to submit the Paystack refund.");
+            return new(false, null, transactionId, null, null, "Paystack submission outcome is unknown; reconcile provider state before any retry.", OutcomeUnknown: true);
         }
     }
 
