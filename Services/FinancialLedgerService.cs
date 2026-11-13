@@ -27,6 +27,17 @@ public sealed record FinancialJournalDraft(
 public interface IFinancialLedgerService
 {
     Task<FinancialJournal> PostAsync(FinancialJournalDraft draft, CancellationToken cancellationToken = default);
+    Task<FinancialJournal> ReverseAsync(
+        long originalJournalId,
+        string sourceType,
+        string sourceId,
+        string idempotencyKey,
+        string description,
+        string? provider = null,
+        string? providerReference = null,
+        int? createdByUserId = null,
+        DateTime? occurredAt = null,
+        CancellationToken cancellationToken = default);
     Task<decimal> GetAccountBalanceAsync(string accountCode, CancellationToken cancellationToken = default);
 }
 
@@ -179,6 +190,49 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
             }
             throw;
         }
+    }
+
+    public async Task<FinancialJournal> ReverseAsync(
+        long originalJournalId,
+        string sourceType,
+        string sourceId,
+        string idempotencyKey,
+        string description,
+        string? provider = null,
+        string? providerReference = null,
+        int? createdByUserId = null,
+        DateTime? occurredAt = null,
+        CancellationToken cancellationToken = default)
+    {
+        var original = await _context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .FirstOrDefaultAsync(journal => journal.Id == originalJournalId, cancellationToken);
+        if (original == null)
+            throw new KeyNotFoundException("The original journal for this reversal was not found.");
+
+        var lines = original.Lines
+            .OrderBy(line => line.LineNumber)
+            .Select(line => new FinancialJournalLineDraft(
+                line.Account.Code,
+                line.Credit,
+                line.Debit,
+                "Reversal of original financial journal"))
+            .ToArray();
+
+        return await PostAsync(new FinancialJournalDraft(
+            EventType: "reversal",
+            SourceType: sourceType,
+            SourceId: sourceId,
+            IdempotencyKey: idempotencyKey,
+            Currency: original.Currency,
+            Description: description,
+            OccurredAt: occurredAt ?? DateTime.UtcNow,
+            Lines: lines,
+            Provider: provider,
+            ProviderReference: providerReference,
+            CreatedByUserId: createdByUserId,
+            ReversalOfJournalId: original.Id), cancellationToken);
     }
 
     public async Task<decimal> GetAccountBalanceAsync(
