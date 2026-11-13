@@ -59,14 +59,12 @@ public sealed class AdminUserProfileCorrectionsController(
         var firstName = request.FirstName?.Trim() ?? string.Empty;
         var lastName = request.LastName?.Trim() ?? string.Empty;
         var email = request.Email?.Trim().ToLowerInvariant() ?? string.Empty;
-        var phone = NormalizeSouthAfricanPhone(request.PhoneNumber);
+        var requestedPhone = string.IsNullOrWhiteSpace(request.PhoneNumber) ? null : NormalizeSouthAfricanPhone(request.PhoneNumber);
         var address = request.Address?.Trim() ?? string.Empty;
         if (firstName.Length is < 2 or > 80 || lastName.Length is < 2 or > 80)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "First and last names must each contain between 2 and 80 characters." });
         if (string.IsNullOrWhiteSpace(email) || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email) || email.Length > 254)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter a valid email address." });
-        if (phone == null)
-            return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter a valid South African mobile number. Changing it will clear its verified status." });
         if (address.Length > 300)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Address cannot exceed 300 characters." });
 
@@ -74,6 +72,9 @@ public sealed class AdminUserProfileCorrectionsController(
         if (target == null) return NotFound(new ApiResponse<object> { Success = false, Message = "User not found." });
         if (target.IsArchived || target.IsSuspended)
             return Conflict(new ApiResponse<object> { Success = false, Message = "Restore and reinstate the account before correcting profile details." });
+        if (!string.IsNullOrWhiteSpace(request.PhoneNumber) && requestedPhone == null)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter a valid South African mobile number. Changing it will clear its verified status." });
+        var phone = requestedPhone ?? target.PhoneNumber;
         var targetRoles = target.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
         if (targetRoles.Any(role => string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase) ||
                                     string.Equals(role, "SuperAdmin", StringComparison.OrdinalIgnoreCase)))
