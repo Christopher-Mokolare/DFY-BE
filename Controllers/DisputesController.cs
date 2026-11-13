@@ -333,14 +333,26 @@ public class DisputesController : ControllerBase
             await using var refundApprovalTransaction = _context.Database.IsRelational()
                 ? await _context.Database.BeginTransactionAsync()
                 : null;
-            var claimedApproval = await _context.FinancialApprovalRequests
-                .Where(item => item.Id == refundApproval.Id && item.Status == "Approved" &&
-                    item.ExpiresAt > DateTime.UtcNow && item.RequestedByUserId != actorId &&
-                    item.DecidedByUserId != actorId)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(item => item.Status, "Executing")
-                    .SetProperty(item => item.ExecutionStartedAt, DateTime.UtcNow)
-                    .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1));
+            var claimTime = DateTime.UtcNow;
+            var claimedApproval = 0;
+            if (_context.Database.IsRelational())
+            {
+                claimedApproval = await _context.FinancialApprovalRequests
+                    .Where(item => item.Id == refundApproval.Id && item.Status == "Approved" &&
+                        item.ExpiresAt > claimTime && item.RequestedByUserId != actorId &&
+                        item.DecidedByUserId != actorId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(item => item.Status, "Executing")
+                        .SetProperty(item => item.ExecutionStartedAt, claimTime)
+                        .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1));
+            }
+            else
+            {
+                refundApproval.Status = "Executing";
+                refundApproval.ExecutionStartedAt = claimTime;
+                refundApproval.ExecutionAttempts++;
+                claimedApproval = 1;
+            }
             if (claimedApproval != 1)
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "The refund approval was already consumed or expired. Refresh before retrying." });
 
@@ -704,6 +716,33 @@ public class DisputesController : ControllerBase
         start += prefix.Length;
         var end = values.IndexOf(';', start);
         return (end >= 0 ? values[start..end] : values[start..]).Trim();
+    }
+
+    private async Task CompleteRefundApprovalAsync(
+        Models.FinancialApprovalRequest? approval,
+        int? actorId,
+        string status,
+        string details)
+    {
+        if (approval == null)
+            return;
+
+        approval.Status = status;
+        if (status == "Executed")
+            approval.ExecutedAt = DateTime.UtcNow;
+        approval.LastExecutionError = status == "Failed" ? details : null;
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId,
+            Action = status == "Executed" ? "FinancialRefundExecuted" : "FinancialRefundExecutionFailed",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = approval.Id,
+            OldValues = "Executing",
+            NewValues = $"{status}; taskId={approval.TaskId}; {details}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
     }
 
     private int? GetCurrentUserId()
