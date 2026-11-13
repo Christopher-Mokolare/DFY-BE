@@ -724,6 +724,13 @@ public sealed class ManualIdentityVerificationController(
     {
         var adminId = CurrentUserId();
         if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Complete a fresh administrator authenticator verification before releasing a review claim."
+            });
+
         var now = DateTime.UtcNow;
         int affected;
         if (context.Database.IsRelational())
@@ -747,6 +754,32 @@ public sealed class ManualIdentityVerificationController(
             }
             else affected = 0;
         }
+
+        if (affected > 0)
+        {
+            var runnerUserId = await context.IdentityVerificationSubmissions.AsNoTracking()
+                .Where(s => s.Id == id)
+                .Select(s => s.UserId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (runnerUserId != 0)
+            {
+                context.IdentityVerificationEvents.Add(CreateEvent(
+                    runnerUserId, "review_claim_released", "released", adminId.Value, id));
+                context.AuditLogs.Add(new AuditLog
+                {
+                    UserId = adminId.Value,
+                    Action = "AdminIdentityReviewClaimReleased",
+                    EntityType = "IdentityVerificationSubmission",
+                    EntityId = id,
+                    OldValues = "claimed",
+                    NewValues = "released",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+                await context.SaveChangesAsync(cancellationToken);
+            }
+        }
+
         return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
