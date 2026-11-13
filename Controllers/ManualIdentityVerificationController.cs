@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using DoForYou.API.Services;
@@ -520,6 +521,7 @@ public sealed class ManualIdentityVerificationController(
 
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpGet("admin/pending")]
     public async Task<ActionResult<ApiResponse<object>>> GetPending(
         [FromQuery] int page = 1,
@@ -633,6 +635,7 @@ public sealed class ManualIdentityVerificationController(
 
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ClaimReview(int id, CancellationToken cancellationToken)
     {
@@ -696,6 +699,7 @@ public sealed class ManualIdentityVerificationController(
 
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/heartbeat")]
     public async Task<ActionResult<ApiResponse<object>>> HeartbeatReview(int id, CancellationToken cancellationToken)
     {
@@ -751,6 +755,7 @@ public sealed class ManualIdentityVerificationController(
 
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpDelete("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ReleaseReview(int id, CancellationToken cancellationToken)
     {
@@ -819,9 +824,10 @@ public sealed class ManualIdentityVerificationController(
         return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
-    // Identity-document access is deliberately more restricted than ordinary KYC queue access.
-    // Only SuperAdmins with enrolled and recently verified authenticator MFA can decrypt a document.
-    [Authorize(Policy = "SuperAdminMfa")]
+    // Document viewing is a separate permission from ordinary KYC review and requires fresh MFA and a reason.
+    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycViewDocumentsPolicy)]
     [HttpGet("admin/{id:int}/document/{side}")]
     public async Task<IActionResult> GetDocument(
         int id,
@@ -905,6 +911,7 @@ public sealed class ManualIdentityVerificationController(
 
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/decision")]
     public async Task<ActionResult<ApiResponse<object>>> Decide(
         int id,
