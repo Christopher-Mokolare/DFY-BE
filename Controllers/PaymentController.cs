@@ -304,7 +304,8 @@ public class PaymentController : ControllerBase
             journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
         if (!existingChargeJournal && !paymentWasAlreadyPersisted)
         {
-            var canAllocateToEscrow = task.TaskStatus == "PendingPayment" &&
+            var canAllocateToEscrow = paymentAttempt != null &&
+                task.TaskStatus == "PendingPayment" &&
                 task.EscrowStatus == "none" &&
                 task.PaymentStatus is "Pending" or "PendingPayment";
 
