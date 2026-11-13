@@ -1506,7 +1506,7 @@ public class AdminController : ControllerBase
     }
 
     [HttpDelete("users/{userId}")]
-    public async Task<ActionResult<ApiResponse<bool>>> DeleteUser(int userId)
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteUser(int userId, [FromBody] UserLifecycleReasonRequest request)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null)
@@ -1523,6 +1523,9 @@ public class AdminController : ControllerBase
 
         if (user.IsArchived)
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User is already archived." });
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
 
         var oldValues = System.Text.Json.JsonSerializer.Serialize(new
         {
@@ -1531,7 +1534,7 @@ public class AdminController : ControllerBase
         });
         user.IsArchived = true;
         user.ArchivedAt = DateTime.UtcNow;
-        user.ArchivedReason = "Archived by an administrator through user management";
+        user.ArchivedReason = reason;
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
         _context.AuditLogs.Add(new Models.AuditLog
@@ -1546,7 +1549,7 @@ public class AdminController : ControllerBase
                 user.IsArchived,
                 user.ArchivedAt,
                 user.ArchivedReason
-            }),
+            }) + $"; reason={reason}",
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
             UserAgent = Request.Headers.UserAgent.ToString()
         });
@@ -1556,7 +1559,7 @@ public class AdminController : ControllerBase
     }
 
     [HttpPost("users/{userId}/restore")]
-    public async Task<ActionResult<ApiResponse<bool>>> RestoreUser(int userId)
+    public async Task<ActionResult<ApiResponse<bool>>> RestoreUser(int userId, [FromBody] UserLifecycleReasonRequest request)
     {
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null)
@@ -1564,6 +1567,9 @@ public class AdminController : ControllerBase
 
         if (!user.IsArchived)
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User is already active." });
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
 
         var adminId = GetAdminId();
         var oldValues = System.Text.Json.JsonSerializer.Serialize(new
