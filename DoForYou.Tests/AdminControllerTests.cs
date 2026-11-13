@@ -47,6 +47,7 @@ public class AdminControllerTests
         actor.AuthenticatorTwoFactorEnabled = true;
         actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
         var target = CreateUser(43, "User");
+        target.EmailVerified = true;
         target.SecurityStamp = "target-session-stamp";
         context.Users.AddRange(actor, target);
         await context.SaveChangesAsync();
