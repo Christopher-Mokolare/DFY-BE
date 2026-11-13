@@ -421,6 +421,23 @@ public class DisputesController : ControllerBase
             }
 
             var transactionId = successfulAttempts[0].TransactionId;
+            var chargeJournalExists = await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == transactionId &&
+                journal.EventType == "payment_collected");
+            if (!chargeJournalExists)
+            {
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "The verified charge is not represented in the new double-entry journal; historical records are not automatically imported.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "This charge predates or is absent from the new financial journal. No refund was submitted; reconcile the historical charge through a separately approved accounting process."
+                });
+            }
 
             var existingRefund = await _context.Refunds
                 .FirstOrDefaultAsync(r => r.TaskId == task.Id);
