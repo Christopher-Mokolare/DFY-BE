@@ -383,6 +383,7 @@ public class DisputeLifecycleTests
     public async System.Threading.Tasks.Task Refund_dispute_resolution_requires_a_distinct_fresh_MFA_approval_and_queues_provider_refund_once()
     {
         using var context = CreateContext(nameof(Refund_dispute_resolution_requires_a_distinct_fresh_MFA_approval_and_queues_provider_refund_once));
+        context.Database.EnsureCreated();
         var requester = CreateUser(10, "admin", "requester@test.com");
         requester.Roles = "Admin,SuperAdmin";
         requester.AuthenticatorTwoFactorEnabled = true;
@@ -418,6 +419,23 @@ public class DisputeLifecycleTests
         };
         context.FinancialApprovalRequests.Add(approval);
         await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-DISPUTE-14",
+            "paystack:charge:TX-DISPUTE-14",
+            "ZAR",
+            "Verified Paystack charge for dispute refund test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            "pay_ref_dispute"));
 
         using var request = JsonDocument.Parse("""{"action":"refund_creator","resolution":"Work was incomplete after review","reason":"Independent approval authorizes refund after evidence review"}""");
         var result = await CreateController(context, requester.Id).ResolveDispute(dispute.Id, request.RootElement);
@@ -537,7 +555,9 @@ public class DisputeLifecycleTests
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
             .Options;
-        return new AppDbContext(options);
+        var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+        return context;
     }
 
     private static User CreateUser(int id, string type, string email) => new()
