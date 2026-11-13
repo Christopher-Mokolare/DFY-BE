@@ -30,24 +30,6 @@ namespace DoForYou.API.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AdminPermissionGrants", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_AdminPermissionGrants_Users_UserId",
-                        column: x => x.UserId,
-                        principalTable: "Users",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_AdminPermissionGrants_Users_GrantedByUserId",
-                        column: x => x.GrantedByUserId,
-                        principalTable: "Users",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
-                    table.ForeignKey(
-                        name: "FK_AdminPermissionGrants_Users_RevokedByUserId",
-                        column: x => x.RevokedByUserId,
-                        principalTable: "Users",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateIndex(
