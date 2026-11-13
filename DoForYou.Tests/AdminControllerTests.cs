@@ -168,7 +168,7 @@ public class AdminControllerTests
         var accounts = ((System.Collections.IEnumerable)data.GetType().GetProperty("accounts")!.GetValue(data)!)
             .Cast<object>().ToArray();
 
-        Assert.Equal(2, accounts.Length);
+        Assert.Equal(3, accounts.Length);
         Assert.Contains(accounts, account =>
             (int)account.GetType().GetProperty("id")!.GetValue(account)! == admin.Id &&
             (bool)account.GetType().GetProperty("isAdministrator")!.GetValue(account)!);
