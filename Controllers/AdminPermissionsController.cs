@@ -100,6 +100,15 @@ public sealed class AdminPermissionsController(AppDbContext context) : Controlle
         if (target == null || !isAdmin || !target.EmailVerified || !target.AuthenticatorTwoFactorEnabled)
             return Conflict(new { message = "Permissions can only be granted to active, verified Admin accounts with authenticator MFA enabled." });
 
+        var expiredGrants = await context.AdminPermissionGrants
+            .Where(grant => grant.UserId == request.UserId && grant.PermissionKey == permissionKey &&
+                grant.RevokedAt == null && grant.ExpiresAt != null && grant.ExpiresAt <= now)
+            .ToListAsync(cancellationToken);
+        foreach (var expiredGrant in expiredGrants)
+            expiredGrant.RevokedAt = expiredGrant.ExpiresAt;
+        if (expiredGrants.Count > 0)
+            await context.SaveChangesAsync(cancellationToken);
+
         var existing = await context.AdminPermissionGrants.AnyAsync(grant =>
             grant.UserId == request.UserId && grant.PermissionKey == permissionKey &&
             grant.RevokedAt == null && (grant.ExpiresAt == null || grant.ExpiresAt > now),
