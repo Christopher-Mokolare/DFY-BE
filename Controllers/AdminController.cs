@@ -56,6 +56,56 @@ public class AdminController : ControllerBase
             actor.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
     }
 
+    private async System.Threading.Tasks.Task ExpireOpenFinancialApprovalsAsync(int taskId, DateTime now, CancellationToken cancellationToken = default)
+    {
+        var expiredQuery = _context.FinancialApprovalRequests.Where(item =>
+            item.TaskId == taskId &&
+            (item.Status == "Pending" || item.Status == "Approved") &&
+            item.ExpiresAt <= now);
+        if (_context.Database.IsRelational())
+        {
+            var expiredIds = await expiredQuery.Select(item => item.Id).ToListAsync(cancellationToken);
+            if (expiredIds.Count == 0) return;
+            await expiredQuery.ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "Expired"), cancellationToken);
+            foreach (var expiredId in expiredIds)
+            {
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = GetAdminId(),
+                    Action = "FinancialApprovalExpired",
+                    EntityType = "FinancialApprovalRequest",
+                    EntityId = expiredId,
+                    OldValues = "Pending or Approved",
+                    NewValues = $"Expired at {now:O}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            var expired = await expiredQuery.ToListAsync(cancellationToken);
+            foreach (var item in expired)
+            {
+                item.Status = "Expired";
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = GetAdminId(),
+                    Action = "FinancialApprovalExpired",
+                    EntityType = "FinancialApprovalRequest",
+                    EntityId = item.Id,
+                    OldValues = "Pending or Approved",
+                    NewValues = $"Expired at {now:O}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
+            if (expired.Count > 0)
+                await _context.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     private int? GetAdminId() =>
         int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
 
@@ -1815,6 +1865,7 @@ public class AdminController : ControllerBase
             return Conflict(new ApiResponse<int> { Success = false, Message = "A refund already exists or is awaiting provider action; reconcile it before creating another approval." });
 
         var now = DateTime.UtcNow;
+        await ExpireOpenFinancialApprovalsAsync(task.Id, now, HttpContext.RequestAborted);
         await using var requestTransaction = _context.Database.IsRelational()
             ? await _context.Database.BeginTransactionAsync()
             : null;
@@ -1887,11 +1938,12 @@ public class AdminController : ControllerBase
             return Conflict(new ApiResponse<int> { Success = false, Message = "A dispute release requires an open dispute, assigned runner, verified paid charge and frozen escrow with no active payout." });
 
         var now = DateTime.UtcNow;
+        await ExpireOpenFinancialApprovalsAsync(task.Id, now, HttpContext.RequestAborted);
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
             item.TaskId == task.Id &&
             (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
         if (hasOpenRequest)
-            return Conflict(new ApiResponse<int> { Success = false, Message = "An active dispute-release approval already exists for this task." });
+            return Conflict(new ApiResponse<int> { Success = false, Message = "An active financial approval already exists for this task." });
 
         await using var requestTransaction = _context.Database.IsRelational()
             ? await _context.Database.BeginTransactionAsync()
