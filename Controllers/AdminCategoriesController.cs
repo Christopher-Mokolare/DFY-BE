@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 
@@ -13,6 +14,7 @@ namespace DoForYou.API.Controllers;
 [Route("api/v1/admin/categories")]
 [Authorize(Roles = "Admin")]
 [Authorize(Policy = "AdminMfa")]
+[Authorize(Policy = AdminPermissionPolicies.ConfigurationManagePolicy)]
 public class AdminCategoriesController : ControllerBase
 {
     private readonly AppDbContext _context;
