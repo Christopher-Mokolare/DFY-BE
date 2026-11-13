@@ -850,7 +850,9 @@ public class ScenarioTests
         var creator = CreateUser(1, "creator", true, "refund-guard-creator@test.com");
         var runner = CreateUser(2, "runner", true, "refund-guard-runner@test.com");
         var admin = CreateUser(3, "admin", true, "refund-guard-admin@test.com");
-        admin.Roles = "Admin";
+        admin.Roles = "Admin,SuperAdmin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
         context.Users.AddRange(creator, runner, admin);
 
         var bank = CreateVerifiedBankAccount(runner.Id);
