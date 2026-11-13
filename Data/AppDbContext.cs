@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<TaskProgressUpdate> TaskProgressUpdates { get; set; }
     public DbSet<Dispute> Disputes { get; set; }
     public DbSet<TaskIncident> TaskIncidents { get; set; } = null!;
+    // Historical compatibility only. New accounting uses FinancialJournals/FinancialJournalLines.
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
     public DbSet<BusinessRule> BusinessRules { get; set; }
     public DbSet<Notification> Notifications { get; set; }
