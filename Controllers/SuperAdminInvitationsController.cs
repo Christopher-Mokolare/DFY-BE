@@ -23,6 +23,7 @@ public sealed class SuperAdminInvitationsController(
     private static readonly TimeSpan InvitationLifetime = TimeSpan.FromHours(48);
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateAdminInvitationRequest request, CancellationToken cancellationToken)
     {
@@ -143,6 +144,7 @@ public sealed class SuperAdminInvitationsController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
@@ -169,6 +171,7 @@ public sealed class SuperAdminInvitationsController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpPost("{id:int}/revoke")]
     public async Task<IActionResult> Revoke(int id, [FromBody] RevokeAdminInvitationRequest request, CancellationToken cancellationToken)
     {
