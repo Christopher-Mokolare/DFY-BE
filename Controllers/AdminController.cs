@@ -1898,8 +1898,21 @@ public class AdminController : ControllerBase
         var task = await _context.Tasks.FirstOrDefaultAsync(item => item.TaskId == taskId);
         if (task == null)
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
-        if (task.AcceptedByUserId == null || task.TaskStatus != "AwaitingConfirmation" || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld" || task.PayoutAmount <= 0)
-            return Conflict(new ApiResponse<int> { Success = false, Message = "Only an assigned task with held escrow can enter exceptional release approval." });
+        var verifiedChargeIds = await _context.PaymentAttempts
+            .Where(payment => payment.TaskId == task.Id &&
+                payment.Provider == "Paystack" &&
+                payment.Status == "Completed" &&
+                payment.TransactionId != null &&
+                payment.Amount == task.Budget)
+            .Select(payment => payment.TransactionId!)
+            .ToListAsync();
+        var chargeIsJournalled = verifiedChargeIds.Count == 1 &&
+            await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == verifiedChargeIds[0] &&
+                journal.EventType == "payment_collected");
+        if (task.AcceptedByUserId == null || task.TaskStatus != "AwaitingConfirmation" || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld" || task.PayoutAmount <= 0 || !chargeIsJournalled)
+            return Conflict(new ApiResponse<int> { Success = false, Message = "Exceptional release requires an assigned task, held escrow and exactly one verified Paystack charge already recorded in the new financial journal. Legacy task totals and audit references are not sufficient." });
 
         var now = DateTime.UtcNow;
         await ExpireOpenFinancialApprovalsAsync(task.Id, now, HttpContext.RequestAborted);
@@ -1961,12 +1974,17 @@ public class AdminController : ControllerBase
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
 
         var openDispute = await _context.Disputes.AnyAsync(item => item.TaskId == task.Id && item.Status == "Open");
-        var successfulPayment = await _context.PaymentAttempts
+        var successfulPayments = await _context.PaymentAttempts
             .Where(item => item.TaskId == task.Id && item.Provider == "Paystack" &&
-                item.Status == "Completed" && item.TransactionId != null)
-            .OrderByDescending(item => item.CompletedAt ?? item.CreatedAt)
-            .Select(item => new { item.TransactionId, item.Amount })
-            .FirstOrDefaultAsync();
+                item.Status == "Completed" && item.TransactionId != null && item.Amount == task.Budget)
+            .Select(item => item.TransactionId!)
+            .ToListAsync();
+        var successfulTransactionId = successfulPayments.Count == 1 ? successfulPayments[0] : null;
+        var refundChargeIsJournalled = successfulTransactionId != null &&
+            await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == successfulTransactionId &&
+                journal.EventType == "payment_collected");
         var existingRefund = await _context.Refunds.FirstOrDefaultAsync(item => item.TaskId == task.Id);
         var activePayout = await _context.Payouts.AnyAsync(item => item.TaskId == task.Id &&
             (item.Status == "Pending" || item.Status == "Processing" || item.Status == "AwaitingFunds" ||
@@ -1976,8 +1994,8 @@ public class AdminController : ControllerBase
         if (!openDispute || task.PaymentStatus != "DisputePending" || task.EscrowStatus != "disputed" ||
             task.TaskStatus is not ("AwaitingConfirmation" or "Completed") ||
             task.PayoutStatus == "Completed" || activePayout ||
-            successfulPayment == null || string.IsNullOrWhiteSpace(successfulPayment.TransactionId) ||
-            successfulPayment.Amount <= 0 || task.Budget <= 0 || successfulPayment.Amount != task.Budget)
+            !refundChargeIsJournalled ||
+            task.Budget <= 0)
             return Conflict(new ApiResponse<int> { Success = false, Message = "A refund approval requires an open dispute, a frozen unpaid task, a verified Paystack charge and no existing payout." });
 
         if (existingRefund != null && existingRefund.Status is "Complete" or "Submitted" or "Pending" or "PendingInvestigation" or "ReconciliationRequired")
@@ -2013,7 +2031,7 @@ public class AdminController : ControllerBase
             Action = "FinancialRefundApprovalRequested",
             EntityType = "FinancialApprovalRequest",
             EntityId = approval.Id,
-            NewValues = $"action=refund_creator; taskId={task.Id}; transactionId={successfulPayment.TransactionId}; amount={task.Budget:F2}; expiresAt={approval.ExpiresAt:O}; reason={reason}",
+            NewValues = $"action=refund_creator; taskId={task.Id}; transactionId={successfulTransactionId}; amount={task.Budget:F2}; expiresAt={approval.ExpiresAt:O}; reason={reason}",
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
             UserAgent = Request.Headers.UserAgent.ToString()
         });
@@ -2042,9 +2060,16 @@ public class AdminController : ControllerBase
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
 
         var openDispute = await _context.Disputes.AnyAsync(item => item.TaskId == task.Id && item.Status == "Open");
-        var hasSuccessfulPayment = await _context.PaymentAttempts.AnyAsync(item =>
-            item.TaskId == task.Id && item.Provider == "Paystack" && item.Status == "Completed" &&
-            item.TransactionId != null && item.Amount == task.Budget);
+        var successfulPaymentTransactionIds = await _context.PaymentAttempts
+            .Where(item => item.TaskId == task.Id && item.Provider == "Paystack" && item.Status == "Completed" &&
+                item.TransactionId != null && item.Amount == task.Budget)
+            .Select(item => item.TransactionId!)
+            .ToListAsync();
+        var hasSuccessfulPayment = successfulPaymentTransactionIds.Count == 1 &&
+            await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == successfulPaymentTransactionIds[0] &&
+                journal.EventType == "payment_collected");
         var activePayout = await _context.Payouts.AnyAsync(item => item.TaskId == task.Id &&
             (item.Status == "Pending" || item.Status == "Processing" || item.Status == "AwaitingFunds" ||
              item.Status == "AwaitingEligibility" || item.Status == "AwaitingBankDetails" ||
@@ -2123,7 +2148,12 @@ public class AdminController : ControllerBase
             "force_escrow_release" => await _context.Tasks.AnyAsync(task =>
                 task.Id == approval.TaskId && task.AcceptedByUserId != null &&
                 task.TaskStatus == "AwaitingConfirmation" && task.EscrowStatus == "held" &&
-                task.PaymentStatus == "EscrowHeld" && task.PayoutAmount > 0),
+                task.PaymentStatus == "EscrowHeld" && task.PayoutAmount > 0) &&
+                await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
+                    payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
+                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault() &&
+                    _context.FinancialJournals.Any(journal => journal.SourceType == "paystack_transaction" &&
+                        journal.SourceId == payment.TransactionId && journal.EventType == "payment_collected")),
             "refund_creator" or "release_to_runner" => await _context.Tasks.AnyAsync(task =>
                 task.Id == approval.TaskId &&
                 (task.TaskStatus == "AwaitingConfirmation" || task.TaskStatus == "Completed") &&
@@ -2132,7 +2162,9 @@ public class AdminController : ControllerBase
                 await _context.Disputes.AnyAsync(dispute => dispute.TaskId == approval.TaskId && dispute.Status == "Open") &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
                     payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
-                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault()) &&
+                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault() &&
+                    _context.FinancialJournals.Any(journal => journal.SourceType == "paystack_transaction" &&
+                        journal.SourceId == payment.TransactionId && journal.EventType == "payment_collected")) &&
                 !await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
                     (payout.Status == "Pending" || payout.Status == "Processing" || payout.Status == "AwaitingFunds" ||
                      payout.Status == "AwaitingEligibility" || payout.Status == "AwaitingBankDetails" ||
