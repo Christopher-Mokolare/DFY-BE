@@ -121,6 +121,12 @@ public class AppDbContext : DbContext
             .IsUnique();
 
         modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => new { request.TaskId, request.Action })
+            .IsUnique()
+            .HasFilter("\\"Status\\" IN ('Pending', 'Approved', 'Executing')")
+            .HasDatabaseName("IX_FinancialApprovalRequests_OpenTaskAction");
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt });
 
         modelBuilder.Entity<SuperAdminChangeRequest>()
