@@ -7,7 +7,7 @@ namespace DoForYou.API.Services;
 
 public interface IEscrowService
 {
-    Task<bool> ReleaseEscrowAsync(int taskId, bool force = false);
+    Task<bool> ReleaseEscrowAsync(int taskId, bool force = false, string? expectedPaymentTransactionId = null);
     decimal CalculateCommission(decimal amount);
 }
 
@@ -27,7 +27,7 @@ public class EscrowService : IEscrowService
         _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
-    public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false)
+    public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false, string? expectedPaymentTransactionId = null)
     {
         IDbContextTransaction? transaction = null;
         if (_context.Database.IsRelational())
@@ -62,7 +62,9 @@ public class EscrowService : IEscrowService
                     attempt.Amount == task.Budget)
                 .ToListAsync();
             if (successfulCharges.Count != 1 ||
-                string.IsNullOrWhiteSpace(successfulCharges[0].TransactionId))
+                string.IsNullOrWhiteSpace(successfulCharges[0].TransactionId) ||
+                (expectedPaymentTransactionId != null &&
+                 successfulCharges[0].TransactionId != expectedPaymentTransactionId))
                 return false;
 
             var chargeIsJournalled = await _context.FinancialJournals.AnyAsync(journal =>
