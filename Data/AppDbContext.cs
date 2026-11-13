@@ -111,7 +111,9 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<DuplicateAccountCase>()
             .HasIndex(item => new { item.PrimaryUserId, item.CandidateUserId })
-            .HasDatabaseName("IX_DuplicateAccountCases_PrimaryUserId_CandidateUserId");
+            .IsUnique()
+            .HasFilter("\\"Status\\" = 'Open'")
+            .HasDatabaseName("IX_DuplicateAccountCases_OpenPair");
 
         modelBuilder.Entity<SuperAdminChangeRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt })
