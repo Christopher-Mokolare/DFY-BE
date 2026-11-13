@@ -8,7 +8,6 @@ namespace DoForYou.API.Services;
 public interface IEscrowService
 {
     Task<bool> ReleaseEscrowAsync(int taskId, bool force = false);
-    Task<int> AutoReleaseExpiredEscrowsAsync();
     decimal CalculateCommission(decimal amount);
 }
 
@@ -202,8 +201,6 @@ public class EscrowService : IEscrowService
             return false;
         }
     }
-
-    public System.Threading.Tasks.Task<int> AutoReleaseExpiredEscrowsAsync() => System.Threading.Tasks.Task.FromResult(0);
 
     public decimal CalculateCommission(decimal amount) => Math.Max(decimal.Round(amount * 0.15m, 2, MidpointRounding.AwayFromZero), 5.00m);
 }
