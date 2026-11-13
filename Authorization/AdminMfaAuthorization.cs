@@ -20,7 +20,7 @@ public sealed class AdminMfaAuthorizationHandler(AppDbContext context)
             return;
 
         var account = await context.Users.AsNoTracking()
-            .Where(user => user.Id == userId && !user.IsArchived)
+            .Where(user => user.Id == userId && !user.IsArchived && !user.IsSuspended)
             .Select(user => new
             {
                 user.Roles,
