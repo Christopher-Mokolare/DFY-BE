@@ -336,6 +336,11 @@ public sealed class ManualIdentityVerificationControllerTests
         var audit = await context.IdentityVerificationEvents.ToListAsync();
         Assert.Contains(audit, e => e.EventType == "admin_approve" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
         Assert.Contains(audit, e => e.EventType == "review_claimed" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
+        var decisionAudit = await context.AuditLogs.SingleAsync();
+        Assert.Equal("AdminIdentityReviewDecision", decisionAudit.Action);
+        Assert.Equal(admin.Id, decisionAudit.UserId);
+        Assert.Equal(submission.Id, decisionAudit.EntityId);
+        Assert.Contains("decision=approve", decisionAudit.NewValues);
     }
 
 
