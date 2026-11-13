@@ -13,6 +13,7 @@ using DoForYou.API.Services;
 using DoForYou.API.Services.Background;
 using DoForYou.API.Middleware;
 using DoForYou.API.Hubs;
+using DoForYou.API.Authorization;
 
 // Render free instances have a strict inotify/file-descriptor limit. Disable config reload watchers
 // so the app does not crash during startup while loading appsettings.json.
@@ -222,10 +223,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
+builder.Services.AddScoped<IAuthorizationHandler, AdminMfaAuthorizationHandler>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DevelopmentOnly", policy =>
         policy.RequireAssertion(_ => builder.Environment.IsDevelopment()));
+    options.AddPolicy("AdminMfa", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new AdminMfaRequirement());
+    });
 });
 
 // CORS
