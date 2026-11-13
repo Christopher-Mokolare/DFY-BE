@@ -238,6 +238,117 @@ public class PaystackSettlementReconciliationTests
         Assert.Contains("not configured", result.Error);
     }
 
+    [Fact]
+    public async Task GetDisputesAsync_MapsDeadlineAndTransactionWithoutReturningCustomerPii()
+    {
+        var handler = new StubHandler(request =>
+        {
+            Assert.EndsWith("/dispute", request.RequestUri!.AbsolutePath);
+            Assert.Contains("perPage=100", request.RequestUri.Query);
+            Assert.Contains("from=", request.RequestUri.Query);
+            Assert.Contains("to=", request.RequestUri.Query);
+            return JsonResponse("""
+                {
+                  "status": true,
+                  "message": "Disputes retrieved",
+                  "data": [{
+                    "id": 2867,
+                    "status": "awaiting-merchant-feedback",
+                    "category": "fraud",
+                    "refund_amount": null,
+                    "dueAt": "2026-10-15T12:00:00.000Z",
+                    "resolvedAt": null,
+                    "createdAt": "2026-10-10T09:00:00.000Z",
+                    "updatedAt": "2026-10-10T09:00:00.000Z",
+                    "domain": "test",
+                    "transaction": {
+                      "id": 5991760,
+                      "reference": "dfy-pay-task-123",
+                      "amount": 20000,
+                      "currency": "ZAR"
+                    },
+                    "customer": {
+                      "email": "must-not-be-returned@example.test",
+                      "phone": "0000000000"
+                    }
+                  }],
+                  "meta": { "pageCount": 1 }
+                }
+                """);
+        });
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetDisputesAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-20T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.True(result.IsComplete);
+        var dispute = Assert.Single(result.Disputes);
+        Assert.Equal("2867", dispute.Id);
+        Assert.Equal("awaiting-merchant-feedback", dispute.Status);
+        Assert.Equal("5991760", dispute.TransactionId);
+        Assert.Equal("dfy-pay-task-123", dispute.TransactionReference);
+        Assert.Equal(200m, dispute.Amount);
+        Assert.Equal("ZAR", dispute.Currency);
+        Assert.Equal("fraud", dispute.Category);
+        Assert.NotNull(dispute.DueAt);
+        Assert.Null(dispute.ResolvedAt);
+        Assert.DoesNotContain("must-not-be-returned", System.Text.Json.JsonSerializer.Serialize(dispute));
+        Assert.DoesNotContain("0000000000", System.Text.Json.JsonSerializer.Serialize(dispute));
+    }
+
+    [Fact]
+    public async Task GetDisputesAsync_ReportsPartialResultsWhenProviderPaginationExceedsTheBound()
+    {
+        var calls = 0;
+        var handler = new StubHandler(_ =>
+        {
+            calls++;
+            return JsonResponse("""
+                {
+                  "status": true,
+                  "message": "Disputes retrieved",
+                  "data": [],
+                  "meta": { "pageCount": 21 }
+                }
+                """);
+        });
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetDisputesAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-20T00:00:00Z"),
+            maxPages: 2);
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Equal(2, calls);
+        Assert.Contains("partial", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    [Fact]
+    public async Task GetDisputesAsync_MarksResultsIncompleteWhenPaginationMetadataIsMissing()
+    {
+        var handler = new StubHandler(_ => JsonResponse("""
+            {
+              "status": true,
+              "message": "Disputes retrieved",
+              "data": []
+            }
+            """));
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetDisputesAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-20T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Contains("pagination metadata", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static PaystackProvider CreateProvider(StubHandler handler)
     {
         var configuration = new ConfigurationBuilder()

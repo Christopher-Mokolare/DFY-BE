@@ -33,6 +33,7 @@ DFY's canonical task lifecycle must remain authoritative:
 | 24-hour release | `Services/Background/EscrowReleaseService.cs` polls expired `AwaitingConfirmation` tasks and calls the race-safe escrow release operation. | Implemented in source; verify deployed service is running and test a real expiry through the controlled staging path. |
 | Commission | `EscrowService.CalculateCommission` calculates 15%, with a minimum commission of R5; task payout uses persisted `PayoutAmount`. | Verify all task creation/update paths persist matching commission and payout values and FE/mobile display the same runner net amount. |
 | Split settlement | The inspected `PaystackProvider` checkout payload initializes the full task budget and does not pass a Paystack `subaccount` or `split_code`. | No automatic Paystack Split Payments allocation was found in the inspected checkout code. Do not tell users the commission is already split to a separate bank account. |
+| Chargeback/dispute visibility | `GET /api/v1/admin/financial-reconciliation/paystack-disputes` reads Paystack disputes, provider due dates and transaction references, then matches them to DFY payment attempts. | Implemented as read-only visibility only. It does not upload evidence, accept/resolve disputes, issue refunds, or enforce a payout hold; operator action and an authoritative case workflow remain required. |
 | Settlement reconciliation | `GET /api/v1/admin/financial-reconciliation/paystack-settlements` reads Paystack settlement batches and their transactions, matching provider references and amounts to DFY payment attempts/tasks. | Implemented as a bounded, read-only report. It flags mismatches and partial pagination; it does not mutate financial state. It still does not reconcile bank-statement credits, transfer fees, or legal escrow/safeguarding status. |
 | Production evidence | `DFY_RELEASE_READINESS_2026-10-09.md` explicitly leaves controlled Paystack payment/transfer validation and final refund/dispute reconciliation as release gates. | Production sign-off remains pending until evidence is attached. |
 
@@ -45,7 +46,25 @@ DFY's canonical task lifecycle must remain authoritative:
 Both reports are bounded to a maximum 90-day date window and provider pagination limits. A partial provider response is explicitly marked incomplete. Neither endpoint creates, retries, finalizes, reverses, marks paid, or otherwise changes financial records. An unmatched item is a review candidate, not proof that a bank credit is missing.
 
 The transfer report deliberately does not return beneficiary account details. The current DFY payout model does not persist Paystack transfer fees as a separate field, so provider fees are displayed for operator comparison but cannot yet be reconciled against a local fee ledger.
-\n## Commission and bank settlement: expected treatment
+\| Settlement reconciliation | `GET /api/v1/admin/financial-reconciliation/paystack-settlements` reads Paystack settlement batches and their transactions, matching provider references and amounts to DFY payment attempts/tasks. | Implemented as a bounded, read-only report. It flags mismatches and partial pagination; it does not mutate financial state. It still does not reconcile bank-statement credits, transfer fees, or legal escrow/safeguarding status. |
+| Production evidence | `DFY_RELEASE_READINESS_2026-10-09.md` explicitly leaves controlled Paystack payment/transfer validation and final refund/dispute reconciliation as release gates. | Production sign-off remains pending until evidence is attached. |
+
+
+## Read-only reconciliation endpoints
+
+- `GET /api/v1/admin/financial-reconciliation/paystack-settlements?from=...&to=...` — settlement batches, settlement transactions, matching DFY payment attempts/tasks, and unmatched successful local attempts.
+- `GET /api/v1/admin/financial-reconciliation/paystack-transfers?from=...&to=...` — transfer IDs/codes/references, provider status/amount/fee when returned, and matching DFY payout rows.
+
+Both reports are bounded to a maximum 90-day date window and provider pagination limits. A partial provider response is explicitly marked incomplete. Neither endpoint creates, retries, finalizes, reverses, marks paid, or otherwise changes financial records. An unmatched item is a review candidate, not proof that a bank credit is missing.
+
+The transfer report deliberately does not return beneficiary account details. The current DFY payout model does not persist Paystack transfer fees as a separate field, so provider fees are displayed for operator comparison but cannot yet be reconciled against a local fee ledger.
+\n## Read-only Paystack dispute visibility
+
+- `GET /api/v1/admin/financial-reconciliation/paystack-disputes?from=...&to=...` — retrieves Paystack dispute cases and provider due dates, matches transaction references/IDs to DFY payment attempts, and labels cases overdue, due within 24 hours, due later, or missing a provider deadline.
+
+The endpoint is bounded to a 90-day date range and provider pagination limit. It deliberately omits customer email, phone, card and bank details. It supplies an operator evidence checklist but does not upload evidence or resolve the Paystack dispute. Paystack's dispute API supports listing disputes and exposes the case status and due date; actual evidence submission and resolution remain controlled actions for an authorised operator in the Paystack Dashboard or a separately reviewed workflow.
+
+## Commission and bank settlement: expected treatment
 
 For a R200 creator payment, the intended task allocation is:
 
