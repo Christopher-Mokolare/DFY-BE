@@ -1481,6 +1481,9 @@ public class AdminController : ControllerBase
         if (approval.Status != "Pending" || approval.ExpiresAt <= DateTime.UtcNow)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an unexpired pending request can be rejected." });
 
+        await using var rejectionTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         approval.Status = "Rejected";
         approval.DecidedByUserId = actorId.Value;
         approval.DecidedAt = DateTime.UtcNow;
@@ -1497,6 +1500,8 @@ public class AdminController : ControllerBase
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await _context.SaveChangesAsync();
+        if (rejectionTransaction != null)
+            await rejectionTransaction.CommitAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Financial action rejected. No money moved." });
     }
@@ -1560,17 +1565,24 @@ public class AdminController : ControllerBase
             RequestedAt = now,
             ExpiresAt = now.AddMinutes(30)
         };
+        await using var requestTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         _context.FinancialApprovalRequests.Add(approval);
+        await _context.SaveChangesAsync();
         _context.AuditLogs.Add(new Models.AuditLog
         {
             UserId = actorId.Value,
             Action = "FinancialApprovalRequested",
             EntityType = "FinancialApprovalRequest",
+            EntityId = approval.Id,
             NewValues = $"action={approval.Action}; taskId={task.Id}; expiresAt={approval.ExpiresAt:O}; reason={reason}",
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await _context.SaveChangesAsync();
+        if (requestTransaction != null)
+            await requestTransaction.CommitAsync();
 
         return Ok(new ApiResponse<int> { Success = true, Data = approval.Id, Message = "Financial approval request created. No money has moved." });
     }
@@ -1606,6 +1618,9 @@ public class AdminController : ControllerBase
         if (!taskIsStillEligible)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer eligible for exceptional escrow release." });
 
+        await using var approvalTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var now = DateTime.UtcNow;
         var changed = 0;
         if (_context.Database.IsRelational())
@@ -1641,6 +1656,8 @@ public class AdminController : ControllerBase
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await _context.SaveChangesAsync();
+        if (approvalTransaction != null)
+            await approvalTransaction.CommitAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Independent approval recorded. Execution remains a separate action." });
     }
