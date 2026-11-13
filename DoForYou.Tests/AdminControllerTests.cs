@@ -456,6 +456,12 @@ public class AdminControllerTests
         Assert.Equal("refund_creator", approval.Action);
         Assert.Equal("Pending", approval.Status);
         Assert.Contains(context.AuditLogs, log => log.Action == "FinancialRefundApprovalRequested");
+
+        var competingRelease = await CreateController(context, requester.Id).RequestDisputeReleaseApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Competing release request must be rejected" });
+        Assert.IsType<ConflictObjectResult>(competingRelease.Result);
+        Assert.Single(context.FinancialApprovalRequests);
         Assert.Empty(context.Refunds);
         Assert.Empty(context.Payouts);
     }
