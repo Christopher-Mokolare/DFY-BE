@@ -89,7 +89,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AdminPermissionGrant>()
             .HasIndex(grant => new { grant.UserId, grant.PermissionKey })
             .IsUnique()
-            .HasFilter("\\"RevokedAt\\" IS NULL")
+            .HasFilter("\"RevokedAt\" IS NULL")
             .HasDatabaseName("IX_AdminPermissionGrants_Active_UserId_PermissionKey");
 
         modelBuilder.Entity<AdminPermissionGrant>()
