@@ -4716,17 +4716,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             },
             "text/json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             },
             "application/*+json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             }
           }
@@ -4813,17 +4813,17 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             },
             "text/json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             },
             "application/*+json": {
               "schema": {
-                "$ref": "#/components/schemas/BusinessRule"
+                "$ref": "#/components/schemas/AdminBusinessRuleRequest"
               }
             }
           }
@@ -4866,6 +4866,25 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -4906,6 +4925,25 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRuleReasonRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "OK",
@@ -7755,6 +7793,77 @@
           "reason": {
             "maxLength": 500,
             "minLength": 5,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminBusinessRuleRequest": {
+        "required": [
+          "action",
+          "condition",
+          "entity",
+          "reason",
+          "ruleName",
+          "ruleType"
+        ],
+        "type": "object",
+        "properties": {
+          "ruleName": {
+            "maxLength": 200,
+            "minLength": 0,
+            "type": "string"
+          },
+          "ruleType": {
+            "maxLength": 80,
+            "minLength": 0,
+            "type": "string"
+          },
+          "entity": {
+            "maxLength": 80,
+            "minLength": 0,
+            "type": "string"
+          },
+          "condition": {
+            "maxLength": 4000,
+            "minLength": 0,
+            "type": "string"
+          },
+          "action": {
+            "maxLength": 80,
+            "minLength": 0,
+            "type": "string"
+          },
+          "errorMessage": {
+            "maxLength": 1000,
+            "minLength": 0,
+            "type": "string",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 10,
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminRuleReasonRequest": {
+        "required": [
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 10,
             "type": "string"
           }
         },

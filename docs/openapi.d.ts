@@ -4367,9 +4367,9 @@ export interface paths {
             };
             requestBody?: {
                 content: {
-                    "application/json": components["schemas"]["BusinessRule"];
-                    "text/json": components["schemas"]["BusinessRule"];
-                    "application/*+json": components["schemas"]["BusinessRule"];
+                    "application/json": components["schemas"]["AdminBusinessRuleRequest"];
+                    "text/json": components["schemas"]["AdminBusinessRuleRequest"];
+                    "application/*+json": components["schemas"]["AdminBusinessRuleRequest"];
                 };
             };
             responses: {
@@ -4434,9 +4434,9 @@ export interface paths {
             };
             requestBody?: {
                 content: {
-                    "application/json": components["schemas"]["BusinessRule"];
-                    "text/json": components["schemas"]["BusinessRule"];
-                    "application/*+json": components["schemas"]["BusinessRule"];
+                    "application/json": components["schemas"]["AdminBusinessRuleRequest"];
+                    "text/json": components["schemas"]["AdminBusinessRuleRequest"];
+                    "application/*+json": components["schemas"]["AdminBusinessRuleRequest"];
                 };
             };
             responses: {
@@ -4463,7 +4463,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AdminRuleReasonRequest"];
+                    "text/json": components["schemas"]["AdminRuleReasonRequest"];
+                    "application/*+json": components["schemas"]["AdminRuleReasonRequest"];
+                };
+            };
             responses: {
                 /** @description OK */
                 200: {
@@ -4501,7 +4507,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AdminRuleReasonRequest"];
+                    "text/json": components["schemas"]["AdminRuleReasonRequest"];
+                    "application/*+json": components["schemas"]["AdminRuleReasonRequest"];
+                };
+            };
             responses: {
                 /** @description OK */
                 200: {
@@ -7132,6 +7144,21 @@ export interface components {
             accountType?: string | null;
         };
         AdminActionReasonRequest: {
+            reason: string;
+        };
+        AdminBusinessRuleRequest: {
+            ruleName: string;
+            ruleType: string;
+            entity: string;
+            condition: string;
+            action: string;
+            errorMessage?: string | null;
+            isActive?: boolean;
+            /** Format: int32 */
+            priority?: number;
+            reason: string;
+        };
+        AdminRuleReasonRequest: {
             reason: string;
         };
         AuthResponse: {
