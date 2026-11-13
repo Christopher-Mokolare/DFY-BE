@@ -28,6 +28,7 @@ public class AppDbContext : DbContext
     public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
     public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
     public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
+    public DbSet<DuplicateAccountCase> DuplicateAccountCases { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
@@ -103,6 +104,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<AdminPermissionGrant>()
             .HasIndex(grant => grant.RevokedByUserId)
             .HasDatabaseName("IX_AdminPermissionGrants_RevokedByUserId");
+
+        modelBuilder.Entity<DuplicateAccountCase>()
+            .HasIndex(item => new { item.Status, item.CreatedAt })
+            .HasDatabaseName("IX_DuplicateAccountCases_Status_CreatedAt");
+
+        modelBuilder.Entity<DuplicateAccountCase>()
+            .HasIndex(item => new { item.PrimaryUserId, item.CandidateUserId })
+            .HasDatabaseName("IX_DuplicateAccountCases_PrimaryUserId_CandidateUserId");
 
         modelBuilder.Entity<SuperAdminChangeRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt })
