@@ -24,6 +24,14 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
         if (actorId == null) return Unauthorized();
         if (!await IsFreshSuperAdminAsync(actorId.Value, cancellationToken)) return Forbid();
 
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken)
+            : null;
+
+        // Revalidate the initiating SuperAdmin within the transaction. A concurrent
+        // suspension or role revocation must not allow a stale request to be created.
+        if (!await IsFreshSuperAdminAsync(actorId.Value, cancellationToken)) return Forbid();
+
         var action = request.Action?.Trim().ToLowerInvariant();
         var reason = request.Reason?.Trim();
         if (action is not ("grant" or "revoke"))
@@ -74,10 +82,12 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
             ExpiresAt = now.Add(RequestLifetime)
         };
         context.SuperAdminChangeRequests.Add(change);
-        await context.SaveChangesAsync(cancellationToken);
+        // Persist request and audit event atomically; never leave a privileged
+        // approval request behind without its corresponding audit record.
         context.AuditLogs.Add(CreateAudit(actorId.Value, "RequestSuperAdminChange", change.Id,
             null, $"action={action}; targetUserId={target.Id}; reason={reason}"));
         await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
 
         return Ok(new
         {
@@ -189,7 +199,7 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
     private async Task<int> CountActiveSuperAdminsAsync(CancellationToken cancellationToken)
     {
         var roles = await context.Users.AsNoTracking()
-            .Where(user => !user.IsArchived && user.Roles != null && user.Roles.Contains("SuperAdmin"))
+            .Where(user => !user.IsArchived && !user.IsSuspended && user.Roles != null && user.Roles.Contains("SuperAdmin"))
             .Select(user => user.Roles)
             .ToListAsync(cancellationToken);
         return roles.Count(value => HasRole(value, "SuperAdmin"));
@@ -198,7 +208,7 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
     private async Task<bool> IsFreshSuperAdminAsync(int userId, CancellationToken cancellationToken)
     {
         var user = await context.Users.AsNoTracking()
-            .Where(item => item.Id == userId && !item.IsArchived)
+            .Where(item => item.Id == userId && !item.IsArchived && !item.IsSuspended)
             .Select(item => new { item.Roles, item.AuthenticatorTwoFactorEnabled, item.LastTwoFactorVerifiedAt })
             .FirstOrDefaultAsync(cancellationToken);
         return HasRole(user?.Roles, "SuperAdmin") &&
