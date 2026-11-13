@@ -376,7 +376,10 @@ public class DisputesController : ControllerBase
             task.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            var released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
+            var released = await _escrowService.ReleaseEscrowAsync(
+                task.Id,
+                force: true,
+                expectedPaymentTransactionId: financialApproval!.PaymentTransactionId);
             if (!released)
             {
                 await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Approved dispute release did not produce a queued payout.");
