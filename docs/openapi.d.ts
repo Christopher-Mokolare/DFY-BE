@@ -57,7 +57,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    status?: string | null;
+                    status?: string;
                 };
                 header?: never;
                 path?: never;
