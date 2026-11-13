@@ -283,6 +283,9 @@ namespace DoForYou.API.Migrations
                     b.Property<DateTime?>("DecidedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("DisputeId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DecisionReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
