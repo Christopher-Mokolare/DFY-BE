@@ -392,7 +392,10 @@ public class DisputesController : ControllerBase
             if (task.TaskStatus == "RunnerPaid" ||
                 task.EscrowStatus == "released" ||
                 task.EscrowStatus == "refunded")
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Task is no longer eligible for refund.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
+            }
 
             // Use the immutable payment-attempt record as the source of truth for
             // refunds. Audit logs remain a backward-compatible fallback for older tasks.
@@ -417,21 +420,33 @@ public class DisputesController : ControllerBase
                 transactionId = ExtractAuditValue(paymentVerification?.NewValues, "transactionId");
             }
             if (string.IsNullOrWhiteSpace(transactionId))
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Original Paystack transaction ID is unavailable.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "Original Paystack transaction ID is not available; refund cannot be safely submitted." });
+            }
 
             var existingRefund = await _context.Refunds
                 .FirstOrDefaultAsync(r => r.TaskId == task.Id);
 
             if (existingRefund != null && existingRefund.Status == "Complete")
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Executed", "Existing refund record is already complete.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund has already completed." });
+            }
 
             if (existingRefund != null &&
                 existingRefund.Status == "PendingInvestigation")
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Existing refund requires customer bank details and manual provider operations.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
+            }
 
             if (existingRefund != null && !string.IsNullOrWhiteSpace(existingRefund.RefundId) &&
                 existingRefund.Status is "Pending" or "Submitted")
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Executed", $"Existing refund {existingRefund.RefundId} is already submitted.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Paystack confirmation." });
+            }
 
             // Atomically reserve the disputed task for refund before calling Paystack.
             // The payout worker only submits rows whose task remains EscrowReleased /
@@ -490,7 +505,10 @@ public class DisputesController : ControllerBase
             }
 
             if (reservedPayout != 1)
+            {
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Task reservation failed or a payout is active; no refund submission was attempted.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer held for dispute resolution or a runner payout is already queued/processing." });
+            }
 
             task.PaymentStatus = "RefundPending";
             task.TaskStatus = "RefundPending";
