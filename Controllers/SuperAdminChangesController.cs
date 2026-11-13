@@ -134,8 +134,8 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
         if (change == null) return NotFound();
         if (change.Status != "pending" || change.ExpiresAt <= DateTime.UtcNow)
             return Conflict(new { message = "This approval request has expired or has already been decided." });
-        if (change.RequestedByUserId == reviewerId.Value)
-            return StatusCode(StatusCodes.Status403Forbidden, new { message = "A different SuperAdmin must approve or reject the request." });
+        if (change.RequestedByUserId == reviewerId.Value || change.TargetUserId == reviewerId.Value)
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "The requester and target account cannot approve or reject their own access change. A separate SuperAdmin must decide." });
 
         var target = await context.Users.FirstOrDefaultAsync(user => user.Id == change.TargetUserId, cancellationToken);
         if (target == null || target.IsArchived)
