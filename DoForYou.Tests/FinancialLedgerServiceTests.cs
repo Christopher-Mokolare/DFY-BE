@@ -76,6 +76,33 @@ public sealed class FinancialLedgerServiceTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Financial_journals_and_lines_cannot_be_modified_after_posting()
+    {
+        await using var context = CreateContext(nameof(Financial_journals_and_lines_cannot_be_modified_after_posting));
+        var service = new FinancialLedgerService(context);
+        var journal = await service.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-LEDGER-APPEND-ONLY",
+            "paystack:charge:TX-LEDGER-APPEND-ONLY",
+            "ZAR",
+            "Append-only journal test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", 75m, 0m),
+                new FinancialJournalLineDraft("2000", 0m, 75m)
+            }));
+
+        journal.Description = "Attempted edit";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => context.SaveChangesAsync());
+        context.Entry(journal).State = EntityState.Unchanged;
+        var line = await context.FinancialJournalLines.FirstAsync();
+        line.Debit = 74m;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => context.SaveChangesAsync());
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task PostAsync_rejects_unbalanced_journals_without_persisting_anything()
     {
         await using var context = CreateContext(nameof(PostAsync_rejects_unbalanced_journals_without_persisting_anything));
