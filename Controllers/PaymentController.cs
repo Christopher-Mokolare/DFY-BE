@@ -416,13 +416,18 @@ public class PaymentController : ControllerBase
         if (task == null)
             return Ok();
 
-        var matchingAttempt = await _context.PaymentAttempts
-            .Where(a => a.TaskId == refund.TaskId &&
-                        a.Status == "Completed" &&
-                        a.TransactionId == refund.TransactionId)
-            .OrderByDescending(a => a.CompletedAt)
-            .FirstOrDefaultAsync();
-        var expectedTransactionReference = matchingAttempt?.Reference ?? task.PaymentReference;
+        var matchingAttempts = await _context.PaymentAttempts
+            .Where(attempt => attempt.TaskId == refund.TaskId &&
+                attempt.Provider == "Paystack" &&
+                attempt.Status == "Completed" &&
+                attempt.TransactionId == refund.TransactionId)
+            .ToListAsync();
+        if (matchingAttempts.Count != 1)
+        {
+            _logger.LogWarning("Paystack refund event {RefundId} has no unique persisted successful charge attempt; no legacy task reference will be used.", refundId ?? transactionReference ?? transactionId);
+            return Ok();
+        }
+        var expectedTransactionReference = matchingAttempts[0].Reference;
 
         if ((!string.IsNullOrWhiteSpace(transactionId) &&
              !string.Equals(transactionId, refund.TransactionId, StringComparison.Ordinal) &&
