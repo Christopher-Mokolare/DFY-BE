@@ -62,9 +62,11 @@ public sealed class DuplicateAccountCasesController(AppDbContext context) : Cont
         if (request.PrimaryUserId == request.CandidateUserId)
             return BadRequest(new { message = "A duplicate investigation must reference two different accounts." });
 
+        var reason = request.Reason?.Trim() ?? string.Empty;
         var evidenceReference = request.EvidenceReference?.Trim();
-        if (!string.IsNullOrEmpty(evidenceReference) &&
-            Regex.IsMatch(evidenceReference, @"(?<!\d)\d{13}(?!\d)"))
+        if (Regex.IsMatch(reason, @"(?<!\d)\d{13}(?!\d)") ||
+            (!string.IsNullOrEmpty(evidenceReference) &&
+             Regex.IsMatch(evidenceReference, @"(?<!\d)\d{13}(?!\d)")))
             return BadRequest(new { message = "Do not submit raw identity numbers or document contents; use a protected evidence reference." });
 
         var accounts = await context.Users.IgnoreQueryFilters().AsNoTracking()
@@ -91,7 +93,7 @@ public sealed class DuplicateAccountCasesController(AppDbContext context) : Cont
         {
             PrimaryUserId = request.PrimaryUserId,
             CandidateUserId = request.CandidateUserId,
-            Reason = request.Reason.Trim(),
+            Reason = reason,
             EvidenceReference = evidenceReference,
             Status = "Open",
             CreatedByUserId = actorId.Value,
