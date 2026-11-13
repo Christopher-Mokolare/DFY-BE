@@ -1221,7 +1221,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AdminActionReasonRequest"];
+                    "text/json": components["schemas"]["AdminActionReasonRequest"];
+                    "application/*+json": components["schemas"]["AdminActionReasonRequest"];
+                };
+            };
             responses: {
                 /** @description OK */
                 200: {
