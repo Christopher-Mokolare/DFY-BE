@@ -26,6 +26,8 @@ namespace DoForYou.API.Migrations
                     ExpiresAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     DecidedByUserId = table.Column<int>(type: "integer", nullable: true),
                     DecidedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    DecisionReason = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                    ExecutionStartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     ExecutionAttempts = table.Column<int>(type: "integer", nullable: false),
                     ExecutedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     LastExecutionError = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true)
