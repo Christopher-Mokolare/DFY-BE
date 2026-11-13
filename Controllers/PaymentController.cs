@@ -578,6 +578,22 @@ public class PaymentController : ControllerBase
             payout.ProcessingError = null;
             payout.NextAttemptAt = null;
 
+            await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                EventType: "runner_payout_completed",
+                SourceType: "payout",
+                SourceId: payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IdempotencyKey: $"paystack:payout:{payout.Id}:completed",
+                Currency: "ZAR",
+                Description: "Paystack confirmed the runner transfer; settle the runner payable against Paystack clearing.",
+                OccurredAt: DateTime.UtcNow,
+                Lines: new[]
+                {
+                    new FinancialJournalLineDraft("2100", payout.Amount, 0m, "Settle runner payable"),
+                    new FinancialJournalLineDraft("1000", 0m, payout.Amount, "Paystack clearing transfer")
+                },
+                Provider: "Paystack",
+                ProviderReference: payout.ProviderReference ?? reference));
+
             if (payout.Task.TaskStatus != "RunnerPaid")
             {
                 payout.Task.PayoutStatus = "Completed";
@@ -602,6 +618,38 @@ public class PaymentController : ControllerBase
             payout.Task.PayoutStatus = "Returned";
             payout.Task.TaskStatus = "PayoutFailed";
             payout.Task.UpdatedAt = DateTime.UtcNow;
+
+            var originalPayoutJournal = await _context.FinancialJournals
+                .Include(journal => journal.Lines)
+                    .ThenInclude(line => line.Account)
+                .FirstOrDefaultAsync(journal =>
+                    journal.SourceType == "payout" &&
+                    journal.SourceId == payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+                    journal.EventType == "runner_payout_completed");
+            if (originalPayoutJournal != null)
+            {
+                var reversalLines = originalPayoutJournal.Lines
+                    .OrderBy(line => line.LineNumber)
+                    .Select(line => new FinancialJournalLineDraft(
+                        line.Account.Code,
+                        line.Credit,
+                        line.Debit,
+                        "Reverse Paystack runner payout returned by provider"))
+                    .ToArray();
+
+                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                    EventType: "reversal",
+                    SourceType: "payout",
+                    SourceId: $"{payout.Id}:reversal",
+                    IdempotencyKey: $"paystack:payout:{payout.Id}:reversal",
+                    Currency: "ZAR",
+                    Description: "Reverse the previously completed runner payout after Paystack reported a transfer reversal.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: reversalLines,
+                    Provider: "Paystack",
+                    ProviderReference: payout.ProviderReference ?? reference,
+                    ReversalOfJournalId: originalPayoutJournal.Id));
+            }
         }
         else
         {
