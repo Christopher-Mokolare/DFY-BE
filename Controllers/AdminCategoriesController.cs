@@ -32,6 +32,9 @@ public class AdminCategoriesController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ApiResponse<object>>> Create([FromBody] CategoryRequest request)
     {
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var name = request.Name.Trim();
         if (await _context.Categories.AnyAsync(c => c.Name.ToLower() == name.ToLower()))
             return Conflict(new ApiResponse<object> { Success = false, Message = "A category with this name already exists." });
@@ -48,12 +51,16 @@ public class AdminCategoriesController : ControllerBase
         await _context.SaveChangesAsync();
         AddAudit("CreateCategory", cat.Id, null, new { cat.Name, cat.Description, cat.Icon, cat.SortOrder, reason = request.Reason.Trim() });
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
         return Ok(new ApiResponse<object> { Success = true, Data = new { cat.Id, cat.Name }, Message = "Category created" });
     }
 
     [HttpPut("{id:int}")]
     public async Task<ActionResult<ApiResponse<bool>>> Update(int id, [FromBody] CategoryRequest request)
     {
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var cat = await _context.Categories.FindAsync(id);
         if (cat == null) return NotFound(new ApiResponse<bool> { Success = false, Message = "Category not found." });
 
@@ -84,12 +91,16 @@ public class AdminCategoriesController : ControllerBase
             reason = request.Reason.Trim()
         });
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Category updated." });
     }
 
     [HttpDelete("{id:int}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(int id, [FromBody] AdminActionReasonRequest request)
     {
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var cat = await _context.Categories.FindAsync(id);
         if (cat == null) return NotFound(new ApiResponse<bool> { Success = false, Message = "Category not found." });
 
@@ -106,12 +117,16 @@ public class AdminCategoriesController : ControllerBase
         await _context.SaveChangesAsync();
         AddAudit("DeleteCategory", id, oldValues, new { deleted = true, reason = request.Reason.Trim() });
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Category deleted." });
     }
 
     [HttpPatch("{id:int}/reorder")]
     public async Task<ActionResult<ApiResponse<bool>>> Reorder(int id, [FromBody] ReorderRequest request)
     {
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var cat = await _context.Categories.FindAsync(id);
         if (cat == null) return NotFound(new ApiResponse<bool> { Success = false, Message = "Category not found." });
 
@@ -120,6 +135,7 @@ public class AdminCategoriesController : ControllerBase
         await _context.SaveChangesAsync();
         AddAudit("ReorderCategory", id, new { sortOrder = oldOrder }, new { sortOrder = cat.SortOrder, reason = request.Reason.Trim() });
         await _context.SaveChangesAsync();
+        if (transaction != null) await transaction.CommitAsync();
         return Ok(new ApiResponse<bool> { Success = true, Data = true });
     }
 
