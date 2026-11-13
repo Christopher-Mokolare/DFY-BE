@@ -82,8 +82,8 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
             ExpiresAt = now.Add(RequestLifetime)
         };
         context.SuperAdminChangeRequests.Add(change);
-        // Persist request and audit event atomically; never leave a privileged
-        // approval request behind without its corresponding audit record.
+        await context.SaveChangesAsync(cancellationToken); // Generate the request ID inside the transaction.
+        // Keep the request and its correctly linked audit event in one commit.
         context.AuditLogs.Add(CreateAudit(actorId.Value, "RequestSuperAdminChange", change.Id,
             null, $"action={action}; targetUserId={target.Id}; reason={reason}"));
         await context.SaveChangesAsync(cancellationToken);
