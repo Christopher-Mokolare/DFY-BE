@@ -185,7 +185,9 @@ namespace DoForYou.API.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PrimaryUserId", "CandidateUserId");
-
+                        .IsUnique()
+                        .HasFilter("\"Status\" = 'Open'")
+                        .HasDatabaseName("IX_DuplicateAccountCases_OpenPair");
                     b.HasIndex("Status", "CreatedAt");
 
                     b.ToTable("DuplicateAccountCases");
