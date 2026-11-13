@@ -32,6 +32,7 @@ public class AppDbContext : DbContext
     public DbSet<FinancialAccount> FinancialAccounts { get; set; } = null!;
     public DbSet<FinancialJournal> FinancialJournals { get; set; } = null!;
     public DbSet<FinancialJournalLine> FinancialJournalLines { get; set; } = null!;
+    public DbSet<FinancialReversalRequest> FinancialReversalRequests { get; set; } = null!;
     public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
     public DbSet<DuplicateAccountCase> DuplicateAccountCases { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
@@ -180,6 +181,24 @@ public class AppDbContext : DbContext
             entity.HasOne(line => line.Account)
                 .WithMany(account => account.JournalLines)
                 .HasForeignKey(line => line.AccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<FinancialReversalRequest>(entity =>
+        {
+            entity.Property(request => request.Reason).IsRequired();
+            entity.Property(request => request.Status).IsRequired();
+            entity.Property(request => request.IdempotencyKey).IsRequired();
+            entity.HasIndex(request => request.IdempotencyKey).IsUnique();
+            entity.HasIndex(request => new { request.OriginalJournalId, request.Status })
+                .IsUnique()
+                .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
+                .HasDatabaseName("IX_FinancialReversalRequests_OpenJournal");
+            entity.HasIndex(request => new { request.Status, request.ExpiresAt })
+                .HasDatabaseName("IX_FinancialReversalRequests_Status_ExpiresAt");
+            entity.HasOne(request => request.OriginalJournal)
+                .WithMany()
+                .HasForeignKey(request => request.OriginalJournalId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
