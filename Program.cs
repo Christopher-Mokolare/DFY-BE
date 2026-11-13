@@ -225,6 +225,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 builder.Services.AddScoped<IAuthorizationHandler, AdminMfaAuthorizationHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, SuperAdminMfaAuthorizationHandler>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DevelopmentOnly", policy =>
@@ -233,6 +234,11 @@ builder.Services.AddAuthorization(options =>
     {
         policy.RequireAuthenticatedUser();
         policy.AddRequirements(new AdminMfaRequirement());
+    });
+    options.AddPolicy("SuperAdminMfa", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new SuperAdminMfaRequirement());
     });
 });
 
