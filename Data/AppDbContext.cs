@@ -123,7 +123,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<FinancialApprovalRequest>()
             .HasIndex(request => new { request.TaskId, request.Action })
             .IsUnique()
-            .HasFilter("\\"Status\\" IN ('Pending', 'Approved', 'Executing')")
+            .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
             .HasDatabaseName("IX_FinancialApprovalRequests_OpenTaskAction");
 
         modelBuilder.Entity<FinancialApprovalRequest>()
