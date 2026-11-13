@@ -232,6 +232,58 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Manual_payment_override_endpoints_are_retired_outside_e2e_mode()
+    {
+        var previous = Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE");
+        Environment.SetEnvironmentVariable("DFY_E2E_TEST_MODE", null);
+        try
+        {
+            var options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseInMemoryDatabase(nameof(Manual_payment_override_endpoints_are_retired_outside_e2e_mode))
+                .Options;
+            using var context = new AppDbContext(options);
+            context.Database.EnsureCreated();
+            var creator = CreateUser(901, "Creator");
+            var task = new TaskEntity
+            {
+                Id = 901,
+                TaskId = "DFY-MANUAL-VERIFY-RETIRED",
+                TaskDescription = "Retired manual payment verification test",
+                Category = "Other",
+                Area = "Pretoria",
+                DateNeeded = DateTime.UtcNow.AddDays(1),
+                Budget = 100m,
+                PaymentStatus = "Pending",
+                TaskStatus = "PendingPayment",
+                EscrowStatus = "pending",
+                CreatedByUserId = creator.Id,
+                CreatedAt = DateTime.UtcNow
+            };
+            context.Users.Add(creator);
+            context.Tasks.Add(task);
+            await context.SaveChangesAsync();
+
+            var controller = CreateController(context, creator.Id);
+            var verify = await controller.VerifyTask(task.TaskId, new AdminActionReasonRequest { Reason = "Manual override" });
+            var unverify = await controller.UnverifyTask(task.TaskId, new AdminActionReasonRequest { Reason = "Manual override" });
+            var bulk = await controller.BulkVerifyTasks(null!);
+
+            Assert.Equal(410, Assert.IsType<ObjectResult>(verify.Result).StatusCode);
+            Assert.Equal(410, Assert.IsType<ObjectResult>(unverify.Result).StatusCode);
+            Assert.IsType<NotFoundResult>(bulk.Result);
+            Assert.Equal("Pending", task.PaymentStatus);
+            Assert.Equal("PendingPayment", task.TaskStatus);
+            Assert.Equal("pending", task.EscrowStatus);
+            Assert.Empty(await context.PaymentAttempts.ToListAsync());
+            Assert.Empty(await context.FinancialJournals.ToListAsync());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DFY_E2E_TEST_MODE", previous);
+        }
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Single_SuperAdmin_cannot_force_release_escrow_without_dual_approval()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
