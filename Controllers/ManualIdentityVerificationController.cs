@@ -633,6 +633,45 @@ public sealed class ManualIdentityVerificationController(
     }
 
 
+    [Authorize(Policy = AdminPermissionPolicies.KycOverridePolicy)]
+    [HttpGet("admin/overrides/rejected")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRejectedCasesForOverride(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken cancellationToken = default)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<object> { Success = false, Message = "Fresh authenticator verification is required to inspect KYC override cases." });
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var query = context.IdentityVerificationSubmissions.AsNoTracking()
+            .Where(item => item.Status == "rejected" && item.DocumentsPurgedAt == null &&
+                item.FrontCiphertext.Length > 0 && item.FrontNonce.Length == 12 && item.FrontTag.Length == 16);
+        var total = await query.CountAsync(cancellationToken);
+        var cases = await query.OrderByDescending(item => item.ReviewedAt ?? item.SubmittedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(item => new
+            {
+                item.Id,
+                item.UserId,
+                item.DocumentType,
+                item.SubmittedAt,
+                item.ReviewedAt,
+                item.ReviewedByUserId,
+                item.ReviewReason,
+                userName = item.User.FirstName + " " + item.User.LastName,
+                item.User.Email
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object> { Success = true, Data = new { cases, total, page, pageSize } });
+    }
+
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
         [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
