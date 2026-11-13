@@ -127,6 +127,61 @@ public sealed class FinancialLedgerServiceTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Reversal_must_exactly_invert_one_original_journal_and_cannot_be_repeated()
+    {
+        await using var context = CreateContext(nameof(Reversal_must_exactly_invert_one_original_journal_and_cannot_be_repeated));
+        var service = new FinancialLedgerService(context);
+        var original = await service.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-LEDGER-REVERSAL",
+            "paystack:charge:TX-LEDGER-REVERSAL",
+            "ZAR",
+            "Original charge",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", 100m, 0m),
+                new FinancialJournalLineDraft("2000", 0m, 100m)
+            }));
+
+        var reversal = await service.PostAsync(new FinancialJournalDraft(
+            "reversal",
+            "refund",
+            "REF-LEDGER-REVERSAL",
+            "paystack:refund:REF-LEDGER-REVERSAL",
+            "ZAR",
+            "Reverse confirmed refund",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("2000", 100m, 0m),
+                new FinancialJournalLineDraft("1000", 0m, 100m)
+            },
+            ReversalOfJournalId: original.Id));
+
+        Assert.Equal(original.Id, reversal.ReversalOfJournalId);
+        Assert.Equal(0m, await service.GetAccountBalanceAsync("1000"));
+        Assert.Equal(0m, await service.GetAccountBalanceAsync("2000"));
+
+        var invalidReversal = new FinancialJournalDraft(
+            "reversal",
+            "refund",
+            "REF-LEDGER-REVERSAL-2",
+            "paystack:refund:REF-LEDGER-REVERSAL-2",
+            "ZAR",
+            "Attempt second reversal",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("2000", 99m, 0m),
+                new FinancialJournalLineDraft("1000", 0m, 99m)
+            },
+            ReversalOfJournalId: original.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PostAsync(invalidReversal));
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task PostAsync_rejects_reuse_of_an_idempotency_key_for_a_different_amount()
     {
         await using var context = CreateContext(nameof(PostAsync_rejects_reuse_of_an_idempotency_key_for_a_different_amount));
