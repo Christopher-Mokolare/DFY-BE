@@ -108,7 +108,20 @@ public sealed class AdminPermissionsController(AppDbContext context) : Controlle
                 grant.RevokedAt == null && grant.ExpiresAt != null && grant.ExpiresAt <= now)
             .ToListAsync(cancellationToken);
         foreach (var expiredGrant in expiredGrants)
+        {
             expiredGrant.RevokedAt = expiredGrant.ExpiresAt;
+            context.AuditLogs.Add(new AuditLog
+            {
+                UserId = actorId.Value,
+                Action = "ExpireAdminPermissionGrant",
+                EntityType = "AdminPermissionGrant",
+                EntityId = expiredGrant.Id,
+                OldValues = $"userId={expiredGrant.UserId};permission={expiredGrant.PermissionKey};expiresAt={expiredGrant.ExpiresAt:O}",
+                NewValues = $"revokedAt={expiredGrant.RevokedAt:O};reason=automatic expiry before regrant",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+        }
         if (expiredGrants.Count > 0)
             await context.SaveChangesAsync(cancellationToken);
 
