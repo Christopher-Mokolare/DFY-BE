@@ -1737,7 +1737,6 @@ public class AdminController : ControllerBase
 
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
             item.TaskId == task.Id &&
-            item.Action == "force_escrow_release" &&
             (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
         if (hasOpenRequest)
             return Conflict(new ApiResponse<int> { Success = false, Message = "An active financial approval request already exists for this task." });
@@ -1820,7 +1819,7 @@ public class AdminController : ControllerBase
             ? await _context.Database.BeginTransactionAsync()
             : null;
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
-            item.TaskId == task.Id && item.Action == "refund_creator" &&
+            item.TaskId == task.Id &&
             (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
         if (hasOpenRequest)
             return Conflict(new ApiResponse<int> { Success = false, Message = "An active refund approval already exists for this task." });
@@ -1889,7 +1888,7 @@ public class AdminController : ControllerBase
 
         var now = DateTime.UtcNow;
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
-            item.TaskId == task.Id && item.Action == "release_to_runner" &&
+            item.TaskId == task.Id &&
             (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
         if (hasOpenRequest)
             return Conflict(new ApiResponse<int> { Success = false, Message = "An active dispute-release approval already exists for this task." });
