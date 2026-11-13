@@ -737,6 +737,7 @@ public class AdminController : ControllerBase
                 .ToListAsync(cancellationToken);
             foreach (var expired in expiredRequests)
             {
+                var previousStatus = expired.Status;
                 expired.Status = "Expired";
                 _context.AuditLogs.Add(new Models.AuditLog
                 {
@@ -744,12 +745,14 @@ public class AdminController : ControllerBase
                     Action = "FinancialReversalRequestExpired",
                     EntityType = "FinancialReversalRequest",
                     EntityId = expired.Id,
-                    OldValues = expired.Status,
+                    OldValues = previousStatus,
                     NewValues = $"Expired at {now:O}",
                     IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                     UserAgent = Request.Headers.UserAgent.ToString()
                 });
             }
+            if (expiredRequests.Count > 0)
+                await _context.SaveChangesAsync(cancellationToken);
 
             var activeRequest = await _context.FinancialReversalRequests.AnyAsync(item =>
                 item.OriginalJournalId == original.Id &&
@@ -939,7 +942,8 @@ public class AdminController : ControllerBase
         if (claimed != 1)
             return Conflict(new ApiResponse<long> { Success = false, Message = "The reversal approval was already consumed or expired." });
 
-        _context.ChangeTracker.Clear();
+        if (_context.Database.IsRelational())
+            _context.ChangeTracker.Clear();
         var executing = await _context.FinancialReversalRequests
             .Include(item => item.OriginalJournal)
             .FirstAsync(item => item.Id == id, cancellationToken);
