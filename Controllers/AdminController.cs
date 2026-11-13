@@ -504,6 +504,135 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Read-only view of the new double-entry financial journal. It does not import
+    /// legacy wallet/task totals or mutate financial state.
+    /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [HttpGet("financial-ledger")]
+    public async Task<ActionResult<ApiResponse<object>>> GetFinancialLedger(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string? accountCode = null,
+        [FromQuery] string? eventType = null,
+        [FromQuery] string? sourceId = null,
+        CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var journalQuery = _context.FinancialJournals.AsNoTracking()
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(eventType))
+            journalQuery = journalQuery.Where(journal => journal.EventType == eventType.Trim());
+        if (!string.IsNullOrWhiteSpace(sourceId))
+            journalQuery = journalQuery.Where(journal => journal.SourceId == sourceId.Trim());
+        if (!string.IsNullOrWhiteSpace(accountCode))
+            journalQuery = journalQuery.Where(journal =>
+                journal.Lines.Any(line => line.Account.Code == accountCode.Trim()));
+
+        var totalCount = await journalQuery.CountAsync(cancellationToken);
+        var journals = await journalQuery
+            .OrderByDescending(journal => journal.RecordedAt)
+            .ThenByDescending(journal => journal.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(journal => new
+            {
+                journal.Id,
+                journal.JournalNumber,
+                journal.EventType,
+                journal.SourceType,
+                journal.SourceId,
+                journal.IdempotencyKey,
+                journal.Currency,
+                journal.Description,
+                journal.Provider,
+                journal.ProviderReference,
+                journal.ReversalOfJournalId,
+                journal.OccurredAt,
+                journal.RecordedAt,
+                lines = journal.Lines.OrderBy(line => line.LineNumber).Select(line => new
+                {
+                    line.LineNumber,
+                    accountCode = line.Account.Code,
+                    accountName = line.Account.Name,
+                    accountType = line.Account.AccountType,
+                    line.Debit,
+                    line.Credit,
+                    line.Currency,
+                    line.Memo
+                }),
+                debitTotal = journal.Lines.Sum(line => line.Debit),
+                creditTotal = journal.Lines.Sum(line => line.Credit),
+                lineCount = journal.Lines.Count()
+            })
+            .ToListAsync(cancellationToken);
+
+        var accountBalances = await _context.FinancialAccounts.AsNoTracking()
+            .OrderBy(account => account.Code)
+            .Select(account => new
+            {
+                account.Code,
+                account.Name,
+                account.AccountType,
+                account.Currency,
+                account.IsActive,
+                debitTotal = _context.FinancialJournalLines
+                    .Where(line => line.AccountId == account.Id)
+                    .Sum(line => (decimal?)line.Debit) ?? 0m,
+                creditTotal = _context.FinancialJournalLines
+                    .Where(line => line.AccountId == account.Id)
+                    .Sum(line => (decimal?)line.Credit) ?? 0m
+            })
+            .ToListAsync(cancellationToken);
+
+        var totalDebits = await _context.FinancialJournalLines
+            .SumAsync(line => (decimal?)line.Debit, cancellationToken) ?? 0m;
+        var totalCredits = await _context.FinancialJournalLines
+            .SumAsync(line => (decimal?)line.Credit, cancellationToken) ?? 0m;
+        var unbalancedJournalCount = await _context.FinancialJournalLines
+            .GroupBy(line => line.JournalId)
+            .Where(group => group.Count() < 2 || group.Sum(line => line.Debit) != group.Sum(line => line.Credit))
+            .CountAsync(cancellationToken);
+        var firstJournalAt = await _context.FinancialJournals.AsNoTracking()
+            .MinAsync(journal => (DateTime?)journal.RecordedAt, cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Message = "New double-entry journal view. Historical wallet balances, task totals and audit-log references are not imported as ledger entries.",
+            Data = new
+            {
+                generatedAtUtc = DateTime.UtcNow,
+                firstJournalAtUtc = firstJournalAt,
+                historicalBackfillPerformed = false,
+                totalCount,
+                page,
+                pageSize,
+                totalDebits,
+                totalCredits,
+                isBalanced = totalDebits == totalCredits && unbalancedJournalCount == 0,
+                unbalancedJournalCount,
+                accounts = accountBalances.Select(account => new
+                {
+                    account.Code,
+                    account.Name,
+                    account.AccountType,
+                    account.Currency,
+                    account.IsActive,
+                    account.DebitTotal,
+                    account.CreditTotal,
+                    rawDebitMinusCreditBalance = decimal.Round(account.DebitTotal - account.CreditTotal, 2, MidpointRounding.AwayFromZero)
+                }),
+                journals
+            }
+        });
+    }
+
+    /// <summary>
     /// Read-only DFY ledger consistency report for paid/escrowed tasks.
     /// This endpoint never calls a payment provider, changes financial state, or triggers payouts.
     /// Provider settlement reconciliation must be performed separately against Paystack records.
