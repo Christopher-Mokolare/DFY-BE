@@ -675,6 +675,17 @@ public sealed class ManualIdentityVerificationController(
             .FirstOrDefaultAsync(cancellationToken);
         if (runnerUserId == 0) return NotFound();
         context.IdentityVerificationEvents.Add(CreateEvent(runnerUserId, "review_claimed", "claimed", adminId.Value, id));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityReviewClaimed",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = id,
+            OldValues = "unclaimed_or_expired",
+            NewValues = $"claimed;expiresAt={expires:O}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
         await context.SaveChangesAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { claimedByUserId = adminId.Value, expiresAt = expires }, Message = "Review case claimed for ten minutes." });
     }
@@ -714,6 +725,19 @@ public sealed class ManualIdentityVerificationController(
         }
         if (affected != 1)
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your review claim has expired or belongs to another reviewer. Claim the case again." });
+
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityReviewClaimHeartbeat",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = id,
+            OldValues = "claimed",
+            NewValues = $"claim_extended;expiresAt={expires:O}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await context.SaveChangesAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { expiresAt = expires } });
     }
 
