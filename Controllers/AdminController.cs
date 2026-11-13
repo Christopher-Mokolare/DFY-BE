@@ -1593,7 +1593,7 @@ public class AdminController : ControllerBase
 
         var task = await _context.Tasks.FirstOrDefaultAsync(item => item.Id == approval.TaskId);
         if (task == null)
-            return NotFound(new ApiResponse<bool> { Success = false, Message = "Approved task no longer exists." });
+            return await ResetFinancialExecutionAsync(id, actorId.Value, "Approved task no longer exists.");
 
         // Recover safely if the payout was created but the approval status update was interrupted.
         var payoutAlreadyQueued = task.EscrowStatus == "released" &&
