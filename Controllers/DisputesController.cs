@@ -20,13 +20,20 @@ public class DisputesController : ControllerBase
     private readonly IEscrowService _escrowService;
     private readonly INotificationService _notificationService;
     private readonly IPaymentProvider _paymentProvider;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
-    public DisputesController(AppDbContext context, IEscrowService escrowService, INotificationService notificationService, IPaymentProvider paymentProvider)
+    public DisputesController(
+        AppDbContext context,
+        IEscrowService escrowService,
+        INotificationService notificationService,
+        IPaymentProvider paymentProvider,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _escrowService = escrowService;
         _notificationService = notificationService;
         _paymentProvider = paymentProvider;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     [HttpPost]
@@ -646,6 +653,7 @@ public class DisputesController : ControllerBase
                     refundRecord.CompletedAt = DateTime.UtcNow;
                 if (refundRecord.Status == "Complete")
                 {
+                    await JournalConfirmedRefundAsync(refundRecord, actorId, HttpContext.RequestAborted);
                     task.PaymentStatus = "Refunded";
                     task.TaskStatus = "Cancelled";
                     task.EscrowStatus = "refunded";
@@ -820,6 +828,48 @@ public class DisputesController : ControllerBase
         }
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });
+    }
+
+    private async Task JournalConfirmedRefundAsync(
+        Models.Refund refund,
+        int? actorId,
+        CancellationToken cancellationToken)
+    {
+        var originalChargeJournal = await _context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .FirstOrDefaultAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == refund.TransactionId &&
+                journal.EventType == "payment_collected",
+                cancellationToken);
+
+        if (originalChargeJournal == null)
+        {
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = "PaystackRefundCompletedWithoutLedgerSource",
+                EntityType = "Refund",
+                EntityId = refund.Id,
+                NewValues = "Paystack confirmed the refund, but the original charge predates or is absent from the new financial journal. No historical journal entry was fabricated.",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            return;
+        }
+
+        await _financialLedgerService.ReverseAsync(
+            originalChargeJournal.Id,
+            sourceType: "refund",
+            sourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            idempotencyKey: $"paystack:refund:{refund.Id}:completed",
+            description: "Reverse the original verified Paystack collection after provider reconciliation confirmed the full refund.",
+            provider: "Paystack",
+            providerReference: refund.RefundId,
+            createdByUserId: actorId,
+            occurredAt: DateTime.UtcNow,
+            cancellationToken: cancellationToken);
     }
 
     private static string? ExtractAuditValue(string? values, string key)
