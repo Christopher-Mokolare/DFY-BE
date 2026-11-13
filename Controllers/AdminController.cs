@@ -1174,6 +1174,12 @@ public class AdminController : ControllerBase
             (role != "User" && role != "Admin" && role != "Admin,User"))
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "A valid role is required." });
 
+        if (user.IsArchived)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Archived accounts cannot receive or change administrative access." });
+
+        if ((role == "Admin" || role == "Admin,User") && !user.EmailVerified)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The account must verify its email address before receiving Admin access." });
+
         if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
 
