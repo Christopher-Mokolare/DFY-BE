@@ -65,6 +65,9 @@ public class User
     public bool IsArchived { get; set; }
     public DateTime? ArchivedAt { get; set; }
     public string? ArchivedReason { get; set; }
+    public bool IsSuspended { get; set; }
+    public DateTime? SuspendedAt { get; set; }
+    public string? SuspendedReason { get; set; }
     public string? Bio { get; set; }
     public string? ServiceCategories { get; set; }
     public string? CoverageArea { get; set; }
