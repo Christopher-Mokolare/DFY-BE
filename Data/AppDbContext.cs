@@ -165,6 +165,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(line => line.AccountId);
             entity.Property(line => line.Debit).HasPrecision(18, 2);
             entity.Property(line => line.Credit).HasPrecision(18, 2);
+            entity.Property(line => line.Currency).HasDefaultValue("ZAR");
             entity.ToTable(table =>
             {
                 table.HasCheckConstraint(
