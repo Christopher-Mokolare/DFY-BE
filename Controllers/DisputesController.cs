@@ -528,9 +528,30 @@ public class DisputesController : ControllerBase
             }
 
             // If a previous attempt has a provider record, reconcile it before resubmitting.
-            var providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(
-                refundRecord.TransactionId,
-                HttpContext.RequestAborted);
+            IReadOnlyList<RefundStatusResult> providerRefunds;
+            try
+            {
+                providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(
+                    refundRecord.TransactionId,
+                    HttpContext.RequestAborted);
+            }
+            catch (Exception ex)
+            {
+                refundRecord.Status = "ReconciliationRequired";
+                refundRecord.FailureReason = "Paystack refund state could not be verified. No new refund was submitted; manual provider reconciliation is required.";
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                task.PaymentStatus = "RefundPending";
+                task.TaskStatus = "RefundPending";
+                task.EscrowStatus = "refund_pending";
+                dispute.Status = "RefundPending";
+                dispute.Resolution = resolution;
+                dispute.ResolvedAt = null;
+                await _context.SaveChangesAsync();
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed",
+                    $"Provider reconciliation unavailable; submission was not attempted. {ex.GetType().Name}");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new ApiResponse<bool> { Success = false, Message = "Paystack refund state could not be verified. No new refund was submitted; the case is held for manual reconciliation." });
+            }
             var matchingProviderRefund = providerRefunds
                 .Where(r => r.Amount == refundRecord.Amount)
                 .OrderByDescending(r => string.Equals(r.Status, "processed", StringComparison.OrdinalIgnoreCase))
@@ -590,14 +611,24 @@ public class DisputesController : ControllerBase
                 await _context.SaveChangesAsync();
 
                 if (refundRecord.Status == "Complete")
+                {
+                    await CompleteRefundApprovalAsync(refundApproval, actorId, "Executed", $"Existing provider refund {refundRecord.RefundId} reconciled as complete.");
                     return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund was confirmed with Paystack." });
+                }
 
                 if (refundRecord.Status == "Failed")
+                {
+                    await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", $"Existing provider refund {refundRecord.RefundId} is failed.");
                     return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack reports the existing refund as failed; the dispute is reopened for review." });
+                }
 
                 if (refundRecord.Status == "PendingInvestigation")
+                {
+                    await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Paystack requires additional customer bank details; the refund remains on hold.");
                     return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
+                }
 
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Executed", $"Existing provider refund {refundRecord.RefundId} reconciled as pending.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already with Paystack and awaiting completion." });
             }
 
@@ -618,6 +649,7 @@ public class DisputesController : ControllerBase
                 dispute.Status = "Open";
                 dispute.ResolvedAt = null;
                 await _context.SaveChangesAsync();
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", refund.Error ?? "Paystack refund submission failed.");
                 return StatusCode(StatusCodes.Status502BadGateway,
                     new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Paystack refund." });
             }
@@ -657,6 +689,7 @@ public class DisputesController : ControllerBase
                 "Refund Submitted",
                 $"Your refund for task {task.TaskId} has been submitted to Paystack and is awaiting confirmation.",
                 task.Id);
+            await CompleteRefundApprovalAsync(refundApproval, actorId, "Executed", $"Paystack refund {refund.RefundId} submitted; awaiting provider confirmation.");
 
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Refund submitted to Paystack and is awaiting provider confirmation." });
         }
