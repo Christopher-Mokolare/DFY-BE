@@ -39,7 +39,7 @@
 ## Required remaining work before the SuperAdmin objectives can be called complete
 
 ### P0 — privileged access and recovery
-- Admin invitation workflow is implemented on the feature branch: hashed single-use token, 48-hour expiry, verified-email matching, recipient MFA, invite/revoke/list, audit events and email delivery. Resend throttling and live staging email delivery still need verification.
+- Admin invitation workflow is implemented on the feature branch: hashed single-use token, 48-hour expiry, verified-email matching, recipient MFA, invite/revoke/list, audit events and email delivery. Resend throttling is implemented (five-minute same-address cooldown and ten invitations per inviter per hour); live staging email delivery still needs verification.
 - Two-person SuperAdmin grant/revoke workflow is implemented on the feature branch: two distinct SuperAdmins, fresh MFA for both, recorded request/decision reasons, 24-hour expiry and final-SuperAdmin protection. It still needs full test/CI and staging verification.
 - Verify session revocation end-to-end for role removal, invitation acceptance and account archival. Extend it to suspension and any future admin reset workflows. Access-token validation already checks the persisted security stamp.
 - Mandatory MFA enrollment is enforced on Admin-only API endpoints by a persisted backend policy; sensitive role, invitation, KYC, forced escrow release, dispute resolution and SuperAdmin changes additionally require fresh authenticator verification. Verify staging account enrollment and all E2E flows.
