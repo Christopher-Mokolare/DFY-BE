@@ -31,7 +31,7 @@
 
 1. Added a persisted-role-checked SuperAdmin account directory API. It returns paginated account metadata and does not expose password hashes, authenticator secrets, recovery codes, identity numbers, or document contents.
 2. Added a SuperAdmin-only Admin Management route and page in DFY-FE.
-3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. The person must first register using their own account and verify their email; this is not an invitation workflow.
+3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. A separate invitation workflow now lets a SuperAdmin invite someone who must register/sign in with the invited email, verify it, enroll authenticator MFA and accept the invitation.
 4. Existing backend role mutation protections remain authoritative: actor must be a persisted SuperAdmin, must not be changing their own role, must have authenticator MFA enabled and recently verified, must supply a reason, and cannot modify a SuperAdmin through the one-person path.
 5. Strengthened Admin provisioning so archived or email-unverified accounts cannot receive Admin access.
 6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests.\n8. Added a PostgreSQL migration with triggers rejecting UPDATE, DELETE and TRUNCATE against AuditLogs. This requires staging migration verification and database-owner controls.\n9. Added an Admin invitation workflow: SuperAdmin-only create/list/revoke, 48-hour expiry, SHA-256 token storage, email delivery through the configured sender, recipient email matching, mandatory recent authenticator MFA, one-time acceptance, security-stamp rotation and audit events. The recipient must first register/verify using the invited address.\n10. Added two-person SuperAdmin grant/revoke requests with fresh MFA for both actors, a distinct approver who is neither requester nor target, recorded reasons, 24-hour expiry, security-stamp rotation and final-SuperAdmin protection.\n11. Added an API authorization policy that checks persisted account state, email verification, Admin role and authenticator MFA enrollment on Admin-only endpoints. Existing sensitive workflows continue to require a fresh 15-minute MFA step-up.\n12. Added the task category management page and navigation. Category create/edit/reorder/delete actions require reasons, are audited, and cannot delete a category still referenced by tasks.\n13. Restricted exceptional forced escrow release and financial dispute resolution to persisted SuperAdmins with fresh authenticator verification. This is a stronger role boundary, not a substitute for the still-required two-person financial approval workflow.
@@ -41,9 +41,9 @@
 ### P0 — privileged access and recovery
 - Admin invitation workflow is implemented on the feature branch: hashed single-use token, 48-hour expiry, verified-email matching, recipient MFA, invite/revoke/list, audit events and email delivery. Resend throttling and live staging email delivery still need verification.
 - Two-person SuperAdmin grant/revoke workflow is implemented on the feature branch: two distinct SuperAdmins, fresh MFA for both, recorded request/decision reasons, 24-hour expiry and final-SuperAdmin protection. It still needs full test/CI and staging verification.
-- Confirm and implement server-side session and refresh-token revocation on role removal, suspension, compromise and password/MFA reset.
-- Enforce mandatory MFA enrollment for every Admin and SuperAdmin endpoint through a persisted backend authorization policy; sensitive role, invitation, KYC and SuperAdmin changes additionally require fresh authenticator verification.
-- Replace broad role-only checks with granular authorization policies. Keep a compatibility mapping during migration and prove no endpoint is accidentally broadened.
+- Verify session revocation end-to-end for role removal, invitation acceptance and account archival. Extend it to suspension and any future admin reset workflows. Access-token validation already checks the persisted security stamp.
+- Mandatory MFA enrollment is enforced on Admin-only API endpoints by a persisted backend policy; sensitive role, invitation, KYC, forced escrow release, dispute resolution and SuperAdmin changes additionally require fresh authenticator verification. Verify staging account enrollment and all E2E flows.
+- Replace broad Admin access with granular permission policies (user management, KYC queue, document viewing, dispute resolution, task operations, finance, content and configuration). The current AdminMfa policy enforces MFA enrollment but does not yet provide granular permission separation.
 
 ### P1 — marketplace operations
 - Complete user lifecycle and account-security controls.
@@ -52,7 +52,7 @@
 - Keep financial records immutable. Implement refund/adjustment operations only as compensating ledger entries; use dual approval above a configurable threshold. Preserve the manual payout default and existing automatic-payout opt-in.
 
 ### P1 — platform and content administration
-- Build audited configuration management for task limits, commission policy, categories, service areas, feature flags and notification templates.
+- Task category CRUD and ordering are implemented with reasoned audit events. Still build audited configuration management for task limits, commission policy, service areas, feature flags and notification templates.
 - Add controlled FAQ, terms, privacy and public-content management.
 - Store secrets write-only: allow replacement/rotation, never return secret values.
 
