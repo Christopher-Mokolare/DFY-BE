@@ -16,9 +16,9 @@ export interface paths {
                 query?: {
                     page?: number;
                     pageSize?: number;
-                    accountCode?: string;
-                    eventType?: string;
-                    sourceId?: string;
+                    accountCode?: string | null;
+                    eventType?: string | null;
+                    sourceId?: string | null;
                 };
                 header?: never;
                 path?: never;
