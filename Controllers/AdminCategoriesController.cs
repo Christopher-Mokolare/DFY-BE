@@ -127,16 +127,24 @@ public class AdminCategoriesController : ControllerBase
         await using var transaction = _context.Database.IsRelational()
             ? await _context.Database.BeginTransactionAsync()
             : null;
-        var cat = await _context.Categories.FindAsync(id);
-        if (cat == null) return NotFound(new ApiResponse<bool> { Success = false, Message = "Category not found." });
+        var ordered = await _context.Categories.OrderBy(category => category.SortOrder).ToListAsync();
+        var currentIndex = ordered.FindIndex(category => category.Id == id);
+        if (currentIndex < 0) return NotFound(new ApiResponse<bool> { Success = false, Message = "Category not found." });
+        var targetIndex = ordered.FindIndex(category => category.SortOrder == request.SortOrder);
+        if (targetIndex < 0) return BadRequest(new ApiResponse<bool> { Success = false, Message = "Choose a valid category position." });
 
-        var oldOrder = cat.SortOrder;
-        cat.SortOrder = request.SortOrder;
+        var oldOrder = ordered.Select(category => new { category.Id, category.SortOrder }).ToArray();
+        var categoryToMove = ordered[currentIndex];
+        ordered.RemoveAt(currentIndex);
+        ordered.Insert(targetIndex, categoryToMove);
+        for (var index = 0; index < ordered.Count; index++)
+            ordered[index].SortOrder = index + 1;
+
         await _context.SaveChangesAsync();
-        AddAudit("ReorderCategory", id, new { sortOrder = oldOrder }, new { sortOrder = cat.SortOrder, reason = request.Reason.Trim() });
+        AddAudit("ReorderCategory", id, oldOrder, ordered.Select(category => new { category.Id, category.SortOrder }).ToArray());
         await _context.SaveChangesAsync();
         if (transaction != null) await transaction.CommitAsync();
-        return Ok(new ApiResponse<bool> { Success = true, Data = true });
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Category order updated." });
     }
 
     private void AddAudit(string action, int categoryId, object? oldValues, object? newValues)
