@@ -11,6 +11,7 @@ namespace DoForYou.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/super-admin/changes")]
 [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
 public sealed class SuperAdminChangesController(AppDbContext context) : ControllerBase
 {
     private static readonly TimeSpan StepUpWindow = TimeSpan.FromMinutes(15);
