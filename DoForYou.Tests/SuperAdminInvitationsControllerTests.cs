@@ -167,7 +167,7 @@ public sealed class SuperAdminInvitationsControllerTests
         public System.Threading.Tasks.Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken = default)
         {
             Body = body;
-            return Task.CompletedTask;
+            return System.Threading.Tasks.Task.CompletedTask;
         }
     }
 }
