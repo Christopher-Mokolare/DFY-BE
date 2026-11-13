@@ -411,7 +411,8 @@ public class DisputeLifecycleTests
         });
         var approval = new FinancialApprovalRequest
         {
-            TaskId = task.Id, Action = "refund_creator", Reason = "Refund after review of incomplete task evidence",
+            TaskId = task.Id, PaymentTransactionId = "TX-DISPUTE-14", Amount = task.Budget,
+            Action = "refund_creator", Reason = "Refund after review of incomplete task evidence",
             Status = "Approved", IdempotencyKey = Guid.NewGuid().ToString("N"),
             RequestedByUserId = requester.Id, RequestedAt = DateTime.UtcNow,
             ExpiresAt = DateTime.UtcNow.AddMinutes(20), DecidedByUserId = approver.Id,
