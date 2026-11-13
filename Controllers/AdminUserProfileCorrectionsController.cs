@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using DoForYou.API.Authorization;
 using DoForYou.API.Data;
+using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using DoForYou.API.Services;
 using Microsoft.AspNetCore.Authorization;
