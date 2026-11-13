@@ -112,6 +112,33 @@ public sealed class SuperAdminChangesControllerTests
         Assert.Empty(context.SuperAdminChangeRequests);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Suspended_SuperAdmin_cannot_create_or_approve_privileged_changes()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"superadmin-suspended-{Guid.NewGuid():N}").Options;
+        await using var context = new AppDbContext(options);
+        var suspended = CreateUser(31, "suspended@example.com", "Admin,SuperAdmin");
+        suspended.IsSuspended = true;
+        context.Users.AddRange(
+            suspended,
+            CreateUser(32, "active@example.com", "Admin,SuperAdmin"),
+            CreateUser(33, "candidate@example.com", "User"));
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, 31);
+        var result = await controller.Create(new CreateSuperAdminChangeRequest
+        {
+            Action = "grant",
+            TargetUserId = 33,
+            Reason = "Promote candidate after security and operations review"
+        }, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+        Assert.Empty(context.SuperAdminChangeRequests);
+        Assert.Empty(context.AuditLogs);
+    }
+
     private static User CreateUser(int id, string email, string roles) => new()
     {
         Id = id,
