@@ -869,7 +869,7 @@ public class AdminController : ControllerBase
 
         var actorIsSuperAdmin = actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Any(value => string.Equals(value.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true;
-        if (!actorIsSuperAdmin)
+        if (actor == null || !actorIsSuperAdmin)
             return Forbid();
 
         if (actorId.Value == userId)
