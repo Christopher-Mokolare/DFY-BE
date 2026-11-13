@@ -6,6 +6,28 @@
     "version": "v1"
   },
   "paths": {
+    "/api/v1/admin/financial-ledger": {
+      "get": {
+        "tags": ["Admin"],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "format": "int32", "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "format": "int32", "default": 50 } },
+          { "name": "accountCode", "in": "query", "schema": { "type": "string", "nullable": true } },
+          { "name": "eventType", "in": "query", "schema": { "type": "string", "nullable": true } },
+          { "name": "sourceId", "in": "query", "schema": { "type": "string", "nullable": true } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": { "schema": { "$ref": "#/components/schemas/ObjectApiResponse" } },
+              "application/json": { "schema": { "$ref": "#/components/schemas/ObjectApiResponse" } },
+              "text/json": { "schema": { "$ref": "#/components/schemas/ObjectApiResponse" } }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/financial-reconciliation/paystack-settlements": {
       "get": {
         "tags": [
