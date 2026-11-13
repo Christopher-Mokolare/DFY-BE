@@ -22,6 +22,67 @@ namespace DoForYou.API.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("DoForYou.API.Models.AdminInvitation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("AcceptedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CreatedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NormalizedEmail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("NormalizedEmail", "Status");
+
+                    b.ToTable("AdminInvitations");
+                });
+
             modelBuilder.Entity("DoForYou.API.Models.AuditLog", b =>
                 {
                     b.Property<int>("Id")
