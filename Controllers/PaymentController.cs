@@ -501,27 +501,15 @@ public class PaymentController : ControllerBase
                     journal => journal.ReversalOfJournalId == originalChargeJournal.Id);
                 if (!existingReversal)
                 {
-                    var reversalLines = originalChargeJournal.Lines
-                        .OrderBy(line => line.LineNumber)
-                        .Select(line => new FinancialJournalLineDraft(
-                            line.Account.Code,
-                            line.Credit,
-                            line.Debit,
-                            "Reverse escrow collection for confirmed creator refund"))
-                        .ToArray();
-
-                    await _financialLedgerService.PostAsync(new FinancialJournalDraft(
-                        EventType: "reversal",
-                        SourceType: "refund",
-                        SourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        IdempotencyKey: $"paystack:refund:{refund.Id}:completed",
-                        Currency: "ZAR",
-                        Description: "Reverse the original verified Paystack collection after provider-confirmed full refund.",
-                        OccurredAt: DateTime.UtcNow,
-                        Lines: reversalLines,
-                        Provider: "Paystack",
-                        ProviderReference: refund.RefundId,
-                        ReversalOfJournalId: originalChargeJournal.Id));
+                    await _financialLedgerService.ReverseAsync(
+                        originalChargeJournal.Id,
+                        sourceType: "refund",
+                        sourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        idempotencyKey: $"paystack:refund:{refund.Id}:completed",
+                        description: "Reverse the original verified Paystack collection after provider-confirmed full refund.",
+                        provider: "Paystack",
+                        providerReference: refund.RefundId,
+                        occurredAt: DateTime.UtcNow);
                 }
             }
             else
@@ -691,27 +679,15 @@ public class PaymentController : ControllerBase
                     journal.EventType == "runner_payout_completed");
             if (originalPayoutJournal != null)
             {
-                var reversalLines = originalPayoutJournal.Lines
-                    .OrderBy(line => line.LineNumber)
-                    .Select(line => new FinancialJournalLineDraft(
-                        line.Account.Code,
-                        line.Credit,
-                        line.Debit,
-                        "Reverse Paystack runner payout returned by provider"))
-                    .ToArray();
-
-                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
-                    EventType: "reversal",
-                    SourceType: "payout",
-                    SourceId: $"{payout.Id}:reversal",
-                    IdempotencyKey: $"paystack:payout:{payout.Id}:reversal",
-                    Currency: "ZAR",
-                    Description: "Reverse the previously completed runner payout after Paystack reported a transfer reversal.",
-                    OccurredAt: DateTime.UtcNow,
-                    Lines: reversalLines,
-                    Provider: "Paystack",
-                    ProviderReference: payout.ProviderReference ?? reference,
-                    ReversalOfJournalId: originalPayoutJournal.Id));
+                await _financialLedgerService.ReverseAsync(
+                    originalPayoutJournal.Id,
+                    sourceType: "payout",
+                    sourceId: $"{payout.Id}:reversal",
+                    idempotencyKey: $"paystack:payout:{payout.Id}:reversal",
+                    description: "Reverse the previously completed runner payout after Paystack reported a transfer reversal.",
+                    provider: "Paystack",
+                    providerReference: payout.ProviderReference ?? reference,
+                    occurredAt: DateTime.UtcNow);
             }
         }
         else
