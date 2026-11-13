@@ -313,9 +313,8 @@ public class DisputesController : ControllerBase
             refundApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item =>
                 item.TaskId == task.Id && item.Action == "refund_creator" &&
                 item.Status == "Approved" && item.ExpiresAt > DateTime.UtcNow);
-            if (refundApproval == null || refundApproval.RequestedByUserId == actorId ||
-                refundApproval.DecidedByUserId == actorId ||
-                !refundApproval.DecidedByUserId.HasValue)
+            if (refundApproval == null || !refundApproval.DecidedByUserId.HasValue ||
+                refundApproval.RequestedByUserId == refundApproval.DecidedByUserId.Value)
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "A current, independently approved two-person refund request is required. No refund was submitted." });
 
             var approver = await _context.Users.AsNoTracking()
@@ -339,8 +338,7 @@ public class DisputesController : ControllerBase
             {
                 claimedApproval = await _context.FinancialApprovalRequests
                     .Where(item => item.Id == refundApproval.Id && item.Status == "Approved" &&
-                        item.ExpiresAt > claimTime && item.RequestedByUserId != actorId &&
-                        item.DecidedByUserId != actorId)
+                        item.ExpiresAt > claimTime && item.RequestedByUserId != item.DecidedByUserId)
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(item => item.Status, "Executing")
                         .SetProperty(item => item.ExecutionStartedAt, claimTime)
