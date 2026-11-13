@@ -48,9 +48,7 @@ Every document view writes an actor-attributed identity-verification event conta
 
 Identity submission and review-decision notifications are persisted in the database outbox with idempotency keys. Delivery uses bounded retries and lease-based worker ownership. A notification that exhausts its retry policy moves to the dead-letter state.
 
-Authenticated administrators with fresh authenticator verification can:
-- View dead-letter metadata at `GET /api/v1/admin/identity-notifications/dead-letters`.
-- Replay one dead-letter item at `POST /api/v1/admin/identity-notifications/{id}/replay`, supplying an operational reason of 10–500 characters.
+Authenticated administrators can view dead-letter metadata at `GET /api/v1/admin/identity-notifications/dead-letters`. Replaying a dead letter additionally requires fresh authenticator verification within 15 minutes and an operational reason of 10–500 characters via `POST /api/v1/admin/identity-notifications/{id}/replay`.
 
 Replay only accepts a row still in the dead-letter state. It requeues the item and writes an audit event with actor, reason, correlation ID, IP and user-agent. The endpoint does not return message bodies or recipient addresses. Check delivery logs and the dead-letter queue during daily review; do not replay delivered or actively processing rows.
 
