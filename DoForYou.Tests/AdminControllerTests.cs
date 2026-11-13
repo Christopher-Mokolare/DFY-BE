@@ -461,6 +461,49 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Refund_approval_rejects_charge_amount_mismatch()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-refund-amount-mismatch-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(131, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(132, "User");
+        var runner = CreateUser(133, "User");
+        context.Users.AddRange(requester, creator, runner);
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 134, TaskId = "DFY-REFUND-AMOUNT-MISMATCH", TaskDescription = "Amount mismatch",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "Completed", PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed", Budget = 200m, PayoutAmount = 170m
+        };
+        context.Tasks.Add(task);
+        context.Disputes.Add(new Dispute
+        {
+            TaskId = task.Id, ReportedByUserId = creator.Id,
+            Issue = "Task incomplete", Category = "quality", Status = "Open"
+        });
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_134",
+            TransactionId = "987655", Amount = 150m, Status = "Completed"
+        });
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, requester.Id).RequestFinancialRefundApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Refund requested after review of evidence" });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(context.FinancialApprovalRequests);
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Refund_approval_is_denied_when_no_open_dispute_or_verified_charge_exists()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
