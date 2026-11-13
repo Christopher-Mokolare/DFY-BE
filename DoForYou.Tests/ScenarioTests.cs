@@ -953,7 +953,9 @@ public class ScenarioTests
         var creator = CreateUser(1, "creator", true, "refund-reserve-creator@test.com");
         var runner = CreateUser(2, "runner", true, "refund-reserve-runner@test.com");
         var admin = CreateUser(3, "admin", true, "refund-reserve-admin@test.com");
-        admin.Roles = "Admin";
+        admin.Roles = "Admin,SuperAdmin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
         context.Users.AddRange(creator, runner, admin);
 
         var task = new TaskEntity
