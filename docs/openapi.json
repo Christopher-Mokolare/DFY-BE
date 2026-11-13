@@ -7704,19 +7704,25 @@
       },
       "CategoryRequest": {
         "required": [
-          "name"
+          "name",
+          "reason"
         ],
         "type": "object",
         "properties": {
           "name": {
-            "minLength": 1,
+            "maxLength": 100,
+            "minLength": 2,
             "type": "string"
           },
           "description": {
+            "maxLength": 500,
+            "minLength": 0,
             "type": "string",
             "nullable": true
           },
           "icon": {
+            "maxLength": 64,
+            "minLength": 0,
             "type": "string",
             "nullable": true
           },
@@ -7724,6 +7730,11 @@
             "type": "integer",
             "format": "int32",
             "nullable": true
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 5,
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -8374,11 +8385,19 @@
         "additionalProperties": false
       },
       "ReorderRequest": {
+        "required": [
+          "reason"
+        ],
         "type": "object",
         "properties": {
           "sortOrder": {
             "type": "integer",
             "format": "int32"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 5,
+            "type": "string"
           }
         },
         "additionalProperties": false

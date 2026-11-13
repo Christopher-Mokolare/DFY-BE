@@ -6991,6 +6991,7 @@ export interface components {
             icon?: string | null;
             /** Format: int32 */
             sortOrder?: number | null;
+            reason: string;
         };
         ChangePasswordRequest: {
             currentPassword: string;
@@ -7150,6 +7151,7 @@ export interface components {
         ReorderRequest: {
             /** Format: int32 */
             sortOrder?: number;
+            reason: string;
         };
         ReorderTestimonialRequest: {
             /** Format: int32 */
