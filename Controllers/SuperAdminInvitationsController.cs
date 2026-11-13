@@ -12,7 +12,7 @@ namespace DoForYou.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/super-admin/invitations")]
-[Authorize(Roles = "Admin")]
+[Authorize]
 public sealed class SuperAdminInvitationsController(
     AppDbContext context,
     IEmailSender emailSender,
@@ -22,6 +22,7 @@ public sealed class SuperAdminInvitationsController(
     private static readonly TimeSpan StepUpWindow = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan InvitationLifetime = TimeSpan.FromHours(48);
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateAdminInvitationRequest request, CancellationToken cancellationToken)
     {
@@ -138,6 +139,7 @@ public sealed class SuperAdminInvitationsController(
         });
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
@@ -163,6 +165,7 @@ public sealed class SuperAdminInvitationsController(
         return Ok(new { success = true, data = items });
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("{id:int}/revoke")]
     public async Task<IActionResult> Revoke(int id, [FromBody] RevokeAdminInvitationRequest request, CancellationToken cancellationToken)
     {
