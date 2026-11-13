@@ -10,7 +10,7 @@ namespace DoForYou.Tests;
 public sealed class AdminPermissionAuthorizationHandlerTests
 {
     [Fact]
-    public async Task Active_admin_with_specific_unexpired_grant_and_fresh_mfa_is_allowed()
+    public async System.Threading.Tasks.Task Active_admin_with_specific_unexpired_grant_and_fresh_mfa_is_allowed()
     {
         await using var db = CreateContext();
         db.Users.Add(Admin(1));
@@ -29,7 +29,7 @@ public sealed class AdminPermissionAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task Admin_without_matching_grant_is_denied()
+    public async System.Threading.Tasks.Task Admin_without_matching_grant_is_denied()
     {
         await using var db = CreateContext();
         db.Users.Add(Admin(2));
@@ -48,7 +48,7 @@ public sealed class AdminPermissionAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task Expired_or_revoked_permission_is_denied()
+    public async System.Threading.Tasks.Task Expired_or_revoked_permission_is_denied()
     {
         await using var db = CreateContext();
         db.Users.Add(Admin(3));
@@ -78,7 +78,7 @@ public sealed class AdminPermissionAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task SuperAdmin_with_fresh_mfa_can_pass_permission_policy_without_grant()
+    public async System.Threading.Tasks.Task SuperAdmin_with_fresh_mfa_can_pass_permission_policy_without_grant()
     {
         await using var db = CreateContext();
         db.Users.Add(Admin(4, "SuperAdmin"));
@@ -91,7 +91,7 @@ public sealed class AdminPermissionAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task Stale_mfa_is_denied_even_when_permission_grant_exists()
+    public async System.Threading.Tasks.Task Stale_mfa_is_denied_even_when_permission_grant_exists()
     {
         await using var db = CreateContext();
         var admin = Admin(5);
