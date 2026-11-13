@@ -833,7 +833,35 @@ public class ScenarioTests
         };
         context.Tasks.Add(task);
         context.Refunds.Add(refund);
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-WEBHOOK-REFUND-1",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = "TX-WEBHOOK-1",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
         await context.SaveChangesAsync();
+        var ledger = new FinancialLedgerService(context);
+        var chargeJournal = await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-WEBHOOK-1",
+            "paystack:charge:TX-WEBHOOK-1",
+            "ZAR",
+            "Verified Paystack charge for refund webhook test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            "DFY-WEBHOOK-REFUND-1"));
         var controller = CreatePaymentController(context);
 
         var processed = await InvokeWebhook(controller,
@@ -842,6 +870,12 @@ public class ScenarioTests
         Assert.Equal("Complete", refund.Status);
         Assert.Equal("Refunded", task.PaymentStatus);
         Assert.Equal("Cancelled", task.TaskStatus);
+        var reversalJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync(journal => journal.EventType == "reversal");
+        Assert.Equal(chargeJournal.Id, reversalJournal.ReversalOfJournalId);
+        Assert.Equal(200m, reversalJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(200m, reversalJournal.Lines.Sum(line => line.Credit));
 
         var delayedFailure = await InvokeWebhook(controller,
             """{"event":"refund.failed","data":{"id":"REF-WEBHOOK-1","transaction":"TX-WEBHOOK-1","amount":20000,"currency":"ZAR","status":"failed"}}""");
