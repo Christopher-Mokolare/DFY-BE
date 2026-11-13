@@ -1424,6 +1424,85 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [Authorize(Policy = "SuperAdminMfa")]
+    [HttpGet("financial-approvals")]
+    public async Task<ActionResult<ApiResponse<object>>> GetFinancialApprovals([FromQuery] string? status = null)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var query = _context.FinancialApprovalRequests.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(status))
+            query = query.Where(item => item.Status == status.Trim());
+        var requests = await query
+            .OrderByDescending(item => item.RequestedAt)
+            .Take(100)
+            .Select(item => new
+            {
+                id = item.Id,
+                taskId = item.TaskId,
+                taskReference = _context.Tasks.Where(task => task.Id == item.TaskId).Select(task => task.TaskId).FirstOrDefault(),
+                action = item.Action,
+                reason = item.Reason,
+                status = item.Status,
+                requestedByUserId = item.RequestedByUserId,
+                requestedAt = item.RequestedAt,
+                expiresAt = item.ExpiresAt,
+                decidedByUserId = item.DecidedByUserId,
+                decidedAt = item.DecidedAt,
+                decisionReason = item.DecisionReason,
+                executionAttempts = item.ExecutionAttempts,
+                executedAt = item.ExecutedAt,
+                lastExecutionError = item.LastExecutionError
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object> { Success = true, Data = requests });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/{id:int}/reject")]
+    public async Task<ActionResult<ApiResponse<bool>>> RejectFinancialRequest(int id, [FromBody] AdminActionReasonRequest request)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var reason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A rejection reason between 10 and 500 characters is required." });
+
+        var approval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+        if (approval == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
+        if (approval.RequestedByUserId == actorId.Value)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The requester cannot reject their own financial action." });
+        if (approval.Status != "Pending" || approval.ExpiresAt <= DateTime.UtcNow)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an unexpired pending request can be rejected." });
+
+        approval.Status = "Rejected";
+        approval.DecidedByUserId = actorId.Value;
+        approval.DecidedAt = DateTime.UtcNow;
+        approval.DecisionReason = reason;
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialApprovalRejected",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = id,
+            OldValues = "Pending",
+            NewValues = $"Rejected; requestedBy={approval.RequestedByUserId}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Financial action rejected. No money moved." });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
     [HttpPost("financial-approvals/tasks/{taskId}")]
     public async Task<ActionResult<ApiResponse<int>>> RequestFinancialApproval(string taskId, [FromBody] AdminActionReasonRequest request)
     {
@@ -1441,6 +1520,28 @@ public class AdminController : ControllerBase
         if (task.AcceptedByUserId == null || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld")
             return Conflict(new ApiResponse<int> { Success = false, Message = "Only an assigned task with held escrow can enter exceptional release approval." });
 
+        var now = DateTime.UtcNow;
+        if (_context.Database.IsRelational())
+        {
+            await _context.FinancialApprovalRequests
+                .Where(item => item.TaskId == task.Id &&
+                    (item.Status == "Pending" || item.Status == "Approved") &&
+                    item.ExpiresAt <= now)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "Expired"));
+        }
+        else
+        {
+            var expired = await _context.FinancialApprovalRequests
+                .Where(item => item.TaskId == task.Id &&
+                    (item.Status == "Pending" || item.Status == "Approved") &&
+                    item.ExpiresAt <= now)
+                .ToListAsync();
+            foreach (var item in expired)
+                item.Status = "Expired";
+            if (expired.Count > 0)
+                await _context.SaveChangesAsync();
+        }
+
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
             item.TaskId == task.Id &&
             item.Action == "force_escrow_release" &&
@@ -1448,7 +1549,6 @@ public class AdminController : ControllerBase
         if (hasOpenRequest)
             return Conflict(new ApiResponse<int> { Success = false, Message = "An active financial approval request already exists for this task." });
 
-        var now = DateTime.UtcNow;
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
