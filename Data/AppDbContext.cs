@@ -92,6 +92,10 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .Property(request => request.Amount)
+            .HasPrecision(18, 2);
+
         modelBuilder.Entity<FinancialAccount>(entity =>
         {
             entity.HasIndex(account => account.Code).IsUnique();
