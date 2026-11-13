@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Services;
 using System.Security.Claims;
@@ -65,6 +66,7 @@ public class AdminController : ControllerBase
     /// Retrieves Paystack settlement batches and their transactions, then compares transaction
     /// references and amounts with DFY's persisted payment records. Read-only; no money moves.
     /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("financial-reconciliation/paystack-settlements")]
     public async Task<ActionResult<ApiResponse<object>>> GetPaystackSettlementReconciliation(
         [FromQuery] DateTimeOffset? from = null,
@@ -271,6 +273,7 @@ public class AdminController : ControllerBase
     /// Reads Paystack transfer records and compares them with DFY payout records.
     /// This endpoint is strictly read-only and never retries or changes a payout.
     /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("financial-reconciliation/paystack-transfers")]
     public async Task<ActionResult<ApiResponse<object>>> GetPaystackTransferReconciliation(
         [FromQuery] DateTimeOffset? from = null,
@@ -442,6 +445,7 @@ public class AdminController : ControllerBase
     /// This endpoint never calls a payment provider, changes financial state, or triggers payouts.
     /// Provider settlement reconciliation must be performed separately against Paystack records.
     /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("financial-reconciliation")]
     public async Task<ActionResult<ApiResponse<object>>> GetFinancialReconciliation(
         [FromQuery] int days = 30,
@@ -567,6 +571,7 @@ public class AdminController : ControllerBase
     /// Chargeback deadlines are not represented here because the current data model has no dedicated
     /// Paystack chargeback case entity.
     /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("payment-operations")]
     public async Task<ActionResult<ApiResponse<object>>> GetPaymentOperations(
         [FromQuery] int days = 30,
@@ -759,6 +764,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpGet("tasks")]
     public async Task<ActionResult<ApiResponse<PaginatedResponse<TaskDto>>>> GetAllTasks(
         [FromQuery] int page = 1,
@@ -833,6 +839,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/verify")]
     public async Task<ActionResult<ApiResponse<bool>>> VerifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
@@ -858,6 +865,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/unverify")]
     public async Task<ActionResult<ApiResponse<bool>>> UnverifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
@@ -882,6 +890,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("payments")]
     public async Task<ActionResult<ApiResponse<object>>> GetPaymentsOverview()
     {
@@ -953,6 +962,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpGet("users")]
     public async Task<ActionResult<ApiResponse<object>>> GetUsers(
         [FromQuery] int page = 1,
@@ -1117,6 +1127,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpPatch("users/{userId}/status")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserStatus(int userId, [FromBody] UpdateUserStatusRequest request)
     {
@@ -1138,6 +1149,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User status updated" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpPatch("users/{userId}/suspension")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserSuspension(
         int userId,
@@ -1186,6 +1198,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpPatch("users/{userId}/role")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] JsonElement request)
     {
@@ -1261,6 +1274,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role updated" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpGet("users/{userId}/tasks")]
     public async Task<ActionResult<ApiResponse<object>>> GetUserTaskHistory(int userId)
     {
@@ -1291,6 +1305,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/bulk-verify")]
     public async Task<ActionResult<ApiResponse<bool>>> BulkVerifyTasks([FromBody] BulkVerifyRequest request)
     {
@@ -1315,6 +1330,7 @@ public class AdminController : ControllerBase
     }
 
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/expire-confirmation")]
     public async Task<ActionResult<ApiResponse<bool>>> ExpireConfirmation(string taskId, [FromBody] AdminActionReasonRequest request)
     {
@@ -1393,6 +1409,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPatch("tasks/{taskId}/force-release-escrow")]
     [Authorize(Policy = "SuperAdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId, [FromBody] AdminActionReasonRequest request)
@@ -1473,6 +1490,7 @@ public class AdminController : ControllerBase
     }
 
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpDelete("tasks/{taskId}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
@@ -1506,6 +1524,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task archived" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpDelete("users/{userId}")]
     public async Task<ActionResult<ApiResponse<bool>>> DeleteUser(int userId, [FromBody] UserLifecycleReasonRequest request)
     {
@@ -1559,6 +1578,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User archived. Audit and task history have been retained." });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.UsersManagePolicy)]
     [HttpPost("users/{userId}/restore")]
     public async Task<ActionResult<ApiResponse<bool>>> RestoreUser(int userId, [FromBody] UserLifecycleReasonRequest request)
     {
@@ -1605,6 +1625,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = user.IsSuspended ? "User restored but remains suspended; reinstate separately." : "User restored. Active sessions have been revoked." });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.AuditReadPolicy)]
     [HttpGet("audit-logs")]
     public async Task<ActionResult<ApiResponse<object>>> GetAuditLogs([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
@@ -1639,6 +1660,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpGet("tasks/{taskId}/messages")]
     public async Task<ActionResult<ApiResponse<List<object>>>> GetTaskMessages(string taskId)
     {
@@ -1666,6 +1688,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<List<object>> { Success = true, Data = messages });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("refunds")]
     public async Task<ActionResult<ApiResponse<object>>> GetRefunds([FromQuery] string? status = null)
     {
@@ -1699,6 +1722,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = refunds });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPost("refunds/reconcile")]
     public async Task<ActionResult<ApiResponse<object>>> ReconcileRefunds()
     {
@@ -1764,6 +1788,7 @@ public class AdminController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("withdrawal-requests")]
     public async Task<ActionResult<ApiResponse<object>>> GetWithdrawalRequests([FromQuery] string? status = null)
     {
@@ -1795,6 +1820,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = requests });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("bank-accounts")]
     public async Task<ActionResult<ApiResponse<object>>> GetBankAccounts([FromQuery] bool? unverifiedOnly = null)
     {
@@ -1820,6 +1846,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = accounts });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPatch("bank-accounts/{id}/verify")]
     public async Task<ActionResult<ApiResponse<bool>>> VerifyBankAccount(int id)
     {
