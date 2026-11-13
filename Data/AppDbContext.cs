@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
     public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
+    public DbSet<FinancialApprovalRequest> FinancialApprovalRequests { get; set; } = null!;
     public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
     public DbSet<DuplicateAccountCase> DuplicateAccountCases { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
@@ -114,6 +115,13 @@ public class AppDbContext : DbContext
             .IsUnique()
             .HasFilter("\"Status\" = 'Open'")
             .HasDatabaseName("IX_DuplicateAccountCases_OpenPair");
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => request.IdempotencyKey)
+            .IsUnique();
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => new { request.Status, request.ExpiresAt });
 
         modelBuilder.Entity<SuperAdminChangeRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt })
