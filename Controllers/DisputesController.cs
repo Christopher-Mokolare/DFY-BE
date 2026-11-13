@@ -394,33 +394,33 @@ public class DisputesController : ControllerBase
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
             }
 
-            // Use the immutable payment-attempt record as the source of truth for
-            // refunds. Audit logs remain a backward-compatible fallback for older tasks.
-            var successfulAttempt = await _context.PaymentAttempts
-                .Where(p => p.TaskId == task.Id && p.Provider == "Paystack" && p.Status == "Completed" && p.TransactionId != null)
+            // A refund must be tied to a current, persisted successful Paystack charge.
+            // Audit text and task-level payment references are not payment evidence.
+            var successfulAttempts = await _context.PaymentAttempts
+                .Where(p => p.TaskId == task.Id &&
+                    p.Provider == "Paystack" &&
+                    p.Status == "Completed" &&
+                    p.TransactionId != null &&
+                    p.Amount == task.Budget)
                 .OrderByDescending(p => p.CompletedAt ?? p.CreatedAt)
-                .FirstOrDefaultAsync();
+                .ToListAsync();
 
-            var transactionId = successfulAttempt?.TransactionId;
-
-            if (string.IsNullOrWhiteSpace(transactionId))
+            if (successfulAttempts.Count != 1 ||
+                string.IsNullOrWhiteSpace(successfulAttempts[0].TransactionId))
             {
-                var paymentVerification = await _context.AuditLogs
-                    .Where(a =>
-                        a.EntityType == "Task" &&
-                        a.EntityId == task.Id &&
-                        a.Action == "PaystackPaymentVerified" &&
-                        a.NewValues != null)
-                    .OrderByDescending(a => a.CreatedAt)
-                    .FirstOrDefaultAsync();
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "Exactly one persisted successful Paystack charge matching the task budget is required.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "A refund cannot be submitted without exactly one persisted successful Paystack charge matching the task budget. Legacy audit-log references are not accepted."
+                });
+            }
 
-                transactionId = ExtractAuditValue(paymentVerification?.NewValues, "transactionId");
-            }
-            if (string.IsNullOrWhiteSpace(transactionId))
-            {
-                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Original Paystack transaction ID is unavailable.");
-                return Conflict(new ApiResponse<bool> { Success = false, Message = "Original Paystack transaction ID is not available; refund cannot be safely submitted." });
-            }
+            var transactionId = successfulAttempts[0].TransactionId;
 
             var existingRefund = await _context.Refunds
                 .FirstOrDefaultAsync(r => r.TaskId == task.Id);
