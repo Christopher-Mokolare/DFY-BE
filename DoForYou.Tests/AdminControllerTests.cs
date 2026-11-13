@@ -368,6 +368,51 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Independent_SuperAdmin_can_reject_financial_request_without_creating_a_payout()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-approval-reject-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(101, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var reviewer = CreateUser(102, "Admin,SuperAdmin");
+        reviewer.AuthenticatorTwoFactorEnabled = true;
+        reviewer.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(103, "User");
+        var runner = CreateUser(104, "User");
+        context.Users.AddRange(requester, reviewer, creator, runner);
+        context.Tasks.Add(new DoForYou.API.Models.Task
+        {
+            Id = 105, TaskId = "DFY-FINANCIAL-REJECT-TEST", TaskDescription = "Reject test",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "AwaitingConfirmation", PaymentStatus = "EscrowHeld",
+            EscrowStatus = "held", Budget = 200m, PayoutAmount = 170m
+        });
+        await context.SaveChangesAsync();
+
+        var requested = await CreateController(context, requester.Id).RequestFinancialApproval(
+            "DFY-FINANCIAL-REJECT-TEST",
+            new AdminActionReasonRequest { Reason = "Exceptional release requires independent review" });
+        var requestOk = Assert.IsType<OkObjectResult>(requested.Result);
+        var requestId = (int)requestOk.Value!.GetType().GetProperty("Data")!.GetValue(requestOk.Value)!;
+
+        var rejected = await CreateController(context, reviewer.Id).RejectFinancialRequest(
+            requestId,
+            new AdminActionReasonRequest { Reason = "Evidence does not support overriding the confirmation hold" });
+
+        Assert.IsType<OkObjectResult>(rejected.Result);
+        var approval = await context.FinancialApprovalRequests.SingleAsync();
+        Assert.Equal("Rejected", approval.Status);
+        Assert.Equal(requester.Id, approval.RequestedByUserId);
+        Assert.Equal(reviewer.Id, approval.DecidedByUserId);
+        Assert.Equal("Evidence does not support overriding the confirmation hold", approval.DecisionReason);
+        Assert.Empty(context.Payouts);
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalRejected");
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Financial_approval_request_rejects_stale_MFA_and_non_SuperAdmins()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
