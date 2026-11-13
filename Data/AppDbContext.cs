@@ -96,6 +96,14 @@ public class AppDbContext : DbContext
             .HasIndex(grant => new { grant.UserId, grant.ExpiresAt })
             .HasDatabaseName("IX_AdminPermissionGrants_UserId_ExpiresAt");
 
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => grant.GrantedByUserId)
+            .HasDatabaseName("IX_AdminPermissionGrants_GrantedByUserId");
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => grant.RevokedByUserId)
+            .HasDatabaseName("IX_AdminPermissionGrants_RevokedByUserId");
+
         modelBuilder.Entity<SuperAdminChangeRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt })
             .HasDatabaseName("IX_SuperAdminChangeRequests_Status_ExpiresAt");
