@@ -16,11 +16,16 @@ public class EscrowService : IEscrowService
 {
     private readonly AppDbContext _context;
     private readonly ILogger<EscrowService> _logger;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
-    public EscrowService(AppDbContext context, ILogger<EscrowService> logger)
+    public EscrowService(
+        AppDbContext context,
+        ILogger<EscrowService> logger,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _logger = logger;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false)
@@ -130,6 +135,12 @@ public class EscrowService : IEscrowService
                 UpdatedAt = DateTime.UtcNow
             };
 
+            if (task.Budget <= 0m ||
+                task.CommissionAmount < 0m ||
+                task.PayoutAmount <= 0m ||
+                task.CommissionAmount + task.PayoutAmount != task.Budget)
+                throw new InvalidOperationException("Task budget must equal the persisted commission plus runner payable before escrow can be released.");
+
             _context.Payouts.Add(payout);
             task.EscrowStatus = "released";
             task.PaymentStatus = "EscrowReleased";
@@ -139,6 +150,24 @@ public class EscrowService : IEscrowService
             task.PayoutInitiatedAt = null;
             task.PaidToRunnerAt = null;
             task.UpdatedAt = DateTime.UtcNow;
+
+            var releaseLines = new List<FinancialJournalLineDraft>
+            {
+                new("2000", task.Budget, 0m, "Release task escrow liability"),
+                new("2100", 0m, task.PayoutAmount, "Runner amount payable through normal payout processor")
+            };
+            if (task.CommissionAmount > 0m)
+                releaseLines.Add(new FinancialJournalLineDraft("4000", 0m, task.CommissionAmount, "Platform commission earned"));
+
+            await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                EventType: "escrow_released",
+                SourceType: "task",
+                SourceId: task.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IdempotencyKey: $"escrow:release:task:{task.Id}",
+                Currency: "ZAR",
+                Description: "Task escrow released to runner payable and platform commission; provider transfer remains subject to the payout processor and manual payout gate.",
+                OccurredAt: DateTime.UtcNow,
+                Lines: releaseLines));
 
             await _context.SaveChangesAsync();
             if (transaction != null) await transaction.CommitAsync();
