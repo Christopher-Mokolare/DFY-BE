@@ -519,6 +519,7 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpGet("admin/pending")]
     public async Task<ActionResult<ApiResponse<object>>> GetPending(
         [FromQuery] int page = 1,
@@ -631,6 +632,7 @@ public sealed class ManualIdentityVerificationController(
 
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpPost("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ClaimReview(int id, CancellationToken cancellationToken)
     {
@@ -678,6 +680,7 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpPost("admin/{id:int}/heartbeat")]
     public async Task<ActionResult<ApiResponse<object>>> HeartbeatReview(int id, CancellationToken cancellationToken)
     {
@@ -715,6 +718,7 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpDelete("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ReleaseReview(int id, CancellationToken cancellationToken)
     {
@@ -747,6 +751,7 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpGet("admin/{id:int}/document/{side}")]
     public async Task<IActionResult> GetDocument(int id, string side, CancellationToken cancellationToken)
     {
@@ -811,6 +816,7 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     [HttpPost("admin/{id:int}/decision")]
     public async Task<ActionResult<ApiResponse<object>>> Decide(
         int id,
