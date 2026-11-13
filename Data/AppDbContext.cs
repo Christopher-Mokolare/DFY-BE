@@ -132,7 +132,7 @@ public class AppDbContext : DbContext
             entity.HasIndex(journal => journal.IdempotencyKey).IsUnique();
             entity.HasIndex(journal => new { journal.SourceType, journal.SourceId, journal.EventType }).IsUnique();
             entity.HasIndex(journal => journal.ReversalOfJournalId).IsUnique()
-                .HasFilter("\\"ReversalOfJournalId\\" IS NOT NULL");
+                .HasFilter("\"ReversalOfJournalId\" IS NOT NULL");
             entity.Property(journal => journal.JournalNumber).IsRequired();
             entity.Property(journal => journal.EventType).IsRequired();
             entity.Property(journal => journal.SourceType).IsRequired();
@@ -155,10 +155,10 @@ public class AppDbContext : DbContext
             {
                 table.HasCheckConstraint(
                     "CK_FinancialJournalLines_OneSidedPositiveAmount",
-                    "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))");
+                    "((\"Debit\" > 0 AND \"Credit\" = 0) OR (\"Credit\" > 0 AND \"Debit\" = 0))");
                 table.HasCheckConstraint(
                     "CK_FinancialJournalLines_NonNegativeAmounts",
-                    "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0");
+                    "\"Debit\" >= 0 AND \"Credit\" >= 0");
             });
             entity.HasOne(line => line.Journal)
                 .WithMany(journal => journal.Lines)
