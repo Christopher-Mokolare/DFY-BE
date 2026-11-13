@@ -93,6 +93,13 @@ namespace DoForYou.API.Migrations
                     b.Property<DateTime?>("DecidedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("ExecutionStartedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("ExecutionAttempts")
                         .HasColumnType("integer");
 
