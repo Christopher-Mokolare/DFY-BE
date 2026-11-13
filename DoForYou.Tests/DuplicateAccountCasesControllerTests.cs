@@ -111,6 +111,8 @@ public sealed class DuplicateAccountCasesControllerTests
         Assert.Equal(8, investigation.DecidedByUserId);
         Assert.Equal("ResolveDuplicateAccountInvestigation", (await db.AuditLogs.SingleAsync()).Action);
         Assert.Equal(2, await db.Users.CountAsync());
+        Assert.Equal("User", (await db.Users.SingleAsync(item => item.Id == 1)).Roles);
+        Assert.Equal("User", (await db.Users.SingleAsync(item => item.Id == 2)).Roles);
     }
 
     private static AppDbContext CreateContext()
