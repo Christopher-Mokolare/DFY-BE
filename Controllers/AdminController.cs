@@ -623,9 +623,9 @@ public class AdminController : ControllerBase
                     account.AccountType,
                     account.Currency,
                     account.IsActive,
-                    account.DebitTotal,
-                    account.CreditTotal,
-                    rawDebitMinusCreditBalance = decimal.Round(account.DebitTotal - account.CreditTotal, 2, MidpointRounding.AwayFromZero)
+                    account.debitTotal,
+                    account.creditTotal,
+                    rawDebitMinusCreditBalance = decimal.Round(account.debitTotal - account.creditTotal, 2, MidpointRounding.AwayFromZero)
                 }),
                 journals
             }
