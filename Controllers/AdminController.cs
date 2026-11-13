@@ -2010,7 +2010,10 @@ public class AdminController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
 
-        var openDispute = await _context.Disputes.AnyAsync(item => item.TaskId == task.Id && item.Status == "Open");
+        var openDispute = await _context.Disputes
+            .Where(item => item.TaskId == task.Id && item.Status == "Open")
+            .OrderByDescending(item => item.CreatedAt)
+            .FirstOrDefaultAsync();
         var successfulPayments = await _context.PaymentAttempts
             .Where(item => item.TaskId == task.Id && item.Provider == "Paystack" &&
                 item.Status == "Completed" && item.TransactionId != null && item.Amount == task.Budget)
@@ -2028,7 +2031,7 @@ public class AdminController : ControllerBase
              item.Status == "AwaitingEligibility" || item.Status == "AwaitingBankDetails" ||
              item.Status == "Queued" || item.Status == "Initiated" || item.Status == "Completed"));
 
-        if (!openDispute || task.PaymentStatus != "DisputePending" || task.EscrowStatus != "disputed" ||
+        if (openDispute == null || task.PaymentStatus != "DisputePending" || task.EscrowStatus != "disputed" ||
             task.TaskStatus is not ("AwaitingConfirmation" or "Completed") ||
             task.PayoutStatus == "Completed" || activePayout ||
             !refundChargeIsJournalled ||
@@ -2052,6 +2055,7 @@ public class AdminController : ControllerBase
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
+            DisputeId = openDispute.Id,
             PaymentTransactionId = successfulTransactionId!,
             Amount = task.Budget,
             Action = "refund_creator",
@@ -2134,6 +2138,7 @@ public class AdminController : ControllerBase
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
+            DisputeId = openDispute.Id,
             PaymentTransactionId = successfulPaymentTransactionIds[0],
             Amount = task.Budget,
             Action = "release_to_runner",
@@ -2201,7 +2206,11 @@ public class AdminController : ControllerBase
                 (task.TaskStatus == "AwaitingConfirmation" || task.TaskStatus == "Completed") &&
                 task.AcceptedByUserId != null && task.EscrowStatus == "disputed" &&
                 task.PaymentStatus == "DisputePending" && task.PayoutAmount > 0) &&
-                await _context.Disputes.AnyAsync(dispute => dispute.TaskId == approval.TaskId && dispute.Status == "Open") &&
+                approval.DisputeId.HasValue &&
+                await _context.Disputes.AnyAsync(dispute =>
+                    dispute.Id == approval.DisputeId.Value &&
+                    dispute.TaskId == approval.TaskId &&
+                    dispute.Status == "Open") &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
                     payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
                     payment.Amount == approval.Amount &&
