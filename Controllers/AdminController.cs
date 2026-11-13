@@ -1514,7 +1514,7 @@ public class AdminController : ControllerBase
             var transactionId = $"E2E-{Guid.NewGuid():N}";
             var reference = $"E2E-{task.TaskId}";
             transactionIds[task.Id] = transactionId;
-            _context.PaymentAttempts.Add(new PaymentAttempt
+            _context.PaymentAttempts.Add(new DoForYou.API.Models.PaymentAttempt
             {
                 TaskId = task.Id,
                 Provider = "E2E",
