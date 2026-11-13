@@ -52,7 +52,11 @@ jobs:
         run: |
           dotnet tool install --global dotnet-ef --version 9.0.4
           export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet ef migrations has-pending-model-changes --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --no-build --configuration Release
+          dotnet ef migrations add ModelDriftProbe --context AppDbContext --project DoForYou.API.csproj --startup-project DoForYou.API.csproj --no-build --configuration Release
+          echo "=== GENERATED MODEL DRIFT MIGRATION ==="
+          cat Migrations/*ModelDriftProbe.cs
+          echo "=== GENERATED SNAPSHOT DIFF SUMMARY ==="
+          git status --short
 
       - name: Test
         env:
