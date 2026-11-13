@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
     public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
+    public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
@@ -85,6 +86,16 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => new { grant.UserId, grant.PermissionKey })
+            .IsUnique()
+            .HasFilter("\\"RevokedAt\\" IS NULL")
+            .HasDatabaseName("IX_AdminPermissionGrants_Active_UserId_PermissionKey");
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => new { grant.UserId, grant.ExpiresAt })
+            .HasDatabaseName("IX_AdminPermissionGrants_UserId_ExpiresAt");
+
         modelBuilder.Entity<SuperAdminChangeRequest>()
             .HasIndex(request => new { request.Status, request.ExpiresAt })
             .HasDatabaseName("IX_SuperAdminChangeRequests_Status_ExpiresAt");
