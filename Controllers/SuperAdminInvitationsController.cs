@@ -105,6 +105,7 @@ public sealed class SuperAdminInvitationsController(
             ExpiresAt = now.Add(InvitationLifetime)
         };
         context.AdminInvitations.Add(invitation);
+        await context.SaveChangesAsync(cancellationToken); // Generate the invitation ID inside the transaction.
         context.AuditLogs.Add(new AuditLog
         {
             UserId = actorId.Value,
