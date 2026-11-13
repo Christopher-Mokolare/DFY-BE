@@ -1055,7 +1055,7 @@ public class AdminController : ControllerBase
         }
 
         var totalCount = await query.CountAsync();
-        var accounts = await query
+        var accountRows = await query
             .OrderByDescending(user => user.Roles != null && user.Roles.Contains("Admin"))
             .ThenBy(user => user.FirstName)
             .ThenBy(user => user.LastName)
@@ -1067,10 +1067,6 @@ public class AdminController : ControllerBase
                 name = (user.FirstName + " " + user.LastName).Trim(),
                 email = user.Email,
                 roles = user.Roles,
-                isAdministrator = user.Roles != null && user.Roles.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Any(role => role.Trim() == "Admin" || role.Trim() == "SuperAdmin"),
-                isSuperAdmin = user.Roles != null && user.Roles.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                    .Any(role => role.Trim() == "SuperAdmin"),
                 emailVerified = user.EmailVerified,
                 authenticatorTwoFactorEnabled = user.AuthenticatorTwoFactorEnabled,
                 isArchived = user.IsArchived,
@@ -1078,6 +1074,26 @@ public class AdminController : ControllerBase
                 createdAt = user.CreatedAt
             })
             .ToListAsync();
+        var accounts = accountRows.Select(user =>
+        {
+            var roles = user.roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(role => role.Trim()).ToArray() ?? Array.Empty<string>();
+            return new
+            {
+                user.id,
+                user.name,
+                user.email,
+                user.roles,
+                isAdministrator = roles.Contains("Admin", StringComparer.OrdinalIgnoreCase) ||
+                    roles.Contains("SuperAdmin", StringComparer.OrdinalIgnoreCase),
+                isSuperAdmin = roles.Contains("SuperAdmin", StringComparer.OrdinalIgnoreCase),
+                user.emailVerified,
+                user.authenticatorTwoFactorEnabled,
+                user.isArchived,
+                user.lastLoginAt,
+                user.createdAt
+            };
+        }).ToList();
 
         return Ok(new ApiResponse<object>
         {
