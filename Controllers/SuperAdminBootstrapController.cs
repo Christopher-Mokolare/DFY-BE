@@ -97,7 +97,7 @@ public sealed class SuperAdminBootstrapController(
         {
             authenticatorSecret = authenticator.DecryptSecret(account.AuthenticatorSecretEncrypted);
         }
-        catch (CryptographicException)
+        catch (Exception exception) when (exception is CryptographicException or FormatException or ArgumentException)
         {
             return Conflict(new { message = "The authenticator enrollment must be repaired before bootstrap." });
         }
