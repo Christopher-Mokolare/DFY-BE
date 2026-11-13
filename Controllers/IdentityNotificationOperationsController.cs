@@ -70,6 +70,16 @@ public sealed class IdentityNotificationOperationsController(AppDbContext contex
         if (!int.TryParse(actorValue, out var actorId))
             return Unauthorized();
 
+        var operatorAccount = await context.Users.AsNoTracking()
+            .Where(user => user.Id == actorId && !user.IsArchived)
+            .Select(user => new { user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (operatorAccount?.AuthenticatorTwoFactorEnabled != true ||
+            !operatorAccount.LastTwoFactorVerifiedAt.HasValue ||
+            operatorAccount.LastTwoFactorVerifiedAt.Value < DateTime.UtcNow.AddMinutes(-15))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = "Fresh authenticator verification is required for dead-letter replay." });
+
         var reason = request.Reason.Trim();
         if (reason.Length is < 10 or > 500)
             return BadRequest(new { message = "Provide an operational reason between 10 and 500 characters." });
