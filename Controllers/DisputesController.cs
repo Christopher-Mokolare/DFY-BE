@@ -830,7 +830,7 @@ public class DisputesController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });
     }
 
-    private async Task JournalConfirmedRefundAsync(
+    private async System.Threading.Tasks.Task JournalConfirmedRefundAsync(
         Models.Refund refund,
         int? actorId,
         CancellationToken cancellationToken)
