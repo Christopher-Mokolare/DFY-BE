@@ -13,6 +13,7 @@ namespace DoForYou.API.Controllers;
 /// </summary>
 [ApiController]
 [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
 [Route("api/v1/admin/identity-notifications")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class IdentityNotificationOperationsController(AppDbContext context) : ControllerBase
