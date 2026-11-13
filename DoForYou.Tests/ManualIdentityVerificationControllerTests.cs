@@ -382,6 +382,38 @@ public sealed class ManualIdentityVerificationControllerTests
 
 
     [Fact]
+    public async Task Releasing_KYC_review_claim_requires_recent_authenticator_verification()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(115);
+        var admin = new User
+        {
+            Id = 915, FirstName = "Admin", LastName = "Reviewer", Email = "admin-reviewer@example.test",
+            NormalizedEmail = "admin-reviewer@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow.AddHours(-1)
+        };
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "pending",
+            FrontCiphertext = [1, 2, 3], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion,
+            ReviewClaimedByUserId = admin.Id, ReviewClaimExpiresAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        context.Users.AddRange(runner, admin);
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id)
+            .ReleaseReview(submission.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        Assert.Equal(admin.Id, submission.ReviewClaimedByUserId);
+        Assert.Empty(await context.AuditLogs.ToListAsync());
+        Assert.Empty(await context.IdentityVerificationEvents.ToListAsync());
+    }
+
+    [Fact]
     public async Task Duplicate_South_African_ID_is_flagged_for_investigation_not_auto_rejected()
     {
         await using var context = CreateContext();
