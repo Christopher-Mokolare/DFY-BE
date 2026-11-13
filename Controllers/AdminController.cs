@@ -1690,12 +1690,29 @@ public class AdminController : ControllerBase
             if (!interruptedPayoutExists)
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "A prior execution is marked in progress but has no confirmed queued payout. Do not retry automatically; reconcile the task and payout before recovery." });
 
+            await using var reconciliationTransaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync()
+                : null;
             var reconciledAt = DateTime.UtcNow;
-            var reconciled = await _context.FinancialApprovalRequests
-                .Where(item => item.Id == id && item.Status == "Executing")
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(item => item.Status, "Executed")
-                    .SetProperty(item => item.ExecutedAt, reconciledAt));
+            var reconciled = 0;
+            if (_context.Database.IsRelational())
+            {
+                reconciled = await _context.FinancialApprovalRequests
+                    .Where(item => item.Id == id && item.Status == "Executing")
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(item => item.Status, "Executed")
+                        .SetProperty(item => item.ExecutedAt, reconciledAt));
+            }
+            else
+            {
+                var trackedApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+                if (trackedApproval?.Status == "Executing")
+                {
+                    trackedApproval.Status = "Executed";
+                    trackedApproval.ExecutedAt = reconciledAt;
+                    reconciled = 1;
+                }
+            }
             if (reconciled == 1)
             {
                 _context.AuditLogs.Add(new Models.AuditLog
@@ -1709,6 +1726,8 @@ public class AdminController : ControllerBase
                     UserAgent = Request.Headers.UserAgent.ToString()
                 });
                 await _context.SaveChangesAsync();
+                if (reconciliationTransaction != null)
+                    await reconciliationTransaction.CommitAsync();
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Existing payout state reconciled; no second payout was submitted." });
             }
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Execution state changed during reconciliation. Refresh the approval record." });
@@ -1774,6 +1793,9 @@ public class AdminController : ControllerBase
         if (!released)
             return await ResetFinancialExecutionAsync(id, actorId.Value, "Escrow release did not produce a persisted payout record. No successful execution was recorded.");
 
+        await using var executionTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         var completedAt = DateTime.UtcNow;
         var updated = 0;
         if (_context.Database.IsRelational())
@@ -1811,12 +1833,17 @@ public class AdminController : ControllerBase
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await _context.SaveChangesAsync();
+        if (executionTransaction != null)
+            await executionTransaction.CommitAsync();
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Two-person-approved escrow release was executed and a payout was queued for the normal payout processor." });
     }
 
     private async Task<ActionResult<ApiResponse<bool>>> ResetFinancialExecutionAsync(int id, int actorId, string error)
     {
+        await using var resetTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
         if (_context.Database.IsRelational())
         {
             await _context.FinancialApprovalRequests
@@ -1845,6 +1872,8 @@ public class AdminController : ControllerBase
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await _context.SaveChangesAsync();
+        if (resetTransaction != null)
+            await resetTransaction.CommitAsync();
         return Conflict(new ApiResponse<bool> { Success = false, Message = error });
     }
 
