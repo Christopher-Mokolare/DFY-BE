@@ -908,6 +908,82 @@ public sealed class ManualIdentityVerificationController(
         return File(watermarked, contentType);
     }
 
+    // A KYC override can only reopen a rejected case for a fresh ordinary review.
+    // It cannot approve a runner, bypass document checks, or activate an account.
+    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycOverridePolicy)]
+    [HttpPost("admin/{id:int}/override/reopen")]
+    public async Task<ActionResult<ApiResponse<object>>> ReopenRejectedSubmission(
+        int id,
+        [FromBody] KycOverrideReopenRequest request,
+        CancellationToken cancellationToken)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<object> { Success = false, Message = "Fresh authenticator verification is required for a KYC override." });
+
+        var reason = request?.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        var submission = await context.IdentityVerificationSubmissions
+            .Include(item => item.User)
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (submission == null) return NotFound();
+        if (!string.Equals(submission.Status, "rejected", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Only a rejected identity submission can be reopened through this override. Approved submissions cannot be downgraded by this endpoint." });
+        if (submission.DocumentsPurgedAt.HasValue ||
+            submission.FrontCiphertext.Length == 0 ||
+            submission.FrontNonce.Length == 0 ||
+            submission.FrontTag.Length == 0)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The original evidence has been purged or is incomplete. The runner must submit fresh documents; an override cannot restore deleted evidence." });
+
+        var anotherPending = await context.IdentityVerificationSubmissions.AnyAsync(item =>
+            item.UserId == submission.UserId && item.Id != submission.Id && item.Status == "pending", cancellationToken);
+        if (anotherPending)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "This runner already has another pending identity review." });
+
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var oldStatus = submission.Status;
+        var oldReviewer = submission.ReviewedByUserId;
+        var now = DateTime.UtcNow;
+        submission.Status = "pending";
+        submission.ReviewedAt = null;
+        submission.ReviewedByUserId = null;
+        submission.ReviewClaimedByUserId = null;
+        submission.ReviewClaimHeartbeatAt = null;
+        submission.ReviewClaimExpiresAt = null;
+        submission.User.IdentityVerificationStatus = "pending";
+        submission.User.IdentityVerificationUpdatedAt = now;
+        context.IdentityVerificationEvents.Add(CreateEvent(
+            submission.UserId, "kyc_override_reopened", "pending", adminId.Value, submission.Id));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminKycOverrideReopened",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = submission.Id,
+            OldValues = $"status={oldStatus};reviewedBy={oldReviewer}",
+            NewValues = $"status=pending;reason={reason};normalReviewRequired=true",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submission.Id, submission.Status, reopenedAt = now },
+            Message = "Rejected KYC case reopened. A separate authorised reviewer must complete the normal document review; no runner approval was granted."
+        });
+    }
+
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
         [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
@@ -1339,6 +1415,12 @@ public sealed class SubmitManualIdentityVerificationRequest
     public IFormFile? FrontDocument { get; set; }
 
     public IFormFile? BackDocument { get; set; }
+}
+
+public sealed class KycOverrideReopenRequest
+{
+    [Required, StringLength(500, MinimumLength = 10)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed class ManualIdentityVerificationDecisionRequest
