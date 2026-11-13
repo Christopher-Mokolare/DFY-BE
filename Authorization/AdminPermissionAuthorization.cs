@@ -25,6 +25,8 @@ public static class AdminPermissionPolicies
     public const string TasksManagePolicy = "AdminPermission:" + TasksManage;
     public const string FinanceManagePolicy = "AdminPermission:" + FinanceManage;
     public const string AuditReadPolicy = "AdminPermission:" + AuditRead;
+    public const string DisputesManagePolicy = "AdminPermission:" + DisputesManage;
+    public const string ContentManagePolicy = "AdminPermission:" + ContentManage;
 
     public static readonly string[] All =
     [
