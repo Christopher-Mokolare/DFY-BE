@@ -428,6 +428,172 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Reads Paystack chargeback/dispute cases and matches them to local payment attempts.
+    /// This endpoint never uploads evidence, accepts a dispute, or changes a task/payout.
+    /// </summary>
+    [HttpGet("financial-reconciliation/paystack-disputes")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPaystackDisputeVisibility(
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null,
+        [FromQuery] int maxPages = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var end = to?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
+        var start = from?.ToUniversalTime() ?? end.AddDays(-30);
+        var now = DateTimeOffset.UtcNow;
+
+        if (end > now.AddMinutes(5))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The dispute end date cannot be in the future."
+            });
+        if (start > end)
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The dispute start date must be on or before the end date."
+            });
+        if ((end - start).TotalDays > 90)
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Use a date range of 90 days or less; run separate reports for longer periods."
+            });
+
+        var providerResult = await _paystackSettlementProvider.GetDisputesAsync(
+            start, end, maxPages, 100, cancellationToken);
+
+        if (!providerResult.Success)
+            return StatusCode(StatusCodes.Status502BadGateway, new ApiResponse<object>
+            {
+                Success = false,
+                Message = providerResult.Error ?? "Paystack dispute records could not be retrieved.",
+                Data = new
+                {
+                    generatedAtUtc = now,
+                    fromUtc = start,
+                    toUtc = end,
+                    provider = "Paystack",
+                    providerRecordsRetrieved = false
+                }
+            });
+
+        var references = providerResult.Disputes
+            .Select(dispute => dispute.TransactionReference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Distinct()
+            .ToArray();
+        var transactionIds = providerResult.Disputes
+            .Select(dispute => dispute.TransactionId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct()
+            .ToArray();
+
+        var localAttempts = references.Length == 0 && transactionIds.Length == 0
+            ? new List<Models.PaymentAttempt>()
+            : await _context.PaymentAttempts.AsNoTracking()
+                .Where(attempt => attempt.Provider == "Paystack" &&
+                    (references.Contains(attempt.Reference) ||
+                     (attempt.TransactionId != null && transactionIds.Contains(attempt.TransactionId))))
+                .ToListAsync(cancellationToken);
+
+        var disputeRows = providerResult.Disputes.Select(dispute =>
+        {
+            var matches = localAttempts.Where(attempt =>
+                string.Equals(attempt.Reference, dispute.TransactionReference, StringComparison.Ordinal) ||
+                (!string.IsNullOrWhiteSpace(attempt.TransactionId) &&
+                    string.Equals(attempt.TransactionId, dispute.TransactionId, StringComparison.Ordinal)))
+                .ToArray();
+
+            var findings = new List<string>();
+            if (!string.Equals(dispute.Currency, "ZAR", StringComparison.OrdinalIgnoreCase))
+                findings.Add("Provider dispute currency is not ZAR.");
+            if (matches.Length == 0)
+                findings.Add("Paystack dispute has no matching DFY payment attempt.");
+            if (matches.Length > 1)
+                findings.Add("Multiple DFY payment attempts match this Paystack dispute.");
+            if (matches.Any(attempt => attempt.Amount != dispute.Amount))
+                findings.Add("Paystack disputed amount differs from the DFY payment-attempt amount.");
+
+            var deadlineState = dispute.DueAt switch
+            {
+                null => "not_provided",
+                var due when due <= now => "overdue",
+                var due when due <= now.AddHours(24) => "due_within_24h",
+                _ => "due_later"
+            };
+
+            return new
+            {
+                dispute.Id,
+                dispute.Status,
+                dispute.Category,
+                dispute.TransactionId,
+                dispute.TransactionReference,
+                dispute.Currency,
+                dispute.Amount,
+                dispute.RefundAmount,
+                dispute.DueAt,
+                dispute.ResolvedAt,
+                dispute.CreatedAt,
+                dispute.UpdatedAt,
+                dispute.Domain,
+                deadlineState,
+                hoursUntilDue = dispute.DueAt.HasValue
+                    ? Math.Round((dispute.DueAt.Value - now).TotalHours, 2)
+                    : (double?)null,
+                matchingAttempts = matches.Select(attempt => new
+                {
+                    attempt.Id,
+                    attempt.TaskId,
+                    attempt.Reference,
+                    attempt.TransactionId,
+                    attempt.Amount,
+                    attempt.Status,
+                    attempt.CreatedAt,
+                    attempt.CompletedAt
+                }),
+                findings,
+                isConsistent = findings.Count == 0
+            };
+        }).ToList();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Message = providerResult.IsComplete
+                ? "Paystack dispute cases were retrieved and matched to DFY payment attempts. Review provider deadlines and preserve evidence."
+                : "Partial Paystack dispute data was retrieved. Narrow the date window and rerun before treating this report as complete.",
+            Data = new
+            {
+                generatedAtUtc = now,
+                fromUtc = start,
+                toUtc = end,
+                provider = "Paystack",
+                providerRecordsRetrieved = true,
+                reconciliationComplete = providerResult.IsComplete,
+                providerError = providerResult.Error,
+                disputeCount = disputeRows.Count,
+                overdueDisputes = disputeRows.Count(dispute => dispute.deadlineState == "overdue"),
+                disputesDueWithin24Hours = disputeRows.Count(dispute => dispute.deadlineState == "due_within_24h"),
+                unmatchedDisputes = disputeRows.Count(dispute => dispute.findings.Any(
+                    finding => finding.Contains("no matching", StringComparison.OrdinalIgnoreCase))),
+                disputes = disputeRows,
+                evidenceChecklist = new[]
+                {
+                    "Confirm this is a Paystack chargeback/dispute, not a DFY creator-runner task dispute.",
+                    "Preserve the task completion record, creator confirmation/dispute history and relevant in-app messages.",
+                    "Review the Paystack transaction reference, refund history and current payout state.",
+                    "Ensure unresolved chargebacks are escalated for manual review and do not trigger an ordinary runner payout.",
+                    "Submit evidence or a resolution only through an authorised Paystack operator after review."
+                },
+                note = "This endpoint is read-only. It does not expose customer email, phone, card data or bank details; it does not upload evidence, accept or resolve disputes, issue refunds, or mutate payout/task state. Paystack dispute deadlines are shown when supplied by the provider; a missing deadline must be checked in the Paystack Dashboard."
+            }
+        });
+    }
+
+    /// <summary>
     /// Read-only DFY ledger consistency report for paid/escrowed tasks.
     /// This endpoint never calls a payment provider, changes financial state, or triggers payouts.
     /// Provider settlement reconciliation must be performed separately against Paystack records.
