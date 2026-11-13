@@ -74,6 +74,193 @@ namespace DoForYou.API.Migrations
                     b.ToTable("AdminPermissionGrants");
                 });
 
+            modelBuilder.Entity("DoForYou.API.Models.FinancialAccount", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AccountType")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("ZAR");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("FinancialAccounts");
+
+                    b.HasData(
+                        new { Id = 1, AccountType = "Asset", Code = "1000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Paystack Clearing" },
+                        new { Id = 2, AccountType = "Asset", Code = "1100", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Merchant Bank Settlement" },
+                        new { Id = 3, AccountType = "Liability", Code = "2000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Escrow Liability" },
+                        new { Id = 4, AccountType = "Liability", Code = "2100", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Runner Payable" },
+                        new { Id = 5, AccountType = "Liability", Code = "2200", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Unallocated Paystack Receipts" },
+                        new { Id = 6, AccountType = "Revenue", Code = "4000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Platform Commission Revenue" },
+                        new { Id = 7, AccountType = "Expense", Code = "5000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Payment Processing Fees" });
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialJournal", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("ZAR");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("JournalNumber")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("ProviderReference")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<long?>("ReversalOfJournalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("JournalNumber")
+                        .IsUnique();
+
+                    b.HasIndex("ReversalOfJournalId")
+                        .IsUnique()
+                        .HasFilter("\\"ReversalOfJournalId\\" IS NOT NULL");
+
+                    b.HasIndex("SourceType", "SourceId", "EventType")
+                        .IsUnique();
+
+                    b.ToTable("FinancialJournals");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialJournalLine", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("Credit")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("ZAR");
+
+                    b.Property<decimal>("Debit")
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<long>("JournalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Memo")
+                        .HasMaxLength(240)
+                        .HasColumnType("character varying(240)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("JournalId", "LineNumber")
+                        .IsUnique();
+
+                    b.ToTable("FinancialJournalLines", t =>
+                        {
+                            t.HasCheckConstraint("CK_FinancialJournalLines_OneSidedPositiveAmount", "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))");
+                            t.HasCheckConstraint("CK_FinancialJournalLines_NonNegativeAmounts", "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0");
+                        });
+                });
+
             modelBuilder.Entity("DoForYou.API.Models.FinancialApprovalRequest", b =>
                 {
                     b.Property<int>("Id")
@@ -319,6 +506,45 @@ namespace DoForYou.API.Migrations
                     b.HasIndex("TargetUserId", "Status");
 
                     b.ToTable("SuperAdminChangeRequests");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialJournal", b =>
+                {
+                    b.HasOne("DoForYou.API.Models.FinancialJournal", "ReversalOfJournal")
+                        .WithOne()
+                        .HasForeignKey("DoForYou.API.Models.FinancialJournal", "ReversalOfJournalId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("ReversalOfJournal");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialJournalLine", b =>
+                {
+                    b.HasOne("DoForYou.API.Models.FinancialAccount", "Account")
+                        .WithMany("JournalLines")
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoForYou.API.Models.FinancialJournal", "Journal")
+                        .WithMany("Lines")
+                        .HasForeignKey("JournalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("Journal");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialAccount", b =>
+                {
+                    b.Navigation("JournalLines");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialJournal", b =>
+                {
+                    b.Navigation("Lines");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.AuditLog", b =>
