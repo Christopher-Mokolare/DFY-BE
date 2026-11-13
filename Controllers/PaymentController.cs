@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Models;
 using DoForYou.API.Services;
 
 namespace DoForYou.API.Controllers;
@@ -17,19 +18,22 @@ public class PaymentController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<PaymentController> _logger;
     private readonly INotificationService _notificationService;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
     public PaymentController(
         AppDbContext context,
         IPaymentProvider paymentProvider,
         IConfiguration configuration,
         ILogger<PaymentController> logger,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _paymentProvider = paymentProvider;
         _configuration = configuration;
         _logger = logger;
         _notificationService = notificationService;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     [HttpPost("initiate")]
@@ -206,7 +210,30 @@ public class PaymentController : ControllerBase
                     IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                     UserAgent = Request.Headers.UserAgent.ToString()
                 });
-                await _context.SaveChangesAsync();
+                var duplicateJournalExists = await _context.FinancialJournals.AnyAsync(journal =>
+                    journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
+                if (!duplicateJournalExists)
+                {
+                    await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                        EventType: "duplicate_payment_received",
+                        SourceType: "paystack_transaction",
+                        SourceId: tx,
+                        IdempotencyKey: $"paystack:unallocated:{tx}",
+                        Currency: "ZAR",
+                        Description: "Verified Paystack charge could not be allocated to a new task escrow; held as unallocated receipt.",
+                        OccurredAt: DateTime.UtcNow,
+                        Lines: new[]
+                        {
+                            new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                            new FinancialJournalLineDraft("2200", 0m, expectedAmount, "Unallocated Paystack receipt pending investigation")
+                        },
+                        Provider: "Paystack",
+                        ProviderReference: reference));
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
                 return Ok();
             }
 
@@ -263,19 +290,64 @@ public class PaymentController : ControllerBase
             }
         }
 
-        // Idempotent task activation.
-        // A verified charge may only advance a task that is still awaiting its
-        // first payment. Replayed success events must not resurrect cancelled
-        // or refunded tasks.
-        if (task.TaskStatus == "PendingPayment")
+        // A new verified charge is allocated to escrow only while the task is
+        // genuinely awaiting its first payment. Late/cancelled/otherwise unmatched
+        // receipts are held in an unallocated control account for investigation.
+        var existingChargeJournal = await _context.FinancialJournals.AnyAsync(journal =>
+            journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
+        if (!existingChargeJournal)
         {
-            task.PaymentStatus = "EscrowHeld";
-            task.TaskStatus = "Posted";
-            task.EscrowStatus = "held";
-            task.UpdatedAt = DateTime.UtcNow;
+            var canAllocateToEscrow = task.TaskStatus == "PendingPayment" &&
+                task.EscrowStatus == "none" &&
+                task.PaymentStatus is "Pending" or "PendingPayment";
+
+            if (canAllocateToEscrow)
+            {
+                task.PaymentStatus = "EscrowHeld";
+                task.TaskStatus = "Posted";
+                task.EscrowStatus = "held";
+                task.UpdatedAt = DateTime.UtcNow;
+
+                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                    EventType: "payment_collected",
+                    SourceType: "paystack_transaction",
+                    SourceId: tx,
+                    IdempotencyKey: $"paystack:charge:{tx}",
+                    Currency: "ZAR",
+                    Description: "Paystack charge independently verified and allocated to task escrow.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: new[]
+                    {
+                        new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                        new FinancialJournalLineDraft("2000", 0m, expectedAmount, "Task escrow liability")
+                    },
+                    Provider: "Paystack",
+                    ProviderReference: reference));
+            }
+            else
+            {
+                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                    EventType: "unallocated_payment_received",
+                    SourceType: "paystack_transaction",
+                    SourceId: tx,
+                    IdempotencyKey: $"paystack:unallocated:{tx}",
+                    Currency: "ZAR",
+                    Description: "Verified Paystack charge does not match a task awaiting first payment; held as an unallocated receipt.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: new[]
+                    {
+                        new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                        new FinancialJournalLineDraft("2200", 0m, expectedAmount, "Unallocated Paystack receipt pending investigation")
+                    },
+                    Provider: "Paystack",
+                    ProviderReference: reference));
+            }
+        }
+        else
+        {
+            await _context.SaveChangesAsync();
         }
 
-        await _context.SaveChangesAsync();
         return Ok();
     }
 
