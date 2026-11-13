@@ -1356,6 +1356,14 @@ public class AdminController : ControllerBase
             .Select(t => new { taskId = t.TaskId, description = t.TaskDescription, taskStatus = t.TaskStatus, payout = t.PayoutAmount, createdAt = t.CreatedAt })
             .ToListAsync();
 
+        var profileChanges = await _context.AuditLogs.AsNoTracking()
+            .Where(log => log.EntityType == "User" && log.EntityId == userId &&
+                log.Action == "AdminUserProfileCorrected")
+            .OrderByDescending(log => log.CreatedAt)
+            .Take(50)
+            .Select(log => new { log.CreatedAt, log.UserId, log.OldValues, log.NewValues, log.IpAddress })
+            .ToListAsync();
+
         return Ok(new ApiResponse<object>
         {
             Success = true,
@@ -1363,7 +1371,8 @@ public class AdminController : ControllerBase
             {
                 user = new { user.Id, user.Rating, user.CompletedTasks },
                 postedTasks,
-                acceptedTasks
+                acceptedTasks,
+                profileChanges
             }
         });
     }
