@@ -89,3 +89,34 @@ The SuperAdmin objectives are complete only when each applicable requirement has
 5. CI passing on the staging feature branches.
 6. Staging deployment and end-to-end verification.
 7. No production impact.
+## Current branch status — 2026-11-13
+
+This section supersedes the historical baseline and earlier remaining-work notes below. It reflects the implementation currently present on `feat/superadmin-platform-control`; it does not imply staging migration or production readiness.
+
+### Implemented on the feature branches
+
+- Admin directory, invitations, recipient acceptance, two-person SuperAdmin role changes, MFA enforcement and persisted granular permissions.
+- Separate KYC review, document-view and override permissions. Document access is fresh-MFA, reasoned, claim-bound, watermarked and audited. KYC override only reopens rejected cases with intact evidence for a normal review; it never directly approves a runner.
+- User suspension/reinstatement, archive/restore, session invalidation, verified contact/profile correction and audit history.
+- Duplicate-account investigation with independent outcomes and evidence references; account merge and financial/KYC record movement remain disabled.
+- Task incident reporting, evidence review, escrow incident holds, hold release with deadline extension, and formal dispute workflows.
+- Two-person exceptional escrow release, disputed runner release and creator refund approval/execution. Refund execution reconciles provider history before submission, reserves the task/refund record, rejects ambiguous provider results and does not blindly retry an unknown outcome. Escrow release queues the normal payout path and does not bypass the manual payout gate.
+- Audited categories, business rules and testimonial publishing; identity notification dead-letter visibility and reasoned replay; read-only Paystack settlement/financial diagnostics.
+
+### Still outstanding
+
+- Compensating financial adjustments: first establish a balanced double-entry ledger and reconciliation model. Existing task totals and wallet transaction history are not accepted as a ledger; do not synthesize balances or adjust wallet totals.
+- Full configuration control plane for task limits, commission, service areas, feature flags, maintenance mode and notification templates, with write-only secret rotation.
+- Versioned FAQ, Terms, Privacy and public legal-content publishing with review/approval and rollback.
+- Full service-health, application-error and background-job diagnostics with safe retry/cancel semantics.
+- POPIA data-subject request workflows, including identity verification, export/correction, retention/deletion, legal holds and financial-record exceptions. These require approved retention/legal rules before destructive actions are enabled.
+- Complete before/after audit coverage for every privileged mutation; database-role separation and owner-level recovery testing.
+- Time-limited privilege elevation, managed IP restrictions and hardware-backed MFA policy where supported.
+- Full negative authorization route matrix and staging migration/E2E verification.
+
+### Current validation and release boundary
+
+- Backend latest observed CI run `43406455910` was still in progress; do not treat it as green until terminal success.
+- Frontend latest observed CI run `43406396317` was pending. A small follow-up UI fix removes a duplicate profile-correction action and adds the same action to mobile user cards; that commit still needs CI validation.
+- Earlier frontend run #918 passed build, staging E2E and mobile E2E. Earlier backend run #962 passed build, EF model snapshot validation, tests and OpenAPI/contract checks.
+- EF migrations have not been applied or verified on staging. No production changes, merges, deployments, live payout tests or automatic payout enablement have been performed.
