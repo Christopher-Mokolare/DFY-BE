@@ -4,7 +4,7 @@ The first Super Admin is provisioned through the normal verified account and aut
 
 ## Preconditions
 
-1. Register or locate the existing `info@doforyou.co.za` account on the staging site.
+1. Register or locate the existing `admindfy@gmail.com` account on the staging site.
 2. Complete its normal email-verification link.
 3. Sign in and enroll authenticator MFA in Account > Security.
 4. Confirm the authenticator status reports enabled.
@@ -21,7 +21,7 @@ Never commit the secret, put it in a URL, paste it into a support ticket, or wri
 
 ## Execute once
 
-While signed in as the verified `info@doforyou.co.za` account, send an authenticated POST to:
+While signed in as the verified `admindfy@gmail.com` account, send an authenticated POST to:
 
 `/api/v1/admin/bootstrap/super-admin`
 
