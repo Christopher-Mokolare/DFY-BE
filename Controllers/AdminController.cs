@@ -1505,13 +1505,25 @@ public class AdminController : ControllerBase
             return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer eligible for exceptional escrow release." });
 
         var now = DateTime.UtcNow;
-        var changed = await _context.FinancialApprovalRequests
-            .Where(item => item.Id == id && item.Status == "Pending" && item.ExpiresAt > now && item.RequestedByUserId != actorId.Value)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Status, "Approved")
-                .SetProperty(item => item.DecidedByUserId, actorId.Value)
-                .SetProperty(item => item.DecidedAt, now)
-                .SetProperty(item => item.DecisionReason, decisionReason));
+        var changed = 0;
+        if (_context.Database.IsRelational())
+        {
+            changed = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id && item.Status == "Pending" && item.ExpiresAt > now && item.RequestedByUserId != actorId.Value)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Approved")
+                    .SetProperty(item => item.DecidedByUserId, actorId.Value)
+                    .SetProperty(item => item.DecidedAt, now)
+                    .SetProperty(item => item.DecisionReason, decisionReason));
+        }
+        else
+        {
+            approval.Status = "Approved";
+            approval.DecidedByUserId = actorId.Value;
+            approval.DecidedAt = now;
+            approval.DecisionReason = decisionReason;
+            changed = 1;
+        }
         if (changed != 1)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "The request changed while approval was being recorded. Refresh and review it again." });
 
@@ -1549,15 +1561,33 @@ public class AdminController : ControllerBase
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an approved financial action can be executed." });
 
         var now = DateTime.UtcNow;
-        var claim = await _context.FinancialApprovalRequests
-            .Where(item => item.Id == id &&
-                ((item.Status == "Approved" && item.ExpiresAt > now) ||
-                 (item.Status == "Executing" && item.ExecutionStartedAt < now.AddMinutes(-10))))
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Status, "Executing")
-                .SetProperty(item => item.ExecutionStartedAt, now)
-                .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1)
-                .SetProperty(item => item.LastExecutionError, (string?)null));
+        var claim = 0;
+        if (_context.Database.IsRelational())
+        {
+            claim = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id &&
+                    ((item.Status == "Approved" && item.ExpiresAt > now) ||
+                     (item.Status == "Executing" && item.ExecutionStartedAt < now.AddMinutes(-10))))
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Executing")
+                    .SetProperty(item => item.ExecutionStartedAt, now)
+                    .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1)
+                    .SetProperty(item => item.LastExecutionError, (string?)null));
+        }
+        else
+        {
+            var trackedApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+            if (trackedApproval != null &&
+                ((trackedApproval.Status == "Approved" && trackedApproval.ExpiresAt > now) ||
+                 (trackedApproval.Status == "Executing" && trackedApproval.ExecutionStartedAt < now.AddMinutes(-10))))
+            {
+                trackedApproval.Status = "Executing";
+                trackedApproval.ExecutionStartedAt = now;
+                trackedApproval.ExecutionAttempts++;
+                trackedApproval.LastExecutionError = null;
+                claim = 1;
+            }
+        }
         if (claim != 1)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "This action is already being executed, has expired, or is no longer eligible." });
 
@@ -1592,12 +1622,27 @@ public class AdminController : ControllerBase
             return await ResetFinancialExecutionAsync(id, actorId.Value, "Escrow release did not produce a persisted payout record. No successful execution was recorded.");
 
         var completedAt = DateTime.UtcNow;
-        var updated = await _context.FinancialApprovalRequests
-            .Where(item => item.Id == id && item.Status == "Executing")
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Status, "Executed")
-                .SetProperty(item => item.ExecutedAt, completedAt)
-                .SetProperty(item => item.LastExecutionError, (string?)null));
+        var updated = 0;
+        if (_context.Database.IsRelational())
+        {
+            updated = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id && item.Status == "Executing")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Executed")
+                    .SetProperty(item => item.ExecutedAt, completedAt)
+                    .SetProperty(item => item.LastExecutionError, (string?)null));
+        }
+        else
+        {
+            var trackedApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+            if (trackedApproval?.Status == "Executing")
+            {
+                trackedApproval.Status = "Executed";
+                trackedApproval.ExecutedAt = completedAt;
+                trackedApproval.LastExecutionError = null;
+                updated = 1;
+            }
+        }
         if (updated != 1)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Payout was queued, but approval status could not be finalized. Retry this same idempotent execution after reviewing task payout state." });
 
@@ -1619,11 +1664,23 @@ public class AdminController : ControllerBase
 
     private async Task<ActionResult<ApiResponse<bool>>> ResetFinancialExecutionAsync(int id, int actorId, string error)
     {
-        await _context.FinancialApprovalRequests
-            .Where(item => item.Id == id && item.Status == "Executing")
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(item => item.Status, "Approved")
-                .SetProperty(item => item.LastExecutionError, error));
+        if (_context.Database.IsRelational())
+        {
+            await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id && item.Status == "Executing")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Approved")
+                    .SetProperty(item => item.LastExecutionError, error));
+        }
+        else
+        {
+            var trackedApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+            if (trackedApproval?.Status == "Executing")
+            {
+                trackedApproval.Status = "Approved";
+                trackedApproval.LastExecutionError = error;
+            }
+        }
         _context.AuditLogs.Add(new Models.AuditLog
         {
             UserId = actorId,
