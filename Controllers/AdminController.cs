@@ -1399,7 +1399,7 @@ public class AdminController : ControllerBase
     {
         var actorId = GetAdminId();
         var actor = actorId.HasValue
-            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived)
+            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived && !user.IsSuspended)
                 .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
                 .FirstOrDefaultAsync()
             : null;
@@ -1435,47 +1435,40 @@ public class AdminController : ControllerBase
             });
         }
 
-        if (task.EscrowStatus != "held" &&
+        if (task.EscrowStatus != "held" ||
             task.PaymentStatus != "EscrowHeld")
         {
-            return Ok(new ApiResponse<bool>
+            return Conflict(new ApiResponse<bool>
             {
                 Success = false,
                 Data = false,
-                Message = "Task is not eligible for escrow release."
+                Message = "Task must have both held escrow and EscrowHeld payment status."
             });
         }
 
-        // IMPORTANT:
-        // Admin release must enter the same direct-to-bank payout
-        // pipeline as normal confirmation. It must NEVER set
-        // RunnerPaid directly.
-        var released = await _escrowService.ReleaseEscrowAsync(
-            task.Id,
-            force: true);
-
-        if (!released)
-        {
-            return Ok(new ApiResponse<bool>
+        var reason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool>
             {
                 Success = false,
                 Data = false,
-                Message = "Unable to initiate runner payout."
+                Message = "A reason between 10 and 500 characters is required."
             });
-        }
 
+        // A one-person SuperAdmin action must not move money. Keep this endpoint
+        // closed until the separate request/approval/execution workflow is available.
         await WriteAuditAsync(
-            "ForceReleaseEscrow",
+            "ForceReleaseEscrowBlockedPendingDualApproval",
             "Task",
             task.Id,
             null,
-            $"PayoutPending; reason={request.Reason.Trim()}");
+            $"No money moved; dual approval workflow required; reason={reason}");
 
-        return Ok(new ApiResponse<bool>
+        return Conflict(new ApiResponse<bool>
         {
-            Success = true,
-            Data = true,
-            Message = "Escrow released and runner payout queued for processing."
+            Success = false,
+            Data = false,
+            Message = "Forced escrow release is temporarily blocked. A two-person approval workflow is required; no payout was initiated."
         });
     }
 
