@@ -196,6 +196,28 @@ public class PaystackSettlementReconciliationTests
         Assert.Contains("partial", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Fact]
+    public async Task GetTransfersAsync_MarksResultsIncompleteWhenPaginationMetadataIsMissing()
+    {
+        var handler = new StubHandler(_ => JsonResponse("""
+            {
+              "status": true,
+              "message": "Transfers retrieved",
+              "data": []
+            }
+            """));
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetTransfersAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-14T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Contains("pagination metadata", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task GetTransfersAsync_WithoutSecretDoesNotCallProvider()
     {
