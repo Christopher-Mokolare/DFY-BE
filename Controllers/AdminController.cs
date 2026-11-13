@@ -1714,7 +1714,8 @@ public class AdminController : ControllerBase
                 task.TaskStatus == "AwaitingConfirmation" && task.EscrowStatus == "held" &&
                 task.PaymentStatus == "EscrowHeld" && task.PayoutAmount > 0),
             "refund_creator" => await _context.Tasks.AnyAsync(task =>
-                task.Id == approval.TaskId && task.TaskStatus is "AwaitingConfirmation" or "Completed" &&
+                task.Id == approval.TaskId &&
+                (task.TaskStatus == "AwaitingConfirmation" || task.TaskStatus == "Completed") &&
                 task.EscrowStatus == "disputed" && task.PaymentStatus == "DisputePending") &&
                 await _context.Disputes.AnyAsync(dispute => dispute.TaskId == approval.TaskId && dispute.Status == "Open") &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
