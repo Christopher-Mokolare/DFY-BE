@@ -23,7 +23,7 @@
 | Content | Testimonial CRUD/publish/reorder | Governed public-content management including FAQ/legal content | Partial |
 | Platform configuration | Task limits endpoint and environment-based integration configuration | Audited feature flags, service areas, fee policy, notification templates, maintenance controls and safe configuration UI | Partial |
 | Monitoring | Dashboard and notification dead-letter replay | Service health, errors, queue/job visibility, safe retry/cancel and operational reporting | Partial |
-| Audit/compliance | Audit-log records and viewer; identity retention service | Centralized immutable audit trail, before/after values, sensitive-document access events, POPIA workflows | Partial; immutability and completeness require verification |
+| Audit/compliance | Audit-log records and viewer; identity retention service; EF Core rejects audit-row updates/deletes | Centralized immutable audit trail, before/after values, sensitive-document access events, POPIA workflows | Partial; database-level append-only permissions and audit completeness still required |
 | Impersonation | No complete workflow established | Disabled by default; read-only, visible, reasoned and fully logged if introduced | Not implemented |
 | Tenant/subscription controls | DFY is currently a marketplace, not a multi-tenant subscription SaaS | Not a launch requirement | Out of scope |
 
@@ -34,7 +34,7 @@
 3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. The person must first register using their own account and verify their email; this is not an invitation workflow.
 4. Existing backend role mutation protections remain authoritative: actor must be a persisted SuperAdmin, must not be changing their own role, must have authenticator MFA enabled and recently verified, must supply a reason, and cannot modify a SuperAdmin through the one-person path.
 5. Strengthened Admin provisioning so archived or email-unverified accounts cannot receive Admin access.
-6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.
+6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests. Database-level protection against direct privileged SQL access is still required.
 
 ## Required remaining work before the SuperAdmin objectives can be called complete
 
