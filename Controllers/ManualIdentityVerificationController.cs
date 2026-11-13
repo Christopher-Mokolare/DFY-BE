@@ -644,9 +644,6 @@ public sealed class ManualIdentityVerificationController(
         await using var transaction = context.Database.IsRelational()
             ? await context.Database.BeginTransactionAsync(cancellationToken)
             : null;
-        await using var transaction = context.Database.IsRelational()
-            ? await context.Database.BeginTransactionAsync(cancellationToken)
-            : null;
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
         int affected;
@@ -706,6 +703,9 @@ public sealed class ManualIdentityVerificationController(
         if (adminId == null) return Unauthorized();
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "Complete administrator authenticator verification to keep this review claim active." });
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
         int affected;
