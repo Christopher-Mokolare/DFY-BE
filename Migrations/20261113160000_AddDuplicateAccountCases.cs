@@ -41,9 +41,11 @@ namespace DoForYou.API.Migrations
                 columns: new[] { "Status", "CreatedAt" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_DuplicateAccountCases_PrimaryUserId_CandidateUserId",
+                name: "IX_DuplicateAccountCases_OpenPair",
                 table: "DuplicateAccountCases",
-                columns: new[] { "PrimaryUserId", "CandidateUserId" });
+                columns: new[] { "PrimaryUserId", "CandidateUserId" },
+                unique: true,
+                filter: "\\"Status\\" = 'Open'");
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
