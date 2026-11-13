@@ -15,7 +15,7 @@
 |---|---|---|---|
 | Admin accounts | SuperAdmin-only role changes with a reason, fresh authenticator verification, session-stamp rotation; first SuperAdmin staging bootstrap; 48-hour single-use email invitations with hashed tokens, verified-email matching, recipient MFA, revoke/list, and audit events; two-person SuperAdmin grant/revoke requests with distinct requestor, target and approver, reasoned decisions, expiry and last-admin protection; persisted MFA enrollment policy on Admin endpoints | Dedicated admin directory; secure invitations; controlled promotion/revocation; MFA; session revocation; two-person SuperAdmin changes | Partial; invitation and two-person approval APIs/UI and backend Admin MFA policy implemented on feature branch, pending full CI and staging verification |
 | User lifecycle | Search/list (admin API), verify, role update, archive/restore, task history | Full lifecycle controls, duplicate-account resolution, account corrections, session revocation, security history | Partial |
-| KYC | Manual review queue, reviewer claims, document retrieval, decisions, review SLA and retention services | Permission-separated document access, access logging, override/reopen, SLA reporting and controlled retention | Partial; document-access audit requires verification |
+| KYC | Manual review queue, reviewer claims, document retrieval, decisions, review SLA and retention services | Permission-separated document access, access logging, override/reopen, SLA reporting and controlled retention | Partial; identity document access is now SuperAdmin-only, reasoned, and written to both identity events and the append-only audit log |
 | Tasks | List, verify/unverify, bulk verify, cancel/soft-delete, force-release escrow API | Full task lifecycle history, safe edits, stuck-task interventions and incident linkage | Partial |
 | Disputes | List and resolve | Full case lifecycle, evidence review, reopen and resolution history | Partial |
 | Payments | Payment overview, read-only reconciliation, Paystack settlement/transfer inspection, bank-account verification, refunds reconciliation; forced escrow release and financial dispute resolution restricted to SuperAdmin with fresh MFA | Audited financial operations, controlled refunds/adjustments, dual approval and payout controls | Partial; forced release/dispute actions now SuperAdmin-only, but independent dual approval for exceptional money movement/refunds remains required |
@@ -41,7 +41,7 @@
 10. Added two-person SuperAdmin grant/revoke requests with fresh MFA for both actors, a distinct approver who is neither requester nor target, recorded reasons, 24-hour expiry, security-stamp rotation and final-SuperAdmin protection.
 11. Added an API authorization policy that checks persisted account state, email verification, Admin role and authenticator MFA enrollment on Admin-only endpoints. Existing sensitive workflows continue to require a fresh 15-minute MFA step-up.
 12. Added the task category management page and navigation. Category create/edit/reorder/delete actions require reasons, are audited, and cannot delete a category still referenced by tasks.
-13. Restricted exceptional forced escrow release and financial dispute resolution to persisted SuperAdmins with fresh authenticator verification. This is a stronger role boundary, not a substitute for the still-required two-person financial approval workflow.
+13. Restricted exceptional forced escrow release and financial dispute resolution to persisted SuperAdmins with fresh authenticator verification. This is a stronger role boundary, not a substitute for the still-required two-person financial approval workflow.\n14. Restricted identity-document decryption to SuperAdmins with recent MFA and a mandatory case-specific reason; every view now records an identity event and a detailed append-only audit entry. The UI prompts for the reason and disables document review for non-SuperAdmins.
 
 ## Required remaining work before the SuperAdmin objectives can be called complete
 
@@ -55,7 +55,7 @@
 ### P1 — marketplace operations
 - Complete user lifecycle and account-security controls.
 - Complete task and dispute lifecycle management, including reasoned overrides and full history.
-- Separate KYC queue access, document viewing, review decisions and override permissions. Audit every document view.
+- Document viewing is now restricted to a SuperAdmin with recent MFA and a per-view reason; every view writes an identity event and an append-only audit record with actor, case, side, reason, IP and user agent. A dedicated KYC Reviewer permission set and separate override permission remain required to delegate document review safely.
 - Keep financial records immutable. Implement refund/adjustment operations only as compensating ledger entries; use dual approval above a configurable threshold. Preserve the manual payout default and existing automatic-payout opt-in.
 
 ### P1 — platform and content administration
