@@ -1,7 +1,7 @@
 # Paystack Marketplace Operations and Release Audit
 
-**Audit date:** 2026-10-14  
-**Repository:** `DoForYou-ZA/DFY-BE`  
+**Audit date:** 2026-11-13  
+**Repository:** `Christopher-Mokolare/DFY-BE`  
 **Scope:** Paystack collection, commission accounting, settlement, refunds, runner transfers, disputes, and release readiness.
 
 ## Executive decision
@@ -29,14 +29,23 @@ DFY's canonical task lifecycle must remain authoritative:
 | Webhook security | Payment controller validates `x-paystack-signature`; webhook paths process charge, refund and transfer events. | Implemented; run duplicate, invalid-signature, retry and out-of-order event tests. |
 | Refunds | Provider exposes refund creation and refund reconciliation; webhook handlers update refund/task/dispute states. | Implemented; end-to-end outcomes and accounting still require verification. |
 | Runner bank setup | Banking controller/provider supports bank listing, South African account validation and Paystack transfer-recipient references. | Implemented; verify eligibility, account ownership, failure handling and live/test environment separation. |
-| Runner transfers | `PaystackProvider.CreatePayoutAsync` submits ZAR transfers from Paystack balance; payout processor reconciles status and handles retryable failures, failures and reversals. | Implemented; Paystack requires sufficient balance for payout plus applicable transfer fee. |
+| Runner transfers | `PaystackProvider.CreatePayoutAsync` submits ZAR transfers from Paystack balance; payout processor reconciles status and handles retryable failures, failures and reversals. `GET /api/v1/admin/financial-reconciliation/paystack-transfers` reads Paystack transfers and matches them to DFY payout references/amounts. | Transfer submission and a bounded, read-only provider-to-ledger report are implemented. Provider fees are shown when returned but are not compared with a local fee ledger. Paystack requires sufficient balance for payout plus applicable transfer fee. |
 | 24-hour release | `Services/Background/EscrowReleaseService.cs` polls expired `AwaitingConfirmation` tasks and calls the race-safe escrow release operation. | Implemented in source; verify deployed service is running and test a real expiry through the controlled staging path. |
 | Commission | `EscrowService.CalculateCommission` calculates 15%, with a minimum commission of R5; task payout uses persisted `PayoutAmount`. | Verify all task creation/update paths persist matching commission and payout values and FE/mobile display the same runner net amount. |
 | Split settlement | The inspected `PaystackProvider` checkout payload initializes the full task budget and does not pass a Paystack `subaccount` or `split_code`. | No automatic Paystack Split Payments allocation was found in the inspected checkout code. Do not tell users the commission is already split to a separate bank account. |
-| Settlement reconciliation | Current inspected code focuses on transaction verification and transfers. A full Paystack Settlements API-to-DFY ledger reconciliation was not confirmed. | Release gate: reconcile settlement totals, fees, deductions, refunds, chargebacks and transaction references. |
+| Settlement reconciliation | `GET /api/v1/admin/financial-reconciliation/paystack-settlements` reads Paystack settlement batches and their transactions, matching provider references and amounts to DFY payment attempts/tasks. | Implemented as a bounded, read-only report. It flags mismatches and partial pagination; it does not mutate financial state. It still does not reconcile bank-statement credits, transfer fees, or legal escrow/safeguarding status. |
 | Production evidence | `DFY_RELEASE_READINESS_2026-10-09.md` explicitly leaves controlled Paystack payment/transfer validation and final refund/dispute reconciliation as release gates. | Production sign-off remains pending until evidence is attached. |
 
-## Commission and bank settlement: expected treatment
+
+## Read-only reconciliation endpoints
+
+- `GET /api/v1/admin/financial-reconciliation/paystack-settlements?from=...&to=...` — settlement batches, settlement transactions, matching DFY payment attempts/tasks, and unmatched successful local attempts.
+- `GET /api/v1/admin/financial-reconciliation/paystack-transfers?from=...&to=...` — transfer IDs/codes/references, provider status/amount/fee when returned, and matching DFY payout rows.
+
+Both reports are bounded to a maximum 90-day date window and provider pagination limits. A partial provider response is explicitly marked incomplete. Neither endpoint creates, retries, finalizes, reverses, marks paid, or otherwise changes financial records. An unmatched item is a review candidate, not proof that a bank credit is missing.
+
+The transfer report deliberately does not return beneficiary account details. The current DFY payout model does not persist Paystack transfer fees as a separate field, so provider fees are displayed for operator comparison but cannot yet be reconciled against a local fee ledger.
+\n## Commission and bank settlement: expected treatment
 
 For a R200 creator payment, the intended task allocation is:
 
