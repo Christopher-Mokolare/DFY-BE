@@ -1462,6 +1462,175 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/{id:int}/reconcile")]
+    public async Task<ActionResult<ApiResponse<bool>>> ReconcileFinancialApproval(int id, CancellationToken cancellationToken)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var approval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (approval == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
+        if (approval.Status != "Executing")
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an interrupted execution can be reconciled." });
+        if (!approval.DecidedByUserId.HasValue || approval.RequestedByUserId == approval.DecidedByUserId.Value ||
+            !await IsFreshActiveSuperAdminAsync(approval.DecidedByUserId.Value))
+            return Forbid();
+
+        if (approval.Action == "release_to_runner")
+        {
+            var task = await _context.Tasks.AsNoTracking().FirstOrDefaultAsync(item => item.Id == approval.TaskId, cancellationToken);
+            var payoutExists = task?.EscrowStatus == "released" && task.PaymentStatus == "EscrowReleased" &&
+                await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
+                    payout.Status != "Failed" && payout.Status != "Returned" && payout.Status != "Cancelled", cancellationToken);
+            if (!payoutExists)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "No persisted payout confirms the interrupted dispute release. Do not retry automatically; reconcile the task and payout manually." });
+        }
+        else if (approval.Action == "refund_creator")
+        {
+            var refund = await _context.Refunds.FirstOrDefaultAsync(item => item.TaskId == approval.TaskId, cancellationToken);
+            if (refund == null || string.IsNullOrWhiteSpace(refund.TransactionId))
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "No persisted refund reservation exists. Provider state must be checked manually; no resubmission is allowed." });
+
+            IReadOnlyList<RefundStatusResult> providerRefunds;
+            try
+            {
+                providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(refund.TransactionId, cancellationToken);
+            }
+            catch
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new ApiResponse<bool> { Success = false, Message = "Paystack refund state is unavailable. No refund was resubmitted; keep the task frozen and retry reconciliation later." });
+            }
+
+            var matches = providerRefunds.Where(item =>
+                item.Amount == refund.Amount &&
+                string.Equals(item.TransactionId, refund.TransactionId, StringComparison.Ordinal)).ToList();
+            if (matches.Count != 1 || providerRefunds.Count != 1)
+            {
+                refund.Status = "ReconciliationRequired";
+                refund.FailureReason = providerRefunds.Count == 0
+                    ? "No provider refund was found after an interrupted submission. Do not resubmit automatically."
+                    : "Provider refund history is ambiguous; manual reconciliation is required.";
+                refund.LastReconciledAt = DateTime.UtcNow;
+                approval.LastExecutionError = refund.FailureReason;
+                await _context.SaveChangesAsync(cancellationToken);
+                return Conflict(new ApiResponse<bool> { Success = false, Message = refund.FailureReason });
+            }
+
+            var providerRefund = matches[0];
+            refund.RefundId = providerRefund.RefundId;
+            refund.LastReconciledAt = DateTime.UtcNow;
+            var providerStatus = providerRefund.Status.Trim().ToLowerInvariant();
+            refund.Status = providerStatus switch
+            {
+                "processed" => "Complete",
+                "failed" => "Failed",
+                "needs-attention" => "PendingInvestigation",
+                "pending" or "processing" => "Submitted",
+                _ => "ReconciliationRequired"
+            };
+            if (refund.Status == "ReconciliationRequired")
+            {
+                refund.FailureReason = $"Unrecognized Paystack refund status '{providerRefund.Status}'. Manual reconciliation is required.";
+                approval.LastExecutionError = refund.FailureReason;
+                await _context.SaveChangesAsync(cancellationToken);
+                return Conflict(new ApiResponse<bool> { Success = false, Message = refund.FailureReason });
+            }
+
+            var refundTask = await _context.Tasks.FirstOrDefaultAsync(item => item.Id == approval.TaskId, cancellationToken);
+            if (refundTask == null)
+                return NotFound(new ApiResponse<bool> { Success = false, Message = "Refund task no longer exists." });
+            var disputes = await _context.Disputes.Where(item => item.TaskId == approval.TaskId && item.Status != "Resolved").ToListAsync(cancellationToken);
+            if (refund.Status == "Complete")
+            {
+                refund.CompletedAt ??= DateTime.UtcNow;
+                refundTask.PaymentStatus = "Refunded";
+                refundTask.TaskStatus = "Cancelled";
+                refundTask.EscrowStatus = "refunded";
+                refundTask.PayoutStatus = "NotStarted";
+                refundTask.PayoutReference = null;
+                refundTask.PayoutInitiatedAt = null;
+                refundTask.PayoutCompletedAt = null;
+                refundTask.PaidToRunnerAt = null;
+                foreach (var dispute in disputes)
+                {
+                    dispute.Status = "Resolved";
+                    dispute.ResolvedAt = DateTime.UtcNow;
+                }
+            }
+            else if (refund.Status == "Failed")
+            {
+                refund.FailureReason = "Paystack reports the refund failed; dispute reopened for review.";
+                refundTask.PaymentStatus = "DisputePending";
+                refundTask.TaskStatus = "Completed";
+                refundTask.EscrowStatus = "disputed";
+                foreach (var dispute in disputes)
+                {
+                    dispute.Status = "Open";
+                    dispute.ResolvedAt = null;
+                }
+            }
+            else
+            {
+                refundTask.PaymentStatus = "RefundPending";
+                refundTask.TaskStatus = "RefundPending";
+                refundTask.EscrowStatus = "refund_pending";
+                foreach (var dispute in disputes)
+                {
+                    dispute.Status = "RefundPending";
+                    dispute.ResolvedAt = null;
+                }
+            }
+            refundTask.UpdatedAt = DateTime.UtcNow;
+            if (refund.Status == "Failed")
+                approval.Status = "Failed";
+            else
+            {
+                approval.Status = "Executed";
+                approval.ExecutedAt = DateTime.UtcNow;
+            }
+            approval.LastExecutionError = refund.Status == "Failed" ? refund.FailureReason : null;
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId.Value,
+                Action = "FinancialRefundExecutionReconciled",
+                EntityType = "FinancialApprovalRequest",
+                EntityId = id,
+                OldValues = "Executing",
+                NewValues = $"status={approval.Status}; providerRefundId={refund.RefundId}; providerStatus={providerRefund.Status}; taskId={approval.TaskId}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"Paystack refund reconciled as {refund.Status}." });
+        }
+        else
+        {
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "This financial action does not have a supported interrupted-execution recovery path." });
+        }
+
+        approval.Status = "Executed";
+        approval.ExecutedAt = DateTime.UtcNow;
+        approval.LastExecutionError = null;
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialDisputeReleaseExecutionReconciled",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = id,
+            OldValues = "Executing",
+            NewValues = $"Executed from existing payout state; taskId={approval.TaskId}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Existing dispute-release payout state reconciled; no second payout was submitted." });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
     [HttpPost("financial-approvals/{id:int}/reject")]
     public async Task<ActionResult<ApiResponse<bool>>> RejectFinancialRequest(int id, [FromBody] AdminActionReasonRequest request)
     {
