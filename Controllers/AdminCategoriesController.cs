@@ -10,6 +10,7 @@ namespace DoForYou.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/categories")]
 [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
 public class AdminCategoriesController : ControllerBase
 {
     private readonly AppDbContext _context;
