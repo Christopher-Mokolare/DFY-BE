@@ -44,7 +44,8 @@ public sealed class RulesControllerTests
         var audit = await db.AuditLogs.SingleAsync();
         Assert.Equal("UpdateBusinessRule", audit.Action);
         Assert.Contains("Old name", audit.OldValues);
-        Assert.Contains("Rule updated", audit.NewValues);
+        Assert.Contains("Reviewed rule", audit.NewValues);
+        Assert.Contains("The rule needs a reviewed update.", audit.NewValues);
     }
 
     [Fact]
