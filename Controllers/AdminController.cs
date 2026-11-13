@@ -1517,7 +1517,7 @@ public class AdminController : ControllerBase
         var task = await _context.Tasks.FirstOrDefaultAsync(item => item.TaskId == taskId);
         if (task == null)
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
-        if (task.AcceptedByUserId == null || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld")
+        if (task.AcceptedByUserId == null || task.TaskStatus != "AwaitingConfirmation" || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld" || task.PayoutAmount <= 0)
             return Conflict(new ApiResponse<int> { Success = false, Message = "Only an assigned task with held escrow can enter exceptional release approval." });
 
         var now = DateTime.UtcNow;
@@ -1599,8 +1599,10 @@ public class AdminController : ControllerBase
         var taskIsStillEligible = await _context.Tasks.AnyAsync(task =>
             task.Id == approval.TaskId &&
             task.AcceptedByUserId != null &&
+            task.TaskStatus == "AwaitingConfirmation" &&
             task.EscrowStatus == "held" &&
-            task.PaymentStatus == "EscrowHeld");
+            task.PaymentStatus == "EscrowHeld" &&
+            task.PayoutAmount > 0);
         if (!taskIsStillEligible)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer eligible for exceptional escrow release." });
 
@@ -1657,6 +1659,10 @@ public class AdminController : ControllerBase
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
         if (approval.Status == "Executed")
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "This approved action has already been executed." });
+        if (!approval.DecidedByUserId.HasValue ||
+            !await IsFreshActiveSuperAdminAsync(approval.DecidedByUserId.Value))
+            return Forbid();
+
         if (approval.Status == "Executing")
         {
             var interruptedTask = await _context.Tasks.AsNoTracking().FirstOrDefaultAsync(item => item.Id == approval.TaskId);
