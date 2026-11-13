@@ -98,7 +98,7 @@ public sealed class SuperAdminInvitationsController(
         });
         await context.SaveChangesAsync(cancellationToken);
 
-        var acceptUrl = new Uri(frontendUri, $"/admin/invitation/accept?token={Uri.EscapeDataString(rawToken)}");
+        var acceptUrl = new Uri(frontendUri, $"/admin/invitation/accept#token={Uri.EscapeDataString(rawToken)}");
         var body = $"""
             You have been invited to administer the DoForYou marketplace.
 
