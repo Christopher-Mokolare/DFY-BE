@@ -332,6 +332,52 @@ public class DisputeLifecycleTests
         Assert.Equal("EscrowHeld", task.PaymentStatus);
     }
 
+    [Theory]
+    [InlineData("release_to_runner")]
+    [InlineData("refund_creator")]
+    public async System.Threading.Tasks.Task Single_SuperAdmin_cannot_execute_financial_dispute_resolution(string action)
+    {
+        using var context = CreateContext($"dispute-dual-approval-{action}-{Guid.NewGuid():N}");
+        var superAdmin = CreateUser(91, "admin", "superadmin@test.com");
+        superAdmin.Roles = "Admin,SuperAdmin";
+        superAdmin.AuthenticatorTwoFactorEnabled = true;
+        superAdmin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(92, "creator", "creator@test.com");
+        var runner = CreateUser(93, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "DisputePending", "disputed");
+        var dispute = new Dispute
+        {
+            Task = task,
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The completed task is disputed.",
+            Category = "Quality",
+            Status = "Open"
+        };
+        context.Users.AddRange(superAdmin, creator, runner);
+        context.Tasks.Add(task);
+        context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, superAdmin.Id);
+        using var request = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action,
+                resolution = "Financial decision requested after case review",
+                reason = "Independent approval is required before funds can move"
+            }));
+
+        var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Open", dispute.Status);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Empty(await context.Refunds.ToListAsync());
+        Assert.Empty(await context.Payouts.ToListAsync());
+    }
+
     private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
