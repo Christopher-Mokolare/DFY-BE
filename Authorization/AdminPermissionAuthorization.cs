@@ -11,6 +11,7 @@ public static class AdminPermissionPolicies
     public const string KycReview = "kyc.review";
     public const string KycViewDocuments = "kyc.view_documents";
     public const string KycOverride = "kyc.override";
+    public const string KycOverridePolicy = "AdminPermission:" + KycOverride;
     public const string DisputesManage = "disputes.manage";
     public const string TasksManage = "tasks.manage";
     public const string FinanceManage = "finance.manage";
