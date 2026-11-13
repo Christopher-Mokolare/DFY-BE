@@ -256,8 +256,24 @@ public class DisputesController : ControllerBase
     [HttpPatch("{id}/resolve")]
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = "SuperAdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] JsonElement request)
     {
+        var actorId = GetCurrentUserId();
+        var actor = actorId.HasValue
+            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived)
+                .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+                .FirstOrDefaultAsync()
+            : null;
+        var isFreshSuperAdmin = actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+            actor.AuthenticatorTwoFactorEnabled &&
+            actor.LastTwoFactorVerifiedAt.HasValue &&
+            actor.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+        if (!isFreshSuperAdmin)
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<bool> { Success = false, Message = "A SuperAdmin with fresh authenticator verification is required to resolve financial disputes." });
+
         var action = request.TryGetProperty("action", out var actionElement) ? actionElement.GetString()?.Trim() : null;
         var resolution = request.TryGetProperty("resolution", out var resolutionElement) ? resolutionElement.GetString()?.Trim() : null;
         var reason = request.TryGetProperty("reason", out var reasonElement) ? reasonElement.GetString()?.Trim() : null;
