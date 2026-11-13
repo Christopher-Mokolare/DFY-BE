@@ -1033,52 +1033,23 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/verify")]
-    public async Task<ActionResult<ApiResponse<bool>>> VerifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
+    public ActionResult<ApiResponse<bool>> VerifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
-        var task = await _context.Tasks
-            .Include(t => t.AcceptedByUser)
-            .FirstOrDefaultAsync(t => t.TaskId == taskId);
-        if (task == null)
-            return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
-
-        task.PaymentStatus = "EscrowHeld";
-        task.TaskStatus = "Posted";
-        task.EscrowStatus = "held";
-        task.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-        await WriteAuditAsync("VerifyPayment", "Task", task.Id, "PendingPayment", $"EscrowHeld; reason={request.Reason.Trim()}");
-
-        return Ok(new ApiResponse<bool>
+        return StatusCode(StatusCodes.Status410Gone, new ApiResponse<bool>
         {
-            Success = true,
-            Data = true,
-            Message = "Task verified successfully"
+            Success = false,
+            Message = "Manual payment verification is retired. Only a provider-verified payment webhook can place funds into escrow."
         });
     }
 
     [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/unverify")]
-    public async Task<ActionResult<ApiResponse<bool>>> UnverifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
+    public ActionResult<ApiResponse<bool>> UnverifyTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
-        var task = await _context.Tasks
-            .Include(t => t.AcceptedByUser)
-            .FirstOrDefaultAsync(t => t.TaskId == taskId);
-        if (task == null)
-            return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
-
-        task.PaymentStatus = "Pending";
-        task.TaskStatus = "PendingPayment";
-        task.UpdatedAt = DateTime.UtcNow;
-
-        await _context.SaveChangesAsync();
-        await WriteAuditAsync("UnverifyPayment", "Task", task.Id, "Completed", $"Pending; reason={request.Reason.Trim()}");
-
-        return Ok(new ApiResponse<bool>
+        return StatusCode(StatusCodes.Status410Gone, new ApiResponse<bool>
         {
-            Success = true,
-            Data = true,
-            Message = "Task unverified successfully"
+            Success = false,
+            Message = "Manual payment unverification is retired. Refunds and financial corrections must use the provider reconciliation and two-person approval workflows."
         });
     }
 
@@ -1510,26 +1481,91 @@ public class AdminController : ControllerBase
     [HttpPatch("tasks/bulk-verify")]
     public async Task<ActionResult<ApiResponse<bool>>> BulkVerifyTasks([FromBody] BulkVerifyRequest request)
     {
+        if (!string.Equals(Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE"), "true", StringComparison.OrdinalIgnoreCase))
+            return NotFound();
+
+        var reason = request?.Reason?.Trim();
+        var requestedIds = request?.TaskIds?.Distinct(StringComparer.Ordinal).ToArray() ?? Array.Empty<string>();
+        if (requestedIds.Length == 0 || string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "E2E payment simulation requires task IDs and a reason between 5 and 500 characters." });
+
         var tasks = await _context.Tasks
-            .Where(t => request.TaskIds.Contains(t.TaskId))
+            .Where(task => requestedIds.Contains(task.TaskId))
             .ToListAsync();
+        if (tasks.Count != requestedIds.Length ||
+            tasks.Any(task => task.TaskStatus != "PendingPayment" ||
+                task.PaymentStatus != "Pending" ||
+                (task.EscrowStatus != "pending" && task.EscrowStatus != "none") ||
+                task.Budget <= 0))
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only unpaid, newly created E2E tasks can receive a simulated payment." });
+
+        var alreadyAttempted = await _context.PaymentAttempts.AnyAsync(attempt => tasks.Select(task => task.Id).Contains(attempt.TaskId));
+        if (alreadyAttempted)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "An E2E payment attempt already exists for one or more selected tasks." });
+
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+        var ledger = new FinancialLedgerService(_context);
+        var transactionIds = new Dictionary<int, string>();
 
         foreach (var task in tasks)
         {
+            var transactionId = $"E2E-{Guid.NewGuid():N}";
+            var reference = $"E2E-{task.TaskId}";
+            transactionIds[task.Id] = transactionId;
+            _context.PaymentAttempts.Add(new PaymentAttempt
+            {
+                TaskId = task.Id,
+                Provider = "E2E",
+                Reference = reference,
+                Amount = task.Budget,
+                Status = "Completed",
+                TransactionId = transactionId,
+                CreatedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow
+            });
             task.PaymentStatus = "EscrowHeld";
             task.TaskStatus = "Posted";
             task.EscrowStatus = "held";
             task.UpdatedAt = DateTime.UtcNow;
+
+            await ledger.PostAsync(new FinancialJournalDraft(
+                EventType: "payment_collected",
+                SourceType: "e2e_transaction",
+                SourceId: transactionId,
+                IdempotencyKey: $"e2e:charge:{transactionId}",
+                Currency: "ZAR",
+                Description: "TEST-ONLY simulated payment for staging E2E. No Paystack request or money movement occurred.",
+                OccurredAt: DateTime.UtcNow,
+                Lines: new[]
+                {
+                    new FinancialJournalLineDraft("1000", task.Budget, 0m, "E2E test provider clearing"),
+                    new FinancialJournalLineDraft("2000", 0m, task.Budget, "E2E test task escrow liability")
+                },
+                Provider: "E2E",
+                ProviderReference: reference));
         }
 
         await _context.SaveChangesAsync();
+        if (transaction != null)
+            await transaction.CommitAsync();
 
         foreach (var task in tasks)
-            await WriteAuditAsync("BulkVerifyPayment", "Task", task.Id, "PendingPayment", $"EscrowHeld; reason={request.Reason.Trim()}");
+            await WriteAuditAsync(
+                "E2EPaymentSimulated",
+                "Task",
+                task.Id,
+                "PendingPayment",
+                $"TEST ONLY; transactionId={transactionIds[task.Id]}; amount={task.Budget:F2}; reason={reason}");
 
-        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"{tasks.Count} tasks verified" });
+        return Ok(new ApiResponse<bool>
+        {
+            Success = true,
+            Data = true,
+            Message = $"{tasks.Count} staging E2E task payment(s) simulated. No Paystack request or live money movement occurred."
+        });
     }
-
 
     [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("tasks/{taskId}/expire-confirmation")]
