@@ -184,6 +184,13 @@ public class PaymentController : ControllerBase
         // Persist the transaction ID returned by Paystack's independent lookup,
         // never an unverified ID copied from the webhook body.
         var tx = verified.TransactionId;
+        var paymentWasAlreadyPersisted =
+            (paymentAttempt?.Status == "Completed" && paymentAttempt.TransactionId == tx) ||
+            await _context.Payments.AnyAsync(payment =>
+                payment.TaskId == task.Id &&
+                payment.Provider == "Paystack" &&
+                payment.Status == "Completed" &&
+                payment.TransactionId == tx);
 
         if (paymentAttempt != null)
         {
@@ -295,7 +302,7 @@ public class PaymentController : ControllerBase
         // receipts are held in an unallocated control account for investigation.
         var existingChargeJournal = await _context.FinancialJournals.AnyAsync(journal =>
             journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
-        if (!existingChargeJournal)
+        if (!existingChargeJournal && !paymentWasAlreadyPersisted)
         {
             var canAllocateToEscrow = task.TaskStatus == "PendingPayment" &&
                 task.EscrowStatus == "none" &&
@@ -474,6 +481,56 @@ public class PaymentController : ControllerBase
                 IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                 UserAgent = Request.Headers.UserAgent.ToString()
             });
+
+            var originalChargeJournal = await _context.FinancialJournals
+                .Include(journal => journal.Lines)
+                    .ThenInclude(line => line.Account)
+                .FirstOrDefaultAsync(journal =>
+                    journal.SourceType == "paystack_transaction" &&
+                    journal.SourceId == refund.TransactionId &&
+                    journal.EventType == "payment_collected");
+            if (originalChargeJournal != null)
+            {
+                var existingReversal = await _context.FinancialJournals.AnyAsync(
+                    journal => journal.ReversalOfJournalId == originalChargeJournal.Id);
+                if (!existingReversal)
+                {
+                    var reversalLines = originalChargeJournal.Lines
+                        .OrderBy(line => line.LineNumber)
+                        .Select(line => new FinancialJournalLineDraft(
+                            line.Account.Code,
+                            line.Credit,
+                            line.Debit,
+                            "Reverse escrow collection for confirmed creator refund"))
+                        .ToArray();
+
+                    await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                        EventType: "reversal",
+                        SourceType: "refund",
+                        SourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        IdempotencyKey: $"paystack:refund:{refund.Id}:completed",
+                        Currency: "ZAR",
+                        Description: "Reverse the original verified Paystack collection after provider-confirmed full refund.",
+                        OccurredAt: DateTime.UtcNow,
+                        Lines: reversalLines,
+                        Provider: "Paystack",
+                        ProviderReference: refund.RefundId,
+                        ReversalOfJournalId: originalChargeJournal.Id));
+                }
+            }
+            else
+            {
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = null,
+                    Action = "PaystackRefundCompletedWithoutLedgerSource",
+                    EntityType = "Refund",
+                    EntityId = refund.Id,
+                    NewValues = "Provider confirmed refund, but original charge predates or is absent from the new financial journal. No historical journal entry was fabricated.",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
         }
         else if (eventName == "refund.failed" ||
                  string.Equals(providerStatus, "failed", StringComparison.OrdinalIgnoreCase))
