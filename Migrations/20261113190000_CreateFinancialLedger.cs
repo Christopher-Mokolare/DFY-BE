@@ -132,6 +132,14 @@ namespace DoForYou.API.Migrations
                 BEFORE UPDATE OR DELETE ON "FinancialJournalLines"
                 FOR EACH ROW EXECUTE FUNCTION prevent_financial_ledger_mutation();
 
+                CREATE TRIGGER "TR_FinancialJournals_NoTruncate"
+                BEFORE TRUNCATE ON "FinancialJournals"
+                FOR EACH STATEMENT EXECUTE FUNCTION prevent_financial_ledger_mutation();
+
+                CREATE TRIGGER "TR_FinancialJournalLines_NoTruncate"
+                BEFORE TRUNCATE ON "FinancialJournalLines"
+                FOR EACH STATEMENT EXECUTE FUNCTION prevent_financial_ledger_mutation();
+
                 CREATE OR REPLACE FUNCTION enforce_financial_journal_balance()
                 RETURNS trigger AS $$
                 DECLARE
@@ -176,6 +184,8 @@ namespace DoForYou.API.Migrations
             migrationBuilder.Sql("""
                 DROP TRIGGER IF EXISTS "TR_FinancialJournalLines_Balanced" ON "FinancialJournalLines";
                 DROP TRIGGER IF EXISTS "TR_FinancialJournals_Balanced" ON "FinancialJournals";
+                DROP TRIGGER IF EXISTS "TR_FinancialJournalLines_NoTruncate" ON "FinancialJournalLines";
+                DROP TRIGGER IF EXISTS "TR_FinancialJournals_NoTruncate" ON "FinancialJournals";
                 DROP TRIGGER IF EXISTS "TR_FinancialJournalLines_AppendOnly" ON "FinancialJournalLines";
                 DROP TRIGGER IF EXISTS "TR_FinancialJournals_AppendOnly" ON "FinancialJournals";
                 DROP FUNCTION IF EXISTS enforce_financial_journal_balance();
