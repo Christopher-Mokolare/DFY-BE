@@ -304,7 +304,7 @@ public class DisputesController : ControllerBase
         if (action is "refund_creator" or "release_to_runner")
         {
             financialApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item =>
-                item.TaskId == task.Id && item.Action == action &&
+                item.TaskId == task.Id && item.DisputeId == dispute.Id && item.Action == action &&
                 item.Status == "Approved" && item.ExpiresAt > DateTime.UtcNow);
             if (financialApproval == null || !financialApproval.DecidedByUserId.HasValue ||
                 financialApproval.RequestedByUserId == financialApproval.DecidedByUserId.Value)
@@ -331,7 +331,8 @@ public class DisputesController : ControllerBase
             {
                 claimedApproval = await _context.FinancialApprovalRequests
                     .Where(item => item.Id == financialApproval.Id && item.Status == "Approved" &&
-                        item.ExpiresAt > claimTime && item.RequestedByUserId != item.DecidedByUserId)
+                        item.DisputeId == dispute.Id && item.ExpiresAt > claimTime &&
+                        item.RequestedByUserId != item.DecidedByUserId)
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(item => item.Status, "Executing")
                         .SetProperty(item => item.ExecutionStartedAt, claimTime)
