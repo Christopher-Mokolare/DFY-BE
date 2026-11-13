@@ -1480,11 +1480,14 @@ public class AdminController : ControllerBase
 
 
     [HttpDelete("tasks/{taskId}")]
-    public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId)
+    public async Task<ActionResult<ApiResponse<bool>>> DeleteTask(string taskId, [FromBody] AdminActionReasonRequest request)
     {
         var task = await _context.Tasks.FirstOrDefaultAsync(t => t.TaskId == taskId);
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Task not found" });
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 5 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
 
         var hasFinancialActivity =
             task.PaymentStatus != "Pending" ||
@@ -1504,7 +1507,7 @@ public class AdminController : ControllerBase
         task.TaskStatus = "Cancelled";
         task.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
-        await WriteAuditAsync("SoftDeleteTask", "Task", task.Id, "Active", "Cancelled; admin deletion requested");
+        await WriteAuditAsync("SoftDeleteTask", "Task", task.Id, "Active", $"Cancelled; reason={reason}");
 
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Task archived" });
     }
