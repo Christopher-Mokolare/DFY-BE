@@ -86,6 +86,30 @@ public sealed class AdminMfaAuthorizationHandlerTests
         Assert.False(context.HasSucceeded);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Active_verified_SuperAdmin_with_MFA_passes_administrator_MFA_policy()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"superadmin-mfa-pass-{Guid.NewGuid():N}").Options;
+        await using var db = new AppDbContext(options);
+        db.Users.Add(new User
+        {
+            Id = 5, Email = "superadmin@example.com", NormalizedEmail = "superadmin@example.com",
+            Roles = "SuperAdmin", EmailVerified = true, AuthenticatorTwoFactorEnabled = true
+        });
+        await db.SaveChangesAsync();
+
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "5"),
+            new Claim(ClaimTypes.Role, "SuperAdmin")
+        }, "test"));
+        var context = new AuthorizationHandlerContext(new[] { new AdminMfaRequirement() }, principal, null);
+        await new AdminMfaAuthorizationHandler(db).HandleAsync(context);
+
+        Assert.True(context.HasSucceeded);
+    }
+
     private static AuthorizationHandlerContext CreateAuthorizationContext(int userId)
     {
         var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
