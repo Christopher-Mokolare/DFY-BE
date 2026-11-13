@@ -58,7 +58,7 @@ public sealed class IdentityReviewSlaService(
                 await QueueReviewerNotificationsAsync(db, $"identity-sla:{nearEvent}", "identity_review_near_deadline",
                     "DFY Document Review approaching deadline",
                     $"Review case {submission.Id} has used 75% of its one-business-day review target.",
-                    includeBackupReviewers: false, cancellationToken);
+                    includeBackupReviewers: false, cancellationToken: cancellationToken);
                 db.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, nearEvent, "alerted"));
                 await db.SaveChangesAsync(cancellationToken);
             }
@@ -83,7 +83,7 @@ public sealed class IdentityReviewSlaService(
                 await QueueReviewerNotificationsAsync(db, $"identity-sla:{escalationEvent}", "identity_review_escalated",
                     "DFY Document Review requires escalation",
                     $"Review case {submission.Id} has exceeded the internal two-business-day maximum. A configured backup reviewer must take ownership.",
-                    includeBackupReviewers: true, cancellationToken);
+                    includeBackupReviewers: true, cancellationToken: cancellationToken);
                 db.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, escalationEvent, "escalated"));
                 await db.SaveChangesAsync(cancellationToken);
             }
