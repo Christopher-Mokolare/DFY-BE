@@ -56,7 +56,7 @@ public sealed class SuperAdminChangesControllerTests
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task Last_active_SuperAdmin_cannot_be_removed()
+    public async System.Threading.Tasks.Task SuperAdmin_cannot_request_own_removal()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase($"superadmin-last-one-{Guid.NewGuid():N}").Options;
@@ -68,11 +68,11 @@ public sealed class SuperAdminChangesControllerTests
         var result = await controller.Create(new CreateSuperAdminChangeRequest
         {
             Action = "revoke",
-            TargetUserId = 2,
+            TargetUserId = 1,
             Reason = "Remove this redundant super administrator account"
         }, CancellationToken.None);
 
-        Assert.IsType<NotFoundObjectResult>(result);
+        Assert.IsType<BadRequestObjectResult>(result);
         Assert.Empty(context.SuperAdminChangeRequests);
     }
 
