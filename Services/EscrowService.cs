@@ -54,9 +54,13 @@ public class EscrowService : IEscrowService
             // Never create a new journal against an old task total or a retired
             // wallet/audit-log reference. The exact verified charge must already
             // exist in the new journal before any escrow liability can be released.
+            var isE2ETestMode = string.Equals(
+                Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
             var successfulCharges = await _context.PaymentAttempts
                 .Where(attempt => attempt.TaskId == task.Id &&
-                    attempt.Provider == "Paystack" &&
+                    (attempt.Provider == "Paystack" || (isE2ETestMode && attempt.Provider == "E2E")) &&
                     attempt.Status == "Completed" &&
                     attempt.TransactionId != null &&
                     attempt.Amount == task.Budget)
@@ -67,8 +71,11 @@ public class EscrowService : IEscrowService
                  successfulCharges[0].TransactionId != expectedPaymentTransactionId))
                 return false;
 
+            var expectedSourceType = successfulCharges[0].Provider == "Paystack"
+                ? "paystack_transaction"
+                : "e2e_transaction";
             var chargeIsJournalled = await _context.FinancialJournals.AnyAsync(journal =>
-                journal.SourceType == "paystack_transaction" &&
+                journal.SourceType == expectedSourceType &&
                 journal.SourceId == successfulCharges[0].TransactionId &&
                 journal.EventType == "payment_collected");
             if (!chargeIsJournalled)
