@@ -95,9 +95,10 @@ public sealed class AdminPermissionsController(AppDbContext context) : Controlle
             .Where(user => user.Id == request.UserId && !user.IsArchived && !user.IsSuspended)
             .Select(user => new { user.Id, user.Roles, user.EmailVerified, user.AuthenticatorTwoFactorEnabled })
             .FirstOrDefaultAsync(cancellationToken);
-        var isAdmin = target?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(role => string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase)) == true;
-        if (target == null || !isAdmin || !target.EmailVerified || !target.AuthenticatorTwoFactorEnabled)
+        var targetRoles = target?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        var isAdmin = targetRoles.Any(role => string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase));
+        var isSuperAdmin = targetRoles.Any(role => string.Equals(role, "SuperAdmin", StringComparison.OrdinalIgnoreCase));
+        if (target == null || !isAdmin || isSuperAdmin || !target.EmailVerified || !target.AuthenticatorTwoFactorEnabled)
             return Conflict(new { message = "Permissions can only be granted to active, verified Admin accounts with authenticator MFA enabled." });
 
         var expiredGrants = await context.AdminPermissionGrants
