@@ -350,6 +350,77 @@ namespace DoForYou.API.Migrations
                     b.ToTable("FinancialApprovalRequests");
                 });
 
+            modelBuilder.Entity("DoForYou.API.Models.FinancialReversalRequest", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime?>("DecidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DecidedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DecisionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("ExecutedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("ExecutedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<long>("OriginalJournalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("RequestedByUserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("OriginalJournalId", "Status")
+                        .IsUnique()
+                        .HasFilter("\\\"Status\\\" IN ('Pending', 'Approved', 'Executing')")
+                        .HasDatabaseName("IX_FinancialReversalRequests_OpenJournal");
+
+                    b.HasIndex("Status", "ExpiresAt")
+                        .HasDatabaseName("IX_FinancialReversalRequests_Status_ExpiresAt");
+
+                    b.ToTable("FinancialReversalRequests");
+                });
+
             modelBuilder.Entity("DoForYou.API.Models.AdminInvitation", b =>
                 {
                     b.Property<int>("Id")
@@ -517,6 +588,17 @@ namespace DoForYou.API.Migrations
                     b.HasIndex("TargetUserId", "Status");
 
                     b.ToTable("SuperAdminChangeRequests");
+                });
+
+            modelBuilder.Entity("DoForYou.API.Models.FinancialReversalRequest", b =>
+                {
+                    b.HasOne("DoForYou.API.Models.FinancialJournal", "OriginalJournal")
+                        .WithMany()
+                        .HasForeignKey("OriginalJournalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OriginalJournal");
                 });
 
             modelBuilder.Entity("DoForYou.API.Models.FinancialJournal", b =>
