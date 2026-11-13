@@ -76,6 +76,36 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
                 throw new InvalidOperationException("All journal lines must use the journal currency.");
         }
 
+        if (draft.ReversalOfJournalId.HasValue)
+        {
+            var original = await _context.FinancialJournals
+                .Include(journal => journal.Lines)
+                    .ThenInclude(line => line.Account)
+                .FirstOrDefaultAsync(journal => journal.Id == draft.ReversalOfJournalId.Value, cancellationToken);
+            if (original == null || original.Currency != draft.Currency)
+                throw new InvalidOperationException("The original journal for this reversal does not exist or has a different currency.");
+
+            var alreadyReversed = await _context.FinancialJournals.AnyAsync(
+                journal => journal.ReversalOfJournalId == original.Id,
+                cancellationToken);
+            if (alreadyReversed)
+                throw new InvalidOperationException("The original journal has already been reversed.");
+
+            var expectedReversal = original.Lines
+                .OrderBy(line => line.Account.Code, StringComparer.Ordinal)
+                .ThenBy(line => line.LineNumber)
+                .Select(line => (line.Account.Code, Debit: line.Credit, Credit: line.Debit))
+                .ToArray();
+            var actualReversal = draft.Lines
+                .OrderBy(line => line.AccountCode, StringComparer.Ordinal)
+                .ThenBy(line => line.Debit)
+                .ThenBy(line => line.Credit)
+                .Select(line => (line.AccountCode, line.Debit, line.Credit))
+                .ToArray();
+            if (!expectedReversal.SequenceEqual(actualReversal))
+                throw new InvalidOperationException("A reversal must exactly invert every line in the original journal.");
+        }
+
         await using var transaction = _context.Database.IsRelational() && _context.Database.CurrentTransaction == null
             ? await _context.Database.BeginTransactionAsync(cancellationToken)
             : null;
@@ -223,6 +253,7 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
             existing.SourceType != draft.SourceType ||
             existing.SourceId != draft.SourceId ||
             existing.Currency != draft.Currency ||
+            existing.ReversalOfJournalId != draft.ReversalOfJournalId ||
             !expected.SequenceEqual(actual))
             throw new InvalidOperationException("The idempotency key is already bound to a different financial posting.");
     }
