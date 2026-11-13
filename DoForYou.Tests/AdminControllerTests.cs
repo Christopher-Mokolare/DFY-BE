@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using DoForYou.API.Controllers;
+using DoForYou.API.DTOs;
 using DoForYou.API.Data;
 using DoForYou.API.Models;
 using Microsoft.AspNetCore.Http;
