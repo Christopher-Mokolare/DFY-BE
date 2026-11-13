@@ -351,7 +351,7 @@ public class DisputesController : ControllerBase
             _context.AuditLogs.Add(new Models.AuditLog
             {
                 UserId = actorId,
-                Action = "FinancialRefundExecutionStarted",
+                Action = action == "refund_creator" ? "FinancialRefundExecutionStarted" : "FinancialDisputeReleaseExecutionStarted",
                 EntityType = "FinancialApprovalRequest",
                 EntityId = financialApproval.Id,
                 OldValues = "Approved",
@@ -808,10 +808,13 @@ public class DisputesController : ControllerBase
         if (status == "Executed")
             approval.ExecutedAt = DateTime.UtcNow;
         approval.LastExecutionError = status == "Failed" ? details : null;
+        var auditAction = approval.Action == "refund_creator"
+            ? status == "Executed" ? "FinancialRefundExecuted" : "FinancialRefundExecutionFailed"
+            : status == "Executed" ? "FinancialDisputeReleaseExecuted" : "FinancialDisputeReleaseExecutionFailed";
         _context.AuditLogs.Add(new Models.AuditLog
         {
             UserId = actorId,
-            Action = status == "Executed" ? "FinancialRefundExecuted" : "FinancialRefundExecutionFailed",
+            Action = auditAction,
             EntityType = "FinancialApprovalRequest",
             EntityId = approval.Id,
             OldValues = "Executing",
