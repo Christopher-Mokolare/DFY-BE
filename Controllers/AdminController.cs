@@ -561,6 +561,7 @@ public class AdminController : ControllerBase
                 journal.Provider,
                 journal.ProviderReference,
                 journal.ReversalOfJournalId,
+                isReversed = _context.FinancialJournals.Any(other => other.ReversalOfJournalId == journal.Id),
                 journal.OccurredAt,
                 journal.RecordedAt,
                 lines = journal.Lines.OrderBy(line => line.LineNumber).Select(line => new
