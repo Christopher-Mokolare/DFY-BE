@@ -1719,6 +1719,11 @@ public class AdminController : ControllerBase
             var refund = await _context.Refunds.FirstOrDefaultAsync(item => item.TaskId == approval.TaskId, cancellationToken);
             if (refund == null || string.IsNullOrWhiteSpace(refund.TransactionId))
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "No persisted refund reservation exists. Provider state must be checked manually; no resubmission is allowed." });
+            if (refund.Provider != "Paystack" ||
+                refund.TransactionId != approval.PaymentTransactionId ||
+                refund.Amount != approval.Amount ||
+                !approval.DisputeId.HasValue)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The persisted refund does not match the approved dispute, Paystack transaction and amount. No state change or provider retry was made." });
 
             IReadOnlyList<RefundStatusResult> providerRefunds;
             try
@@ -1769,9 +1774,41 @@ public class AdminController : ControllerBase
             var refundTask = await _context.Tasks.FirstOrDefaultAsync(item => item.Id == approval.TaskId, cancellationToken);
             if (refundTask == null)
                 return NotFound(new ApiResponse<bool> { Success = false, Message = "Refund task no longer exists." });
-            var disputes = await _context.Disputes.Where(item => item.TaskId == approval.TaskId && item.Status != "Resolved").ToListAsync(cancellationToken);
+            var disputes = await _context.Disputes
+                .Where(item => item.Id == approval.DisputeId && item.TaskId == approval.TaskId && item.Status != "Resolved")
+                .ToListAsync(cancellationToken);
             if (refund.Status == "Complete")
             {
+                var originalChargeJournal = await _context.FinancialJournals
+                    .FirstOrDefaultAsync(journal =>
+                        journal.SourceType == "paystack_transaction" &&
+                        journal.SourceId == approval.PaymentTransactionId &&
+                        journal.EventType == "payment_collected",
+                        cancellationToken);
+                if (originalChargeJournal == null)
+                {
+                    refund.CompletedAt ??= DateTime.UtcNow;
+                    approval.LastExecutionError = "Paystack confirms the refund, but the approved original charge is absent from the new ledger. The task remains frozen; no historical entry was fabricated.";
+                    await _context.SaveChangesAsync(cancellationToken);
+                    return Conflict(new ApiResponse<bool>
+                    {
+                        Success = false,
+                        Message = approval.LastExecutionError
+                    });
+                }
+
+                await new FinancialLedgerService(_context).ReverseAsync(
+                    originalChargeJournal.Id,
+                    sourceType: "refund",
+                    sourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    idempotencyKey: $"paystack:refund:{refund.Id}:completed",
+                    description: "Reverse the original verified Paystack collection after provider-confirmed refund reconciliation.",
+                    provider: "Paystack",
+                    providerReference: refund.RefundId,
+                    createdByUserId: actorId.Value,
+                    occurredAt: DateTime.UtcNow,
+                    cancellationToken: cancellationToken);
+
                 refund.CompletedAt ??= DateTime.UtcNow;
                 refundTask.PaymentStatus = "Refunded";
                 refundTask.TaskStatus = "Cancelled";
