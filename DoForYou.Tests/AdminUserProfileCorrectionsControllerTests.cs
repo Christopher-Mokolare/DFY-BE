@@ -89,6 +89,33 @@ public sealed class AdminUserProfileCorrectionsControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Google_linked_account_email_cannot_be_changed_without_provider_relink()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"profile-correction-google-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var admin = NewUser(31, "admin@test.com", "Admin");
+        admin.Roles = "Admin";
+        var target = NewUser(32, "google@test.com", "Google");
+        target.GoogleSubject = "google-subject-32";
+        context.Users.AddRange(admin, target);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, admin.Id, new RecordingEmailSender(), new RecordingNotificationService());
+        var result = await controller.CorrectProfile(target.Id, new AdminUserProfileCorrectionRequest
+        {
+            FirstName = target.FirstName, LastName = target.LastName, Email = "new-google@test.com",
+            PhoneNumber = target.PhoneNumber, Address = target.Address,
+            Reason = "Attempted Google-linked email correction"
+        }, CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("google@test.com", target.Email);
+        Assert.Empty(context.AuditLogs);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Administrative_accounts_cannot_be_corrected_through_user_profile_workflow()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
