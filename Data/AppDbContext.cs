@@ -117,7 +117,7 @@ public class AppDbContext : DbContext
             entity.Property(account => account.AccountType).IsRequired();
             entity.Property(account => account.Currency).HasDefaultValue("ZAR");
             entity.HasData(
-                new FinancialAccount { Id = 1, Code = "1000", Name = "Paystack Clearing", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 1, Code = "1000", Name = "Payment Provider Clearing", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                 new FinancialAccount { Id = 2, Code = "1100", Name = "Merchant Bank Settlement", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                 new FinancialAccount { Id = 3, Code = "2000", Name = "Escrow Liability", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                 new FinancialAccount { Id = 4, Code = "2100", Name = "Runner Payable", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
