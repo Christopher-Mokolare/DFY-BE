@@ -1688,6 +1688,78 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/disputes/release/tasks/{taskId}")]
+    public async Task<ActionResult<ApiResponse<int>>> RequestDisputeReleaseApproval(string taskId, [FromBody] AdminActionReasonRequest request)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var reason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<int> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(item => item.TaskId == taskId);
+        if (task == null)
+            return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
+
+        var openDispute = await _context.Disputes.AnyAsync(item => item.TaskId == task.Id && item.Status == "Open");
+        var hasSuccessfulPayment = await _context.PaymentAttempts.AnyAsync(item =>
+            item.TaskId == task.Id && item.Provider == "Paystack" && item.Status == "Completed" &&
+            item.TransactionId != null && item.Amount == task.Budget);
+        var activePayout = await _context.Payouts.AnyAsync(item => item.TaskId == task.Id &&
+            (item.Status == "Pending" || item.Status == "Processing" || item.Status == "AwaitingFunds" ||
+             item.Status == "AwaitingEligibility" || item.Status == "AwaitingBankDetails" ||
+             item.Status == "Queued" || item.Status == "Initiated" || item.Status == "Completed"));
+
+        if (!openDispute || task.AcceptedByUserId == null ||
+            (task.TaskStatus != "AwaitingConfirmation" && task.TaskStatus != "Completed") ||
+            task.PaymentStatus != "DisputePending" || task.EscrowStatus != "disputed" ||
+            task.PayoutAmount <= 0 || !hasSuccessfulPayment || activePayout)
+            return Conflict(new ApiResponse<int> { Success = false, Message = "A dispute release requires an open dispute, assigned runner, verified paid charge and frozen escrow with no active payout." });
+
+        var now = DateTime.UtcNow;
+        var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
+            item.TaskId == task.Id && item.Action == "release_to_runner" &&
+            (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
+        if (hasOpenRequest)
+            return Conflict(new ApiResponse<int> { Success = false, Message = "An active dispute-release approval already exists for this task." });
+
+        await using var requestTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync()
+            : null;
+        var approval = new Models.FinancialApprovalRequest
+        {
+            TaskId = task.Id,
+            Action = "release_to_runner",
+            Reason = reason,
+            Status = "Pending",
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RequestedByUserId = actorId.Value,
+            RequestedAt = now,
+            ExpiresAt = now.AddMinutes(30)
+        };
+        _context.FinancialApprovalRequests.Add(approval);
+        await _context.SaveChangesAsync();
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialDisputeReleaseApprovalRequested",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = approval.Id,
+            NewValues = $"action=release_to_runner; taskId={task.Id}; expiresAt={approval.ExpiresAt:O}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+        if (requestTransaction != null)
+            await requestTransaction.CommitAsync();
+
+        return Ok(new ApiResponse<int> { Success = true, Data = approval.Id, Message = "Two-person dispute-release approval request created. No payout was queued." });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
     [HttpPost("financial-approvals/{id:int}/approve")]
     public async Task<ActionResult<ApiResponse<bool>>> ApproveFinancialRequest(int id, [FromBody] AdminActionReasonRequest request)
     {
@@ -1713,13 +1785,15 @@ public class AdminController : ControllerBase
                 task.Id == approval.TaskId && task.AcceptedByUserId != null &&
                 task.TaskStatus == "AwaitingConfirmation" && task.EscrowStatus == "held" &&
                 task.PaymentStatus == "EscrowHeld" && task.PayoutAmount > 0),
-            "refund_creator" => await _context.Tasks.AnyAsync(task =>
+            "refund_creator" or "release_to_runner" => await _context.Tasks.AnyAsync(task =>
                 task.Id == approval.TaskId &&
                 (task.TaskStatus == "AwaitingConfirmation" || task.TaskStatus == "Completed") &&
-                task.EscrowStatus == "disputed" && task.PaymentStatus == "DisputePending") &&
+                task.AcceptedByUserId != null && task.EscrowStatus == "disputed" &&
+                task.PaymentStatus == "DisputePending" && task.PayoutAmount > 0) &&
                 await _context.Disputes.AnyAsync(dispute => dispute.TaskId == approval.TaskId && dispute.Status == "Open") &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
-                    payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null) &&
+                    payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
+                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault()) &&
                 !await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
                     (payout.Status == "Pending" || payout.Status == "Processing" || payout.Status == "AwaitingFunds" ||
                      payout.Status == "AwaitingEligibility" || payout.Status == "AwaitingBankDetails" ||
@@ -1788,7 +1862,7 @@ public class AdminController : ControllerBase
         if (approval.Status == "Executed")
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "This approved action has already been executed." });
         if (approval.Action != "force_escrow_release")
-            return Conflict(new ApiResponse<bool> { Success = false, Message = "Refund approvals are executed only through the linked dispute-resolution workflow, which performs provider reconciliation before submission." });
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Dispute financial approvals are executed only through the linked dispute-resolution workflow, which revalidates the dispute and payout state." });
         if (!approval.DecidedByUserId.HasValue ||
             !await IsFreshActiveSuperAdminAsync(approval.DecidedByUserId.Value))
             return Forbid();
