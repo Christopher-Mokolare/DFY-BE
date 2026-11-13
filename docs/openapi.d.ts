@@ -1355,6 +1355,138 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/admin/super-admin/permissions/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/super-admin/permissions/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: {
+                    userId?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GrantAdminPermissionRequest"];
+                    "text/json": components["schemas"]["GrantAdminPermissionRequest"];
+                    "application/*+json": components["schemas"]["GrantAdminPermissionRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/super-admin/permissions/grants/{grantId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    grantId: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["RevokeAdminPermissionRequest"];
+                    "text/json": components["schemas"]["RevokeAdminPermissionRequest"];
+                    "application/*+json": components["schemas"]["RevokeAdminPermissionRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/register": {
         parameters: {
             query?: never;
@@ -7144,6 +7276,14 @@ export interface components {
             privacyVersion: string;
             marketingConsent?: boolean;
         };
+        GrantAdminPermissionRequest: {
+            /** Format: int32 */
+            userId?: number;
+            permissionKey: string;
+            reason: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
         IncidentEscrowHoldRequest: {
             reason?: string | null;
         };
@@ -7245,6 +7385,9 @@ export interface components {
         };
         RevokeAdminInvitationRequest: {
             reason?: string | null;
+        };
+        RevokeAdminPermissionRequest: {
+            reason: string;
         };
         SendMessageRequest: {
             content?: string | null;
