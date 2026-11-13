@@ -750,15 +750,23 @@ public sealed class ManualIdentityVerificationController(
         return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
-    [Authorize(Roles = "Admin")]
-    [Authorize(Policy = "AdminMfa")]
+    // Identity-document access is deliberately more restricted than ordinary KYC queue access.
+    // Only SuperAdmins with enrolled and recently verified authenticator MFA can decrypt a document.
+    [Authorize(Policy = "SuperAdminMfa")]
     [HttpGet("admin/{id:int}/document/{side}")]
-    public async Task<IActionResult> GetDocument(int id, string side, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetDocument(
+        int id,
+        string side,
+        [FromQuery] string reason,
+        CancellationToken cancellationToken)
     {
         var adminId = CurrentUserId();
         if (adminId == null) return Unauthorized();
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
-            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Complete administrator authenticator verification before viewing identity documents." });
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Complete a fresh SuperAdmin authenticator verification before viewing identity documents." });
+        reason = reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new { message = "A specific access reason between 10 and 500 characters is required for every identity-document view." });
 
         var submission = await context.IdentityVerificationSubmissions
             .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
@@ -809,6 +817,17 @@ public sealed class ManualIdentityVerificationController(
         if (!ReferenceEquals(watermarked, plaintext)) CryptographicOperations.ZeroMemory(plaintext);
 
         context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_document_accessed", "viewed", adminId.Value, submission.Id, side.ToLowerInvariant()));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityDocumentViewed",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = submission.Id,
+            OldValues = null,
+            NewValues = $"side={side.ToLowerInvariant()}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
         await context.SaveChangesAsync(cancellationToken);
         Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
         Response.Headers.Pragma = "no-cache";
