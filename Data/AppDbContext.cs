@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     public DbSet<Refund> Refunds { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; }
     public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
+    public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
@@ -84,6 +85,14 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<SuperAdminChangeRequest>()
+            .HasIndex(request => new { request.Status, request.ExpiresAt })
+            .HasDatabaseName("IX_SuperAdminChangeRequests_Status_ExpiresAt");
+
+        modelBuilder.Entity<SuperAdminChangeRequest>()
+            .HasIndex(request => new { request.TargetUserId, request.Status })
+            .HasDatabaseName("IX_SuperAdminChangeRequests_TargetUserId_Status");
+
         modelBuilder.Entity<AdminInvitation>()
             .HasIndex(invitation => invitation.TokenHash)
             .IsUnique()
