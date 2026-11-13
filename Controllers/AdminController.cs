@@ -633,9 +633,10 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
-    /// Read-only DFY ledger consistency report for paid/escrowed tasks.
-    /// This endpoint never calls a payment provider, changes financial state, or triggers payouts.
-    /// Provider settlement reconciliation must be performed separately against Paystack records.
+    /// Read-only task/payment-status consistency report for paid/escrowed tasks.
+    /// This is not the double-entry accounting ledger and never calls a payment provider,
+    /// changes financial state, or triggers payouts. Provider settlement reconciliation
+    /// must be performed separately against Paystack records.
     /// </summary>
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpGet("financial-reconciliation")]
@@ -742,7 +743,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>
         {
             Success = true,
-            Message = "Read-only DFY ledger consistency report. Paystack settlement is not verified and no financial state is changed.",
+            Message = "Read-only task/payment-status consistency report. This is not an accounting ledger; Paystack settlement is not verified and no financial state is changed.",
             Data = new
             {
                 generatedAtUtc = DateTime.UtcNow,
