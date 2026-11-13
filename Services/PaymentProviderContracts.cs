@@ -101,6 +101,27 @@ public sealed record PaystackTransferReadResult(
     IReadOnlyList<PaystackTransferRecord> Transfers,
     string? Error);
 
+public sealed record PaystackDisputeRecord(
+    string Id,
+    string Status,
+    string Category,
+    string TransactionId,
+    string TransactionReference,
+    string Currency,
+    decimal Amount,
+    decimal? RefundAmount,
+    DateTimeOffset? DueAt,
+    DateTimeOffset? ResolvedAt,
+    DateTimeOffset? CreatedAt,
+    DateTimeOffset? UpdatedAt,
+    string Domain);
+
+public sealed record PaystackDisputeReadResult(
+    bool Success,
+    bool IsComplete,
+    IReadOnlyList<PaystackDisputeRecord> Disputes,
+    string? Error);
+
 public interface IPaystackSettlementProvider
 {
     Task<PaystackSettlementReadResult> GetSettlementsAsync(
@@ -110,6 +131,13 @@ public interface IPaystackSettlementProvider
         CancellationToken cancellationToken = default);
 
     Task<PaystackTransferReadResult> GetTransfersAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int maxPages = 20,
+        int perPage = 100,
+        CancellationToken cancellationToken = default);
+
+    Task<PaystackDisputeReadResult> GetDisputesAsync(
         DateTimeOffset from,
         DateTimeOffset to,
         int maxPages = 20,
