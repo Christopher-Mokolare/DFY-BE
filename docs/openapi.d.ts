@@ -2887,6 +2887,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/duplicate-account-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: {
+                    status?: string;
+                    page?: number;
+                    pageSize?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CreateDuplicateAccountCaseRequest"];
+                    "text/json": components["schemas"]["CreateDuplicateAccountCaseRequest"];
+                    "application/*+json": components["schemas"]["CreateDuplicateAccountCaseRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/duplicate-account-cases/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ResolveDuplicateAccountCaseRequest"];
+                    "text/json": components["schemas"]["ResolveDuplicateAccountCaseRequest"];
+                    "application/*+json": components["schemas"]["ResolveDuplicateAccountCaseRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/identity-notifications/dead-letters": {
         parameters: {
             query?: never;
@@ -7236,6 +7337,14 @@ export interface components {
             email?: string | null;
             reason?: string | null;
         };
+        CreateDuplicateAccountCaseRequest: {
+            /** Format: int32 */
+            primaryUserId?: number;
+            /** Format: int32 */
+            candidateUserId?: number;
+            reason: string;
+            evidenceReference?: string | null;
+        };
         CreateSuperAdminChangeRequest: {
             action?: string | null;
             /** Format: int32 */
@@ -7405,6 +7514,10 @@ export interface components {
         ResetPasswordRequest: {
             email?: string | null;
             newPassword?: string | null;
+        };
+        ResolveDuplicateAccountCaseRequest: {
+            outcome: string;
+            resolutionNote: string;
         };
         ReviewTaskIncidentRequest: {
             status?: string | null;
