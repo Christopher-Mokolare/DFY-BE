@@ -216,6 +216,7 @@ public class DisputesController : ControllerBase
     [HttpGet]
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.DisputesManagePolicy)]
     public async Task<ActionResult<ApiResponse<object>>> GetAllDisputes(
         [FromQuery] string? status = null,
         [FromQuery] int page = 1,
