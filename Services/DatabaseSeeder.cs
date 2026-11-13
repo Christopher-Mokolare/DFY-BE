@@ -27,43 +27,8 @@ public static class DatabaseSeeder
             await context.SaveChangesAsync();
         }
 
-        // Seed Admin User
-        if (!await context.Users.AnyAsync(u => u.Email == "admin@doforyou.com"))
-        {
-            var adminUser = new User
-            {
-                FirstName = "Admin",
-                LastName = "User",
-                Email = "admin@doforyou.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123"),
-                IsVerified = true,
-                ProfileCompleted = true,
-                EmailVerified = true,
-                PhoneVerified = true,
-                Roles = "Admin",
-                UserType = "Admin",
-                PhoneNumber = "0123456789",
-                IdNumber = "0000000000000",
-                Address = "DoForYou HQ",
-                DateOfBirth = new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)
-            };
-
-            context.Users.Add(adminUser);
-            await context.SaveChangesAsync();
-        }
-        else
-        {
-            // Patch existing admin to have full profile
-            var admin = await context.Users.FirstAsync(u => u.Email == "admin@doforyou.com");
-            if (!admin.ProfileCompleted || string.IsNullOrEmpty(admin.IdNumber))
-            {
-                admin.IdNumber = admin.IdNumber ?? "0000000000000";
-                admin.Address = admin.Address ?? "DoForYou HQ";
-                admin.DateOfBirth = admin.DateOfBirth ?? new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-                admin.ProfileCompleted = true;
-                await context.SaveChangesAsync();
-            }
-        }
+        // Administrative accounts are provisioned only through the explicit, audited bootstrap flow.
+        // Never create a privileged account or password from source-controlled seed data.
 
         // Seed Test User
         if (!await context.Users.AnyAsync(u => u.Email == "2co.mokolare@gmail.com"))
