@@ -367,6 +367,91 @@ public class ScenarioTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Paystack_payout_success_and_reversal_post_balanced_ledger_entries()
+    {
+        using var context = CreateContext(nameof(Paystack_payout_success_and_reversal_post_balanced_ledger_entries));
+        var creator = CreateUser(41, "creator", true, "payout-ledger-creator@test.com");
+        var runner = CreateUser(42, "runner", true, "payout-ledger-runner@test.com");
+        context.Users.AddRange(creator, runner);
+        var task = new TaskEntity
+        {
+            Id = 8842,
+            TaskId = "DFY-PAYOUT-LEDGER-1",
+            TaskDescription = "Payout journal integration test",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "EscrowReleased",
+            EscrowStatus = "released",
+            TaskStatus = "PayoutPending",
+            PayoutStatus = "Pending",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var payout = new Payout
+        {
+            TaskId = task.Id,
+            RunnerId = runner.Id,
+            Amount = task.PayoutAmount,
+            Status = "Pending",
+            Provider = "Paystack",
+            MerchantReference = "DFY-PAYOUT-DFY-PAYOUT-LEDGER-1",
+            CreatedAt = DateTime.UtcNow,
+            Task = task,
+            Runner = runner
+        };
+        context.Tasks.Add(task);
+        context.Payouts.Add(payout);
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected", "paystack_transaction", "TX-PAYOUT-LEDGER-1",
+            "paystack:charge:TX-PAYOUT-LEDGER-1", "ZAR", "Verified task charge",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", 200m, 0m),
+                new FinancialJournalLineDraft("2000", 0m, 200m)
+            }, "Paystack", "PAY-REF-LEDGER-1"));
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "escrow_released", "task", task.Id.ToString(),
+            $"escrow:release:task:{task.Id}", "ZAR", "Task escrow release",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("2000", 200m, 0m),
+                new FinancialJournalLineDraft("2100", 0m, 170m),
+                new FinancialJournalLineDraft("4000", 0m, 30m)
+            }));
+
+        var controller = CreatePaymentController(context);
+        var success = await InvokeWebhook(controller,
+            """{"event":"transfer.success","data":{"reference":"DFY-PAYOUT-DFY-PAYOUT-LEDGER-1","transfer_code":"TRF-LEDGER-1","amount":17000,"currency":"ZAR"}}""");
+        Assert.IsType<OkResult>(success);
+        Assert.Equal("Completed", payout.Status);
+        var payoutJournal = await context.FinancialJournals
+            .SingleAsync(journal => journal.EventType == "runner_payout_completed");
+        Assert.Equal(170m, await payoutJournal.Lines.SumAsync(line => line.Debit));
+        Assert.Equal(170m, await payoutJournal.Lines.SumAsync(line => line.Credit));
+
+        var reversed = await InvokeWebhook(controller,
+            """{"event":"transfer.reversed","data":{"reference":"DFY-PAYOUT-DFY-PAYOUT-LEDGER-1","transfer_code":"TRF-LEDGER-1","amount":17000,"currency":"ZAR"}}""");
+        Assert.IsType<OkResult>(reversed);
+        Assert.Equal("Returned", payout.Status);
+        var reversal = await context.FinancialJournals
+            .SingleAsync(journal => journal.EventType == "reversal" && journal.ReversalOfJournalId == payoutJournal.Id);
+        Assert.Equal(170m, await reversal.Lines.SumAsync(line => line.Debit));
+        Assert.Equal(170m, await reversal.Lines.SumAsync(line => line.Credit));
+        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2100"));
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Task_detail_resolves_legacy_numeric_id_but_returns_canonical_public_id()
     {
         using var context = CreateContext(nameof(Task_detail_resolves_legacy_numeric_id_but_returns_canonical_public_id));
