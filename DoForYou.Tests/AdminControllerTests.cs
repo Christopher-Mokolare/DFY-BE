@@ -98,6 +98,58 @@ public class AdminControllerTests
         Assert.Equal("both", byId[both.Id].GetType().GetProperty("userType")!.GetValue(byId[both.Id]));
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task SuperAdmin_account_directory_requires_persisted_SuperAdmin_role()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"superadmin-directory-denied-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(61, "Admin");
+        context.Users.Add(actor);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        var result = await controller.GetSuperAdminAccounts();
+
+        Assert.IsType<ForbidResult>(result.Result);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task SuperAdmin_account_directory_returns_admin_and_candidate_accounts()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"superadmin-directory-allowed-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(62, "Admin,SuperAdmin");
+        var admin = CreateUser(63, "Admin");
+        admin.Email = "admin@example.test";
+        var candidate = CreateUser(64, "User");
+        candidate.Email = "candidate@example.test";
+        var archived = CreateUser(65, "Admin");
+        archived.IsArchived = true;
+        context.Users.AddRange(actor, admin, candidate, archived);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        var result = await controller.GetSuperAdminAccounts(search: "example.test");
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var response = ok.Value!;
+        var data = response.GetType().GetProperty("Data")!.GetValue(response)!;
+        var accounts = ((System.Collections.IEnumerable)data.GetType().GetProperty("accounts")!.GetValue(data)!)
+            .Cast<object>().ToArray();
+
+        Assert.Equal(2, accounts.Length);
+        Assert.Contains(accounts, account =>
+            (int)account.GetType().GetProperty("id")!.GetValue(account)! == admin.Id &&
+            (bool)account.GetType().GetProperty("isAdministrator")!.GetValue(account)!);
+        Assert.Contains(accounts, account =>
+            (int)account.GetType().GetProperty("id")!.GetValue(account)! == candidate.Id &&
+            !(bool)account.GetType().GetProperty("isAdministrator")!.GetValue(account)!);
+    }
+
     private static User CreateUser(int id, string roles) => new()
     {
         Id = id,
