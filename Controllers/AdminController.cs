@@ -983,7 +983,7 @@ public class AdminController : ControllerBase
 
             return Ok(new ApiResponse<object> { Success = true, Data = new { journalId = reversal.Id }, Message = "The exact journal reversal was posted. Original journal entries remain unchanged." });
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is InvalidOperationException or DbUpdateException)
         {
             if (transaction != null)
                 await transaction.RollbackAsync(cancellationToken);
