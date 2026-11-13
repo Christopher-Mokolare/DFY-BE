@@ -1640,10 +1640,10 @@ public class AdminController : ControllerBase
             task.TaskStatus is not ("AwaitingConfirmation" or "Completed") ||
             task.PayoutStatus == "Completed" || activePayout ||
             successfulPayment == null || string.IsNullOrWhiteSpace(successfulPayment.TransactionId) ||
-            successfulPayment.Amount <= 0 || task.Budget <= 0)
+            successfulPayment.Amount <= 0 || task.Budget <= 0 || successfulPayment.Amount != task.Budget)
             return Conflict(new ApiResponse<int> { Success = false, Message = "A refund approval requires an open dispute, a frozen unpaid task, a verified Paystack charge and no existing payout." });
 
-        if (existingRefund != null && existingRefund.Status is "Complete" or "Submitted" or "Pending" or "PendingInvestigation")
+        if (existingRefund != null && existingRefund.Status is "Complete" or "Submitted" or "Pending" or "PendingInvestigation" or "ReconciliationRequired")
             return Conflict(new ApiResponse<int> { Success = false, Message = "A refund already exists or is awaiting provider action; reconcile it before creating another approval." });
 
         var now = DateTime.UtcNow;
