@@ -30,7 +30,8 @@ public sealed class AdminMfaAuthorizationHandler(AppDbContext context)
             .FirstOrDefaultAsync();
 
         var hasAdminRole = account?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Any(role => string.Equals(role.Trim(), "Admin", StringComparison.OrdinalIgnoreCase)) == true;
+            .Any(role => string.Equals(role.Trim(), "Admin", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true;
         if (hasAdminRole && account?.EmailVerified == true && account.AuthenticatorTwoFactorEnabled)
             authorizationContext.Succeed(requirement);
     }
