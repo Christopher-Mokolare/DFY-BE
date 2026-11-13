@@ -361,6 +361,10 @@ public class AdminControllerTests
         Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalRequested");
         Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalGranted");
         Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalExecuted");
+
+        var repeatedExecution = await CreateController(context, requester.Id, escrow).ExecuteFinancialApproval(requestId);
+        Assert.IsType<OkObjectResult>(repeatedExecution.Result);
+        Assert.Single(context.Payouts);
     }
 
     [Fact]
