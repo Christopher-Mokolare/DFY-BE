@@ -18,6 +18,7 @@ namespace DoForYou.API.Migrations
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                     Action = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     TaskId = table.Column<int>(type: "integer", nullable: false),
+                    DisputeId = table.Column<int>(type: "integer", nullable: true),
                     PaymentTransactionId = table.Column<string>(type: "character varying(120)", maxLength: 120, nullable: false),
                     Amount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     Reason = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
