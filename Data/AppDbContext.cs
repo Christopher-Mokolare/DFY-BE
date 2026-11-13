@@ -25,6 +25,7 @@ public class AppDbContext : DbContext
     public DbSet<Payout> Payouts { get; set; } = null!;
     public DbSet<Refund> Refunds { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
@@ -83,6 +84,15 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<AdminInvitation>()
+            .HasIndex(invitation => invitation.TokenHash)
+            .IsUnique()
+            .HasDatabaseName("IX_AdminInvitations_TokenHash");
+
+        modelBuilder.Entity<AdminInvitation>()
+            .HasIndex(invitation => new { invitation.NormalizedEmail, invitation.Status })
+            .HasDatabaseName("IX_AdminInvitations_NormalizedEmail_Status");
+
         modelBuilder.Entity<IdentityNotificationOutbox>()
             .HasIndex(item => item.IdempotencyKey)
             .IsUnique()
