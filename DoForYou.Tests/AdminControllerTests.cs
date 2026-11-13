@@ -20,6 +20,7 @@ public class AdminControllerTests
         await using var context = new AppDbContext(options);
         var actor = CreateUser(42, "Admin");
         var target = CreateUser(43, "User");
+        target.EmailVerified = true;
         target.SecurityStamp = "target-session-stamp";
         context.Users.AddRange(actor, target);
         await context.SaveChangesAsync();
@@ -59,6 +60,31 @@ public class AdminControllerTests
         Assert.Equal("Admin", target.Roles);
         Assert.NotEqual("target-session-stamp", target.SecurityStamp);
         Assert.Equal("UpdateUserRole", Assert.Single(context.AuditLogs).Action);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task SuperAdmin_cannot_grant_Admin_access_to_unverified_email()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-role-unverified-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(44, "Admin,SuperAdmin");
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var target = CreateUser(45, "User");
+        target.EmailVerified = false;
+        context.Users.AddRange(actor, target);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        using var request = JsonDocument.Parse("""{"role":"Admin","reason":"Grant verified admin access"}""");
+
+        var result = await controller.UpdateUserRole(target.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("User", target.Roles);
+        Assert.Empty(context.AuditLogs);
     }
 
     [Fact]
