@@ -50,6 +50,7 @@ public sealed class AdminUserProfileCorrectionsControllerTests
         Assert.Equal("new@test.com", target.Email);
         Assert.False(target.EmailVerified);
         Assert.NotNull(target.EmailVerificationToken);
+        Assert.Equal(1, target.EmailVerificationSendCount);
         Assert.NotEqual("old-security-stamp", target.SecurityStamp);
         Assert.Equal("0825550101", target.PhoneNumber);
         Assert.False(target.PhoneVerified);
@@ -60,6 +61,36 @@ public sealed class AdminUserProfileCorrectionsControllerTests
         Assert.Contains(context.AuditLogs, log => log.Action == "AdminUserProfileCorrected");
         Assert.Equal(2, email.Messages.Count);
         Assert.Single(notifications.Notifications);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Profile_email_correction_respects_existing_verification_delivery_limit()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"profile-correction-rate-limit-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var admin = NewUser(41, "admin@test.com", "Admin");
+        admin.Roles = "Admin";
+        var target = NewUser(42, "target@test.com", "User");
+        target.EmailVerificationSendWindowStartAt = DateTime.UtcNow.AddHours(-1);
+        target.EmailVerificationSendCount = 5;
+        target.EmailVerificationSentAt = DateTime.UtcNow.AddMinutes(-2);
+        context.Users.AddRange(admin, target);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, admin.Id, new RecordingEmailSender(), new RecordingNotificationService());
+        var result = await controller.CorrectProfile(target.Id, new AdminUserProfileCorrectionRequest
+        {
+            FirstName = target.FirstName, LastName = target.LastName, Email = "rate-limited@test.com",
+            PhoneNumber = target.PhoneNumber, Address = target.Address,
+            Reason = "Support request for an email correction"
+        }, CancellationToken.None);
+
+        Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        Assert.Equal("target@test.com", target.Email);
+        Assert.Empty(context.AuditLogs);
     }
 
     [Fact]
