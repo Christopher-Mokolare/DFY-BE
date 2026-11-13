@@ -13,7 +13,7 @@
 
 | Domain | Existing capability | Required SuperAdmin objective | Status |
 |---|---|---|---|
-| Admin accounts | SuperAdmin-only role changes with a reason, fresh authenticator verification, session-stamp rotation; first SuperAdmin staging bootstrap | Dedicated admin directory; secure invitations; controlled promotion/revocation; MFA; session revocation; two-person SuperAdmin changes | In progress |
+| Admin accounts | SuperAdmin-only role changes with a reason, fresh authenticator verification, session-stamp rotation; first SuperAdmin staging bootstrap; 48-hour single-use email invitations with hashed tokens, verified-email matching, recipient MFA, revoke/list, and audit events | Dedicated admin directory; secure invitations; controlled promotion/revocation; MFA; session revocation; two-person SuperAdmin changes | Partial; invitation API/UI implemented on feature branch, pending full CI and staging verification |
 | User lifecycle | Search/list (admin API), verify, role update, archive/restore, task history | Full lifecycle controls, duplicate-account resolution, account corrections, session revocation, security history | Partial |
 | KYC | Manual review queue, reviewer claims, document retrieval, decisions, review SLA and retention services | Permission-separated document access, access logging, override/reopen, SLA reporting and controlled retention | Partial; document-access audit requires verification |
 | Tasks | List, verify/unverify, bulk verify, cancel/soft-delete, force-release escrow API | Full task lifecycle history, safe edits, stuck-task interventions and incident linkage | Partial |
@@ -23,7 +23,7 @@
 | Content | Testimonial CRUD/publish/reorder | Governed public-content management including FAQ/legal content | Partial |
 | Platform configuration | Task limits endpoint and environment-based integration configuration | Audited feature flags, service areas, fee policy, notification templates, maintenance controls and safe configuration UI | Partial |
 | Monitoring | Dashboard and notification dead-letter replay | Service health, errors, queue/job visibility, safe retry/cancel and operational reporting | Partial |
-| Audit/compliance | Audit-log records and viewer; identity retention service; EF Core rejects audit-row updates/deletes | Centralized immutable audit trail, before/after values, sensitive-document access events, POPIA workflows | Partial; database-level append-only permissions and audit completeness still required |
+| Audit/compliance | Audit-log records and viewer; identity retention service; EF Core rejects audit-row updates/deletes; PostgreSQL triggers block audit UPDATE, DELETE and TRUNCATE | Centralized immutable audit trail, before/after values, sensitive-document access events, POPIA workflows | Partial; migration and DB privilege boundary still need staging verification |
 | Impersonation | No complete workflow established | Disabled by default; read-only, visible, reasoned and fully logged if introduced | Not implemented |
 | Tenant/subscription controls | DFY is currently a marketplace, not a multi-tenant subscription SaaS | Not a launch requirement | Out of scope |
 
@@ -34,7 +34,7 @@
 3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. The person must first register using their own account and verify their email; this is not an invitation workflow.
 4. Existing backend role mutation protections remain authoritative: actor must be a persisted SuperAdmin, must not be changing their own role, must have authenticator MFA enabled and recently verified, must supply a reason, and cannot modify a SuperAdmin through the one-person path.
 5. Strengthened Admin provisioning so archived or email-unverified accounts cannot receive Admin access.
-6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests. Database-level protection against direct privileged SQL access is still required.
+6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests.\n8. Added a PostgreSQL migration with triggers rejecting UPDATE, DELETE and TRUNCATE against AuditLogs. This requires staging migration verification and database-owner controls.\n9. Added an Admin invitation workflow: SuperAdmin-only create/list/revoke, 48-hour expiry, SHA-256 token storage, email delivery through the configured sender, recipient email matching, mandatory recent authenticator MFA, one-time acceptance, security-stamp rotation and audit events. The recipient must first register/verify using the invited address.
 
 ## Required remaining work before the SuperAdmin objectives can be called complete
 
