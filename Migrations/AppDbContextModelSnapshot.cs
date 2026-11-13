@@ -68,8 +68,8 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("UserId", "PermissionKey")
                         .IsUnique()
-                        .HasFilter("\"RevokedAt\" IS NULL");
-                        .HasDatabaseName("IX_AdminPermissionGrants_Active_UserId_PermissionKey");
+                        .HasFilter("\"RevokedAt\" IS NULL")
+                        .HasDatabaseName("IX_AdminPermissionGrants_Active_UserId_PermissionKey"));
 
                     b.ToTable("AdminPermissionGrants");
                 });
