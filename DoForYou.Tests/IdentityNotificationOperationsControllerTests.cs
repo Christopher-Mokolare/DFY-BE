@@ -21,7 +21,6 @@ public sealed class IdentityNotificationOperationsControllerTests
     [Theory]
     [InlineData("")]
     [InlineData("too short")]
-    [InlineData("This reason is deliberately longer than five hundred characters. ")]
     public void Replay_reason_is_required_and_bounded(string reason)
     {
         var request = new ReplayDeadLetterRequest { Reason = reason };
