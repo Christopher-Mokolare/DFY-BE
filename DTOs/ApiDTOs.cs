@@ -491,16 +491,22 @@ public class UpdateSupportTicketRequest
 
 public class CategoryRequest
 {
-    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.StringLength(100, MinimumLength = 2)]
     public string Name { get; set; } = string.Empty;
+    [System.ComponentModel.DataAnnotations.StringLength(500)]
     public string? Description { get; set; }
+    [System.ComponentModel.DataAnnotations.StringLength(64)]
     public string? Icon { get; set; }
     public int? SortOrder { get; set; }
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.StringLength(500, MinimumLength = 5)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class ReorderRequest
 {
     public int SortOrder { get; set; }
+    [System.ComponentModel.DataAnnotations.Required, System.ComponentModel.DataAnnotations.StringLength(500, MinimumLength = 5)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public class AvailabilityRequest
