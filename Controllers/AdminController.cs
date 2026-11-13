@@ -898,7 +898,7 @@ public class AdminController : ControllerBase
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [Authorize(Policy = "SuperAdminMfa")]
     [HttpPost("financial-reversal-requests/{id:int}/execute")]
-    public async Task<ActionResult<ApiResponse<long>>> ExecuteFinancialReversal(
+    public async Task<ActionResult<ApiResponse<object>>> ExecuteFinancialReversal(
         int id,
         CancellationToken cancellationToken = default)
     {
@@ -910,14 +910,14 @@ public class AdminController : ControllerBase
             .AsNoTracking()
             .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (current == null)
-            return NotFound(new ApiResponse<long> { Success = false, Message = "Financial reversal request not found." });
+            return NotFound(new ApiResponse<object> { Success = false, Message = "Financial reversal request not found." });
         if (current.Status != "Approved" || current.ExpiresAt <= DateTime.UtcNow ||
             !current.DecidedByUserId.HasValue ||
             current.DecidedByUserId.Value == current.RequestedByUserId ||
             current.DecidedByUserId.Value == actorId.Value)
-            return Conflict(new ApiResponse<long> { Success = false, Message = "Execution requires a current independent approval and an executor other than the approver." });
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Execution requires a current independent approval and an executor other than the approver." });
         if (!await IsFreshActiveSuperAdminAsync(current.DecidedByUserId.Value))
-            return Conflict(new ApiResponse<long> { Success = false, Message = "The approving SuperAdmin is no longer active or their authenticator verification is stale." });
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The approving SuperAdmin is no longer active or their authenticator verification is stale." });
 
         await using var transaction = _context.Database.IsRelational()
             ? await _context.Database.BeginTransactionAsync(cancellationToken)
@@ -940,7 +940,7 @@ public class AdminController : ControllerBase
         }
 
         if (claimed != 1)
-            return Conflict(new ApiResponse<long> { Success = false, Message = "The reversal approval was already consumed or expired." });
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The reversal approval was already consumed or expired." });
 
         if (_context.Database.IsRelational())
             _context.ChangeTracker.Clear();
@@ -980,7 +980,7 @@ public class AdminController : ControllerBase
             if (transaction != null)
                 await transaction.CommitAsync(cancellationToken);
 
-            return Ok(new ApiResponse<long> { Success = true, Data = reversal.Id, Message = "The exact journal reversal was posted. Original journal entries remain unchanged." });
+            return Ok(new ApiResponse<object> { Success = true, Data = new { journalId = reversal.Id }, Message = "The exact journal reversal was posted. Original journal entries remain unchanged." });
         }
         catch (InvalidOperationException ex)
         {
@@ -1005,7 +1005,7 @@ public class AdminController : ControllerBase
                 });
                 await _context.SaveChangesAsync(cancellationToken);
             }
-            return Conflict(new ApiResponse<long> { Success = false, Message = "The exact reversal could not be posted. Review the request and journal state before creating another request." });
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The exact reversal could not be posted. Review the request and journal state before creating another request." });
         }
     }
 
