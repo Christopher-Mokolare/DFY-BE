@@ -76,10 +76,12 @@ public sealed class DuplicateAccountCasesController(AppDbContext context) : Cont
         if (accounts.Count != 2)
             return NotFound(new { message = "Both account records must exist before an investigation can be opened." });
 
+        var firstUserId = Math.Min(request.PrimaryUserId, request.CandidateUserId);
+        var secondUserId = Math.Max(request.PrimaryUserId, request.CandidateUserId);
         var existing = await context.DuplicateAccountCases.AnyAsync(item =>
             item.Status == "Open" &&
-            ((item.PrimaryUserId == request.PrimaryUserId && item.CandidateUserId == request.CandidateUserId) ||
-             (item.PrimaryUserId == request.CandidateUserId && item.CandidateUserId == request.PrimaryUserId)),
+            item.PrimaryUserId == firstUserId &&
+            item.CandidateUserId == secondUserId,
             cancellationToken);
         if (existing)
             return Conflict(new { message = "An open investigation already exists for these two accounts." });
@@ -91,8 +93,8 @@ public sealed class DuplicateAccountCasesController(AppDbContext context) : Cont
         var now = DateTime.UtcNow;
         var investigation = new DuplicateAccountCase
         {
-            PrimaryUserId = request.PrimaryUserId,
-            CandidateUserId = request.CandidateUserId,
+            PrimaryUserId = firstUserId,
+            CandidateUserId = secondUserId,
             Reason = reason,
             EvidenceReference = evidenceReference,
             Status = "Open",
