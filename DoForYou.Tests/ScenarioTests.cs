@@ -1060,7 +1060,7 @@ public class ScenarioTests
             UpdatedAt = DateTime.UtcNow
         };
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-DFY-ESCROW-NO-BANK");
 
         var escrowService = new EscrowService(context, NullLogger<EscrowService>.Instance);
         var released = await escrowService.ReleaseEscrowAsync(task.Id, force: true);
@@ -1260,7 +1260,7 @@ public class ScenarioTests
             UpdatedAt = DateTime.UtcNow,
         };
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-DFY-SCENARIO-3");
 
         var escrow = new EscrowService(context, NullLogger<EscrowService>.Instance);
         var released = await escrow.ReleaseEscrowAsync(task.Id);
@@ -1288,13 +1288,52 @@ public class ScenarioTests
             .ToListAsync());
     }
 
-private static AppDbContext CreateContext(string name)
+private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
+        AppDbContext context,
+        TaskEntity task,
+        string transactionId)
+    {
+        context.Database.EnsureCreated();
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = task.PaymentReference ?? $"REF-{task.TaskId}",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = transactionId,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            transactionId,
+            $"paystack:charge:{transactionId}",
+            "ZAR",
+            "Verified Paystack charge for escrow release test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            task.PaymentReference ?? $"REF-{task.TaskId}"));
+    }
+
+    private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
             .Options;
 
-        return new AppDbContext(options);
+        var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+        return context;
     }
 
     private sealed class FakePaystackPaymentProvider : IPaymentProvider
