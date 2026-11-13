@@ -126,6 +126,10 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
             ? await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken)
             : null;
 
+        // Re-check the approver inside the serializable transaction so a concurrent
+        // demotion/revocation cannot race this privileged decision.
+        if (!await IsFreshSuperAdminAsync(reviewerId.Value, cancellationToken)) return Forbid();
+
         var change = await context.SuperAdminChangeRequests.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (change == null) return NotFound();
         if (change.Status != "pending" || change.ExpiresAt <= DateTime.UtcNow)
