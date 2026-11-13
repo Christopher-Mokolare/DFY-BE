@@ -947,7 +947,7 @@ public class ScenarioTests
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund()
+    public async System.Threading.Tasks.Task SuperAdmin_dispute_refund_is_blocked_until_dual_approval()
     {
         using var context = CreateContext(nameof(DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund));
         var creator = CreateUser(1, "creator", true, "refund-reserve-creator@test.com");
@@ -1022,14 +1022,12 @@ public class ScenarioTests
             """{"action":"refund_creator","resolution":"Refund approved","reason":"Refund approved after dispute review"}""");
         var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
 
-        Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Equal("RefundPending", task.PaymentStatus);
-        Assert.Equal("refund_pending", task.EscrowStatus);
-        Assert.Equal("RefundPending", task.TaskStatus);
-        Assert.Equal("RefundPending", dispute.Status);
-        var refund = Assert.Single(await context.Refunds.ToListAsync());
-        Assert.Equal("Submitted", refund.Status);
-        Assert.Equal("TX-REFUND-RESERVE-1", refund.TransactionId);
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("Open", dispute.Status);
+        Assert.Empty(await context.Refunds.ToListAsync());
     }
 
     [Fact]
