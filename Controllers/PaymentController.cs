@@ -306,7 +306,7 @@ public class PaymentController : ControllerBase
         {
             var canAllocateToEscrow = paymentAttempt != null &&
                 task.TaskStatus == "PendingPayment" &&
-                task.EscrowStatus == "none" &&
+                task.EscrowStatus is "pending" or "none" &&
                 task.PaymentStatus is "Pending" or "PendingPayment";
 
             if (canAllocateToEscrow)
