@@ -10628,7 +10628,8 @@
         "properties": {
           "originalJournalId": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "minimum": 1
           },
           "reason": {
             "maxLength": 500,
@@ -10646,11 +10647,9 @@
         "type": "object",
         "properties": {
           "decision": {
-            "type": "string",
-            "enum": [
-              "approve",
-              "reject"
-            ]
+            "maxLength": 7,
+            "pattern": "^(approve|reject)$",
+            "type": "string"
           },
           "reason": {
             "maxLength": 500,
