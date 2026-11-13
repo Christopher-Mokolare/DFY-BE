@@ -14,7 +14,7 @@
 | Domain | Existing capability | Required SuperAdmin objective | Status |
 |---|---|---|---|
 | Admin accounts | SuperAdmin-only role changes with a reason, fresh authenticator verification, session-stamp rotation; first SuperAdmin staging bootstrap; 48-hour single-use email invitations with hashed tokens, verified-email matching, recipient MFA, revoke/list, and audit events; two-person SuperAdmin grant/revoke requests with distinct requestor, target and approver, reasoned decisions, expiry and last-admin protection; persisted MFA enrollment policy on Admin endpoints | Dedicated admin directory; secure invitations; controlled promotion/revocation; MFA; session revocation; two-person SuperAdmin changes | Partial; invitation and two-person approval APIs/UI and backend Admin MFA policy implemented on feature branch, pending full CI and staging verification |
-| User lifecycle | Search/list (admin API), verify, role update, archive/restore, task history | Full lifecycle controls, duplicate-account resolution, account corrections, session revocation, security history | Partial |
+| User lifecycle | Search/list, marketplace/system role visibility, verification, reasoned suspend/reinstate, archive/restore, task history; suspension/archive/restore rotate the security stamp and suspended accounts are blocked at login and token validation | Full lifecycle controls, duplicate-account resolution, account corrections, session revocation, security history | Partial; contact/profile corrections and duplicate-account merge remain unimplemented |
 | KYC | Manual review queue, reviewer claims, document retrieval, decisions, review SLA and retention services | Permission-separated document access, access logging, override/reopen, SLA reporting and controlled retention | Partial; identity document access is now SuperAdmin-only, reasoned, and written to both identity events and the append-only audit log |
 | Tasks | List, verify/unverify, bulk verify, cancel/soft-delete, force-release escrow API | Full task lifecycle history, safe edits, stuck-task interventions and incident linkage | Partial |
 | Disputes | List and resolve | Full case lifecycle, evidence review, reopen and resolution history | Partial |
@@ -34,7 +34,7 @@
 3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. A separate invitation workflow now lets a SuperAdmin invite someone who must register/sign in with the invited email, verify it, enroll authenticator MFA and accept the invitation.
 4. Existing backend role mutation protections remain authoritative: actor must be a persisted SuperAdmin, must not be changing their own role, must have authenticator MFA enabled and recently verified, must supply a reason, and cannot modify a SuperAdmin through the one-person path.
 5. Strengthened Admin provisioning so archived or email-unverified accounts cannot receive Admin access.
-6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.
+6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n15. Added explicit user suspension/reinstatement with mandatory reasons, audit entries, security-stamp rotation and login/token-validation denial; archive/restore also rotate the security stamp and require reasoned actions.
 7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests.
 8. Added a PostgreSQL migration with triggers rejecting UPDATE, DELETE and TRUNCATE against AuditLogs. This requires staging migration verification and database-owner controls.
 9. Added an Admin invitation workflow: SuperAdmin-only create/list/revoke, 48-hour expiry, SHA-256 token storage, email delivery through the configured sender, recipient email matching, mandatory recent authenticator MFA, one-time acceptance, security-stamp rotation and audit events. The recipient must first register/verify using the invited address.
@@ -53,7 +53,7 @@
 - Replace broad Admin access with granular permission policies (user management, KYC queue, document viewing, dispute resolution, task operations, finance, content and configuration). The current AdminMfa policy enforces MFA enrollment but does not yet provide granular permission separation.
 
 ### P1 — marketplace operations
-- Complete user lifecycle and account-security controls.
+- Add verified contact/profile correction workflows and duplicate-account merge/resolve tooling; keep all changes reasoned and audited.
 - Complete task and dispute lifecycle management, including reasoned overrides and full history.
 - Document viewing is now restricted to a SuperAdmin with recent MFA and a per-view reason; every view writes an identity event and an append-only audit record with actor, case, side, reason, IP and user agent. A dedicated KYC Reviewer permission set and separate override permission remain required to delegate document review safely.
 - Keep financial records immutable. Implement refund/adjustment operations only as compensating ledger entries; use dual approval above a configurable threshold. Preserve the manual payout default and existing automatic-payout opt-in.
