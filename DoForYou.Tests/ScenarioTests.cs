@@ -949,7 +949,7 @@ public class ScenarioTests
     [Fact]
     public async System.Threading.Tasks.Task SuperAdmin_dispute_refund_is_blocked_until_dual_approval()
     {
-        using var context = CreateContext(nameof(DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund));
+        using var context = CreateContext(nameof(SuperAdmin_dispute_refund_is_blocked_until_dual_approval));
         var creator = CreateUser(1, "creator", true, "refund-reserve-creator@test.com");
         var runner = CreateUser(2, "runner", true, "refund-reserve-runner@test.com");
         var admin = CreateUser(3, "admin", true, "refund-reserve-admin@test.com");
