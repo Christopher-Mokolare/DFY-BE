@@ -52,6 +52,27 @@ public class EscrowService : IEscrowService
             if (!force && (!task.EscrowHoldUntil.HasValue || task.EscrowHoldUntil > DateTime.UtcNow))
                 return false;
 
+            // Never create a new journal against an old task total or a retired
+            // wallet/audit-log reference. The exact verified charge must already
+            // exist in the new journal before any escrow liability can be released.
+            var successfulCharges = await _context.PaymentAttempts
+                .Where(attempt => attempt.TaskId == task.Id &&
+                    attempt.Provider == "Paystack" &&
+                    attempt.Status == "Completed" &&
+                    attempt.TransactionId != null &&
+                    attempt.Amount == task.Budget)
+                .ToListAsync();
+            if (successfulCharges.Count != 1 ||
+                string.IsNullOrWhiteSpace(successfulCharges[0].TransactionId))
+                return false;
+
+            var chargeIsJournalled = await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == successfulCharges[0].TransactionId &&
+                journal.EventType == "payment_collected");
+            if (!chargeIsJournalled)
+                return false;
+
             var eligibleTask = _context.Tasks
                 .Where(t => t.Id == task.Id &&
                             t.TaskStatus == "AwaitingConfirmation" &&
