@@ -61,6 +61,43 @@ public class AdminControllerTests
         Assert.Equal("UpdateUserRole", Assert.Single(context.AuditLogs).Action);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task GetUsers_returns_marketplace_role_separately_from_system_roles()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-marketplace-roles-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var creator = CreateUser(51, "User");
+        creator.UserType = "creator";
+        var runner = CreateUser(52, "User");
+        runner.UserType = "runner";
+        var both = CreateUser(53, "Admin,SuperAdmin");
+        both.UserType = "both";
+        var unset = CreateUser(54, "User");
+        unset.UserType = "";
+        context.Users.AddRange(creator, runner, both, unset);
+        await context.SaveChangesAsync();
+
+        var controller = new AdminController(
+            context, null!, new DoForYou.API.Services.UserPolicyService(), null!, null!, null!);
+
+        var result = await controller.GetUsers();
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var data = ok.Value!.GetType().GetProperty("Data")!.GetValue(ok.Value)!;
+        var users = (System.Collections.IEnumerable)data.GetType().GetProperty("users")!.GetValue(data)!;
+        var byId = users.Cast<object>().ToDictionary(
+            user => (int)user.GetType().GetProperty("id")!.GetValue(user)!);
+
+        Assert.Equal("Creator", byId[creator.Id].GetType().GetProperty("marketplaceRole")!.GetValue(byId[creator.Id]));
+        Assert.Equal("Runner", byId[runner.Id].GetType().GetProperty("marketplaceRole")!.GetValue(byId[runner.Id]));
+        Assert.Equal("Creator & Runner", byId[both.Id].GetType().GetProperty("marketplaceRole")!.GetValue(byId[both.Id]));
+        Assert.Equal("Not selected", byId[unset.Id].GetType().GetProperty("marketplaceRole")!.GetValue(byId[unset.Id]));
+        Assert.Equal("Admin,SuperAdmin", byId[both.Id].GetType().GetProperty("role")!.GetValue(byId[both.Id]));
+        Assert.Equal("both", byId[both.Id].GetType().GetProperty("userType")!.GetValue(byId[both.Id]));
+    }
+
     private static User CreateUser(int id, string roles) => new()
     {
         Id = id,

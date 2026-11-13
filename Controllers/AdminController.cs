@@ -32,6 +32,15 @@ public class AdminController : ControllerBase
         _paystackSettlementProvider = paystackSettlementProvider;
     }
 
+    private static string GetMarketplaceRole(string? userType) =>
+        userType?.Trim().ToLowerInvariant() switch
+        {
+            "creator" => "Creator",
+            "runner" => "Runner",
+            "both" => "Creator & Runner",
+            _ => "Not selected"
+        };
+
     private int? GetAdminId() =>
         int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
 
@@ -970,7 +979,10 @@ public class AdminController : ControllerBase
             name = $"{u.FirstName} {u.LastName}",
             email = u.Email,
             contact = u.PhoneNumber == null ? null : "***",
+            // System authorization roles and marketplace participation are separate concepts.
             role = u.Roles,
+            userType = u.UserType,
+            marketplaceRole = GetMarketplaceRole(u.UserType),
             isVerified = u.IsVerified,
             emailVerified = u.EmailVerified,
             profileCompleted = _userPolicyService.IsProfileComplete(u),
