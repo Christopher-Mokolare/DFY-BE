@@ -52,6 +52,50 @@ public class AdminController : ControllerBase
             _ => "Not selected"
         };
 
+    private async Task<bool> HasProviderConfirmedReversalOutcomeAsync(
+        Models.FinancialJournal journal,
+        CancellationToken cancellationToken)
+    {
+        var journalAmount = await _context.FinancialJournalLines
+            .Where(line => line.JournalId == journal.Id)
+            .SumAsync(line => line.Debit, cancellationToken);
+
+        if (journal.EventType is "payment_collected" or "unallocated_payment_received" or "duplicate_payment_received")
+        {
+            return await _context.Refunds
+                .AsNoTracking()
+                .Include(refund => refund.Task)
+                .AnyAsync(refund =>
+                    refund.TransactionId == journal.SourceId &&
+                    refund.Provider == "Paystack" &&
+                    refund.Status == "Complete" &&
+                    refund.Amount == journalAmount &&
+                    !string.IsNullOrWhiteSpace(refund.RefundId) &&
+                    refund.Task.PaymentStatus == "Refunded" &&
+                    refund.Task.EscrowStatus == "refunded",
+                    cancellationToken);
+        }
+
+        if (journal.EventType == "runner_payout_completed" &&
+            int.TryParse(journal.SourceId, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var payoutId))
+        {
+            return await _context.Payouts
+                .AsNoTracking()
+                .Include(payout => payout.Task)
+                .AnyAsync(payout =>
+                    payout.Id == payoutId &&
+                    payout.Provider == "Paystack" &&
+                    payout.Status == "Returned" &&
+                    payout.Amount == journalAmount &&
+                    !string.IsNullOrWhiteSpace(payout.ProviderReference) &&
+                    payout.Task.PayoutStatus == "Returned",
+                    cancellationToken);
+        }
+
+        return false;
+    }
+
     private async Task<bool> IsFreshActiveSuperAdminAsync(int userId)
     {
         var actor = await _context.Users.AsNoTracking()
@@ -720,6 +764,9 @@ public class AdminController : ControllerBase
         if (original.ReversalOfJournalId.HasValue || original.EventType == "reversal")
             return Conflict(new ApiResponse<int> { Success = false, Message = "A reversal journal cannot itself be reversed through this workflow." });
 
+        if (!await HasProviderConfirmedReversalOutcomeAsync(original, cancellationToken))
+            return Conflict(new ApiResponse<int> { Success = false, Message = "This recovery workflow only reverses a Paystack collection with a completed full refund or a runner payout confirmed as returned. Other journal corrections require a separately approved accounting policy." });
+
         if (await _context.FinancialJournals.AnyAsync(
                 item => item.ReversalOfJournalId == original.Id,
                 cancellationToken))
@@ -951,6 +998,9 @@ public class AdminController : ControllerBase
 
         try
         {
+            if (!await HasProviderConfirmedReversalOutcomeAsync(executing.OriginalJournal, cancellationToken))
+                throw new InvalidOperationException("The provider-confirmed refund or payout-return outcome is no longer present. No journal reversal was posted.");
+
             var reversal = await _financialLedgerService.ReverseAsync(
                 executing.OriginalJournalId,
                 sourceType: "admin_financial_reversal_request",
