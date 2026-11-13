@@ -43,6 +43,7 @@ public class AppDbContext : DbContext
     public override int SaveChanges()
     {
         EnsureAuditLogsAppendOnly();
+        EnsureFinancialLedgerAppendOnly();
         NormalizeUserEmails();
         NormalizeUtcDates();
         return base.SaveChanges();
@@ -64,6 +65,18 @@ public class AppDbContext : DbContext
             .FirstOrDefault(entry => entry.State is EntityState.Modified or EntityState.Deleted);
         if (changedAudit != null)
             throw new InvalidOperationException("Audit log entries are append-only and cannot be modified or deleted.");
+    }
+
+    // Financial journal headers and lines are append-only through the application data layer.
+    // PostgreSQL triggers enforce the same invariant independently of EF Core.
+    private void EnsureFinancialLedgerAppendOnly()
+    {
+        var changedLedgerEntry = ChangeTracker.Entries()
+            .FirstOrDefault(entry =>
+                (entry.Entity is FinancialJournal or FinancialJournalLine) &&
+                entry.State is EntityState.Modified or EntityState.Deleted);
+        if (changedLedgerEntry != null)
+            throw new InvalidOperationException("Financial journals and journal lines are append-only and cannot be modified or deleted.");
     }
 
     private void NormalizeUserEmails()
