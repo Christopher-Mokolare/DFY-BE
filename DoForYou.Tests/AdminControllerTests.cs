@@ -231,6 +231,50 @@ public class AdminControllerTests
             !(bool)account.GetType().GetProperty("isAdministrator")!.GetValue(account)!);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Single_SuperAdmin_cannot_force_release_escrow_without_dual_approval()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-force-release-dual-approval-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(71, "Admin,SuperAdmin");
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(72, "User");
+        var runner = CreateUser(73, "User");
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 74,
+            TaskId = "DFY-DUAL-APPROVAL-TEST",
+            TaskDescription = "Test task",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            TaskStatus = "AwaitingConfirmation",
+            PaymentStatus = "EscrowHeld",
+            EscrowStatus = "held",
+            Budget = 200m,
+            PayoutAmount = 170m
+        };
+        context.Users.AddRange(actor, creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        var result = await controller.ForceReleaseEscrow(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Exceptional release requested after operational review" });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("held", task.EscrowStatus);
+        Assert.Empty(context.Payouts);
+        Assert.Contains(context.AuditLogs, log =>
+            log.Action == "ForceReleaseEscrowBlockedPendingDualApproval" &&
+            log.EntityId == task.Id);
+    }
+
     private static User CreateUser(int id, string roles) => new()
     {
         Id = id,
