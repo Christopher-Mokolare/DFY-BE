@@ -461,7 +461,7 @@ public sealed class PaystackProvider(
                 if (root.TryGetProperty("meta", out var meta) &&
                     GetDecimal(meta, "pageCount") is { } count)
                 {
-                    pageCount = Math.Max(1, (int)count);
+                    pageCount = Math.Max(pageCount, Math.Max(1, (int)count));
                     hasPageCount = true;
                 }
                 else
