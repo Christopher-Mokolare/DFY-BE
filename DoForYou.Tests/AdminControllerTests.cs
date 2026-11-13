@@ -338,9 +338,10 @@ public class AdminControllerTests
         Assert.Equal(requester.Id, approval.RequestedByUserId);
         Assert.Equal(approver.Id, approval.DecidedByUserId);
         Assert.NotNull(approval.ExecutedAt);
-        Assert.Equal("PayoutPending", task.TaskStatus);
-        Assert.Equal("EscrowReleased", task.PaymentStatus);
-        Assert.Equal("released", task.EscrowStatus);
+        var persistedTask = await context.Tasks.SingleAsync(item => item.Id == task.Id);
+        Assert.Equal("PayoutPending", persistedTask.TaskStatus);
+        Assert.Equal("EscrowReleased", persistedTask.PaymentStatus);
+        Assert.Equal("released", persistedTask.EscrowStatus);
         var payout = await context.Payouts.SingleAsync();
         Assert.Equal(170m, payout.Amount);
         Assert.Equal("AwaitingBankDetails", payout.Status);
