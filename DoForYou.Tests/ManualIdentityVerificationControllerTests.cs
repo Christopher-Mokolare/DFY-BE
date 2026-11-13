@@ -82,6 +82,89 @@ public sealed class ManualIdentityVerificationControllerTests
 
 
     [Fact]
+    public async Task Kyc_override_reopens_only_rejected_cases_and_requires_normal_review_again()
+    {
+        await using var context = CreateContext();
+        var admin = NewRunner(290);
+        admin.Roles = "Admin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var runner = NewRunner(291);
+        runner.IdentityVerificationStatus = "rejected";
+        context.Users.AddRange(admin, runner);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id,
+            DocumentType = "south_african_id_card",
+            Status = "rejected",
+            FrontCiphertext = [1, 2, 3],
+            FrontNonce = new byte[12],
+            FrontTag = new byte[16],
+            FrontContentType = "image/jpeg",
+            ConsentVersion = "kyc-v1",
+            ReviewedAt = DateTime.UtcNow,
+            ReviewedByUserId = admin.Id,
+            ReviewReason = "Original reviewer decision",
+            DocumentsDeleteAfter = DateTime.UtcNow.AddDays(90)
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id).ReopenRejectedSubmission(
+            submission.Id,
+            new KycOverrideReopenRequest { Reason = "New evidence warrants a second independent review" },
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("pending", submission.Status);
+        Assert.Null(submission.ReviewedAt);
+        Assert.Null(submission.ReviewedByUserId);
+        Assert.Null(submission.ReviewClaimedByUserId);
+        Assert.Equal("pending", runner.IdentityVerificationStatus);
+        Assert.Contains(context.IdentityVerificationEvents, item => item.EventType == "kyc_override_reopened");
+        Assert.Contains(context.AuditLogs, item => item.Action == "AdminKycOverrideReopened");
+    }
+
+    [Fact]
+    public async Task Kyc_override_cannot_reopen_an_approved_submission()
+    {
+        await using var context = CreateContext();
+        var admin = NewRunner(292);
+        admin.Roles = "Admin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var runner = NewRunner(293);
+        runner.IdentityVerificationStatus = "passed";
+        context.Users.AddRange(admin, runner);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id,
+            DocumentType = "south_african_id_card",
+            Status = "approved",
+            FrontCiphertext = [1, 2, 3],
+            FrontNonce = new byte[12],
+            FrontTag = new byte[16],
+            FrontContentType = "image/jpeg",
+            ConsentVersion = "kyc-v1",
+            ReviewedAt = DateTime.UtcNow,
+            ReviewedByUserId = admin.Id
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id).ReopenRejectedSubmission(
+            submission.Id,
+            new KycOverrideReopenRequest { Reason = "Attempted override of an approved case" },
+            CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("approved", submission.Status);
+        Assert.Equal("passed", runner.IdentityVerificationStatus);
+        Assert.Empty(context.IdentityVerificationEvents);
+        Assert.Empty(context.AuditLogs);
+    }
+
+    [Fact]
     public async Task Identity_document_view_requires_reasoned_recent_superadmin_mfa_and_writes_audit()
     {
         await using var context = CreateContext();
