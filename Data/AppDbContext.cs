@@ -34,6 +34,7 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges()
     {
+        EnsureAuditLogsAppendOnly();
         NormalizeUserEmails();
         NormalizeUtcDates();
         return base.SaveChanges();
@@ -41,9 +42,20 @@ public class AppDbContext : DbContext
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
+        EnsureAuditLogsAppendOnly();
         NormalizeUserEmails();
         NormalizeUtcDates();
         return base.SaveChangesAsync(cancellationToken);
+    }
+
+    // Audit history is append-only through the application data layer.
+    // Database-level permissions/retention controls are still required against privileged DB access.
+    private void EnsureAuditLogsAppendOnly()
+    {
+        var changedAudit = ChangeTracker.Entries<AuditLog>()
+            .FirstOrDefault(entry => entry.State is EntityState.Modified or EntityState.Deleted);
+        if (changedAudit != null)
+            throw new InvalidOperationException("Audit log entries are append-only and cannot be modified or deleted.");
     }
 
     private void NormalizeUserEmails()
