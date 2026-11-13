@@ -516,13 +516,13 @@ public class AdminController : ControllerBase
             if (matches.Any(attempt => attempt.Amount != dispute.Amount))
                 findings.Add("Paystack disputed amount differs from the DFY payment-attempt amount.");
 
-            var deadlineState = dispute.DueAt switch
-            {
-                null => "not_provided",
-                var due when due <= now => "overdue",
-                var due when due <= now.AddHours(24) => "due_within_24h",
-                _ => "due_later"
-            };
+            var deadlineState = !dispute.DueAt.HasValue
+                ? "not_provided"
+                : dispute.DueAt.Value <= now
+                    ? "overdue"
+                    : dispute.DueAt.Value <= now.AddHours(24)
+                        ? "due_within_24h"
+                        : "due_later";
 
             return new
             {
