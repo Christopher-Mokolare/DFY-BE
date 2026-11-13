@@ -119,6 +119,125 @@ public class PaystackSettlementReconciliationTests
         Assert.Contains("not configured", result.Error);
     }
 
+
+    [Fact]
+    public async Task GetTransfersAsync_ConvertsMinorUnitsAndReturnsProviderReferencesWithoutRecipientDetails()
+    {
+        var handler = new StubHandler(request =>
+        {
+            Assert.EndsWith("/transfer", request.RequestUri!.AbsolutePath);
+            Assert.Contains("perPage=100", request.RequestUri.Query);
+            Assert.Contains("page=1", request.RequestUri.Query);
+            Assert.Contains("from=", request.RequestUri.Query);
+            Assert.Contains("to=", request.RequestUri.Query);
+            return JsonResponse("""
+                {
+                  "status": true,
+                  "message": "Transfers retrieved",
+                  "data": [{
+                    "id": 860703114,
+                    "transfer_code": "TRF_test_001",
+                    "reference": "dfy-runner-payout-001",
+                    "status": "success",
+                    "currency": "ZAR",
+                    "amount": 17000,
+                    "fees": 500,
+                    "transferred_at": "2026-10-11T10:00:00.000Z",
+                    "domain": "test"
+                  }],
+                  "meta": { "pageCount": 1 }
+                }
+                """);
+        });
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetTransfersAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-14T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.True(result.IsComplete);
+        var transfer = Assert.Single(result.Transfers);
+        Assert.Equal("860703114", transfer.Id);
+        Assert.Equal("TRF_test_001", transfer.TransferCode);
+        Assert.Equal("dfy-runner-payout-001", transfer.Reference);
+        Assert.Equal(170m, transfer.Amount);
+        Assert.Equal(5m, transfer.Fees);
+        Assert.Equal("ZAR", transfer.Currency);
+        Assert.Equal("success", transfer.Status);
+    }
+
+    [Fact]
+    public async Task GetTransfersAsync_ReportsPartialResultsWhenProviderPaginationExceedsTheBound()
+    {
+        var calls = 0;
+        var handler = new StubHandler(_ =>
+        {
+            calls++;
+            return JsonResponse("""
+                {
+                  "status": true,
+                  "message": "Transfers retrieved",
+                  "data": [],
+                  "meta": { "pageCount": 21 }
+                }
+                """);
+        });
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetTransfersAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-14T00:00:00Z"),
+            maxPages: 2);
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Equal(2, calls);
+        Assert.Contains("partial", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+
+    [Fact]
+    public async Task GetTransfersAsync_MarksResultsIncompleteWhenPaginationMetadataIsMissing()
+    {
+        var handler = new StubHandler(_ => JsonResponse("""
+            {
+              "status": true,
+              "message": "Transfers retrieved",
+              "data": []
+            }
+            """));
+
+        var provider = CreateProvider(handler);
+        var result = await provider.GetTransfersAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-14T00:00:00Z"));
+
+        Assert.True(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Contains("pagination metadata", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetTransfersAsync_WithoutSecretDoesNotCallProvider()
+    {
+        var handler = new StubHandler(_ => throw new InvalidOperationException("Provider must not be called."));
+        var provider = new PaystackProvider(
+            new StubClientFactory(handler),
+            new ConfigurationBuilder().Build(),
+            NullLogger<PaystackProvider>.Instance,
+            new HttpContextAccessor());
+
+        var result = await provider.GetTransfersAsync(
+            DateTimeOffset.Parse("2026-10-01T00:00:00Z"),
+            DateTimeOffset.Parse("2026-10-14T00:00:00Z"));
+
+        Assert.False(result.Success);
+        Assert.False(result.IsComplete);
+        Assert.Empty(result.Transfers);
+        Assert.Contains("not configured", result.Error);
+    }
+
     private static PaystackProvider CreateProvider(StubHandler handler)
     {
         var configuration = new ConfigurationBuilder()

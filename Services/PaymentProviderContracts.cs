@@ -84,12 +84,36 @@ public sealed record PaystackSettlementReadResult(
     IReadOnlyList<PaystackSettlementTransaction> Transactions,
     string? Error);
 
+public sealed record PaystackTransferRecord(
+    string Id,
+    string TransferCode,
+    string Reference,
+    string Status,
+    string Currency,
+    decimal Amount,
+    decimal? Fees,
+    DateTimeOffset? TransferredAt,
+    string Domain);
+
+public sealed record PaystackTransferReadResult(
+    bool Success,
+    bool IsComplete,
+    IReadOnlyList<PaystackTransferRecord> Transfers,
+    string? Error);
+
 public interface IPaystackSettlementProvider
 {
     Task<PaystackSettlementReadResult> GetSettlementsAsync(
         DateTimeOffset from,
         DateTimeOffset to,
         int maxSettlements = 25,
+        CancellationToken cancellationToken = default);
+
+    Task<PaystackTransferReadResult> GetTransfersAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int maxPages = 20,
+        int perPage = 100,
         CancellationToken cancellationToken = default);
 }
 

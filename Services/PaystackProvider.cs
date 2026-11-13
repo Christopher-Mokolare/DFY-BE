@@ -385,6 +385,107 @@ public sealed class PaystackProvider(
         }
     }
 
+    /// <summary>
+    /// Reads Paystack transfer records for a bounded time window. This method is read-only:
+    /// it never creates, retries, finalizes or reverses a transfer.
+    /// </summary>
+    public async Task<PaystackTransferReadResult> GetTransfersAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int maxPages = 20,
+        int perPage = 100,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(SecretKey))
+            return new(false, false, Array.Empty<PaystackTransferRecord>(),
+                "Paystack secret key is not configured.");
+
+        if (to < from)
+            return new(false, false, Array.Empty<PaystackTransferRecord>(),
+                "The transfer end date must be on or after the start date.");
+
+        maxPages = Math.Clamp(maxPages, 1, 20);
+        perPage = Math.Clamp(perPage, 1, 100);
+        var fromText = Uri.EscapeDataString(from.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+        var toText = Uri.EscapeDataString(to.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+        var transfers = new List<PaystackTransferRecord>();
+        var pageCount = 1;
+        var hasPageCount = false;
+
+        try
+        {
+            for (var page = 1; page <= Math.Min(pageCount, maxPages); page++)
+            {
+                using var request = Request(HttpMethod.Get,
+                    $"transfer?perPage={perPage}&page={page}&from={fromText}&to={toText}");
+                using var response = await Client.SendAsync(request, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+
+                if (!response.IsSuccessStatusCode || !GetBool(root, "status"))
+                    return new(false, false, transfers,
+                        GetString(root, "message") ?? "Paystack transfers could not be retrieved.");
+
+                if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    return new(false, false, transfers, "Paystack returned an invalid transfer list.");
+
+                foreach (var item in data.EnumerateArray())
+                {
+                    var id = GetString(item, "id") ?? string.Empty;
+                    var transferCode = GetString(item, "transfer_code") ?? string.Empty;
+                    var reference = GetString(item, "reference") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(reference) ||
+                        (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(transferCode)))
+                        continue;
+
+                    var transferredAtText = GetString(item, "transferred_at") ?? GetString(item, "createdAt");
+                    DateTimeOffset? transferredAt = DateTimeOffset.TryParse(
+                        transferredAtText, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal, out var parsedTransferredAt)
+                        ? parsedTransferredAt
+                        : null;
+
+                    transfers.Add(new PaystackTransferRecord(
+                        id,
+                        transferCode,
+                        reference,
+                        GetString(item, "status") ?? "unknown",
+                        GetString(item, "currency") ?? string.Empty,
+                        (GetDecimal(item, "amount") ?? 0m) / 100m,
+                        GetDecimal(item, "fees") is { } feesMinor ? feesMinor / 100m : null,
+                        transferredAt,
+                        GetString(item, "domain") ?? "unknown"));
+                }
+
+                if (root.TryGetProperty("meta", out var meta) &&
+                    GetDecimal(meta, "pageCount") is { } count)
+                {
+                    pageCount = Math.Max(pageCount, Math.Max(1, (int)count));
+                    hasPageCount = true;
+                }
+                else
+                {
+                    hasPageCount = false;
+                    break;
+                }
+            }
+
+            var complete = hasPageCount && pageCount <= maxPages;
+            return new(true, complete, transfers,
+                complete ? null : "Transfer results are partial or provider pagination metadata was missing. Narrow the date window and rerun.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Paystack transfer reconciliation request failed.");
+            return new(false, false, transfers, "Unable to retrieve Paystack transfer records.");
+        }
+    }
+
     public bool VerifyWebhookSignature(
         string rawBody,
         string? signature,

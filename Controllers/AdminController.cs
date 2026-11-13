@@ -258,6 +258,176 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Reads Paystack transfer records and compares them with DFY payout records.
+    /// This endpoint is strictly read-only and never retries or changes a payout.
+    /// </summary>
+    [HttpGet("financial-reconciliation/paystack-transfers")]
+    public async Task<ActionResult<ApiResponse<object>>> GetPaystackTransferReconciliation(
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null,
+        [FromQuery] int maxPages = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var end = to?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
+        var start = from?.ToUniversalTime() ?? end.AddDays(-30);
+
+        if (end > DateTimeOffset.UtcNow.AddMinutes(5))
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The transfer end date cannot be in the future."
+            });
+        if (start > end)
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "The transfer start date must be on or before the end date."
+            });
+        if ((end - start).TotalDays > 90)
+            return BadRequest(new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Use a date range of 90 days or less; run separate reports for longer periods."
+            });
+
+        var providerResult = await _paystackSettlementProvider.GetTransfersAsync(
+            start, end, maxPages, 100, cancellationToken);
+
+        if (!providerResult.Success)
+            return StatusCode(StatusCodes.Status502BadGateway, new ApiResponse<object>
+            {
+                Success = false,
+                Message = providerResult.Error ?? "Paystack transfer records could not be retrieved.",
+                Data = new
+                {
+                    generatedAtUtc = DateTimeOffset.UtcNow,
+                    fromUtc = start,
+                    toUtc = end,
+                    provider = "Paystack",
+                    providerRecordsRetrieved = false
+                }
+            });
+
+        var localPayouts = await _context.Payouts.AsNoTracking()
+            .Where(p => p.Provider == "Paystack" &&
+                p.CreatedAt >= start.UtcDateTime &&
+                p.CreatedAt <= end.UtcDateTime)
+            .Select(p => new
+            {
+                p.Id,
+                p.TaskId,
+                p.RunnerId,
+                p.Amount,
+                p.Status,
+                p.MerchantReference,
+                p.ProviderReference,
+                p.CreatedAt,
+                p.UpdatedAt,
+                p.CompletedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        var matchedLocalPayoutIds = new HashSet<int>();
+        var transferRows = providerResult.Transfers.Select(transfer =>
+        {
+            var matches = localPayouts.Where(p =>
+                string.Equals(p.MerchantReference, transfer.Reference, StringComparison.Ordinal) ||
+                (!string.IsNullOrWhiteSpace(p.ProviderReference) &&
+                    (string.Equals(p.ProviderReference, transfer.TransferCode, StringComparison.Ordinal) ||
+                     string.Equals(p.ProviderReference, transfer.Id, StringComparison.Ordinal))))
+                .ToArray();
+
+            foreach (var match in matches)
+                matchedLocalPayoutIds.Add(match.Id);
+
+            var findings = new List<string>();
+            if (!string.Equals(transfer.Currency, "ZAR", StringComparison.OrdinalIgnoreCase))
+                findings.Add("Provider transfer currency is not ZAR.");
+            if (matches.Length == 0)
+                findings.Add("Paystack transfer has no matching DFY payout record.");
+            if (matches.Length > 1)
+                findings.Add("Multiple DFY payout records match this Paystack transfer reference.");
+            if (matches.Any(p => p.Amount != transfer.Amount))
+                findings.Add("Paystack transfer amount differs from the DFY runner payout amount.");
+
+            var providerStatus = transfer.Status.Trim().ToLowerInvariant();
+            if (providerStatus == "success" && matches.Any(p => p.Status is not ("Completed" or "Paid")))
+                findings.Add("Paystack reports transfer success but the matching DFY payout is not completed.");
+            if (providerStatus is "failed" or "reversed" &&
+                matches.Any(p => p.Status is not ("Failed" or "Returned" or "Reversed")))
+                findings.Add("Paystack reports a failed or reversed transfer but the DFY payout status does not reflect it.");
+
+            return new
+            {
+                transfer.Id,
+                transfer.TransferCode,
+                transfer.Reference,
+                transfer.Status,
+                transfer.Currency,
+                providerAmount = transfer.Amount,
+                providerFees = transfer.Fees,
+                transfer.TransferredAt,
+                transfer.Domain,
+                matchedPayouts = matches.Select(p => new
+                {
+                    p.Id,
+                    p.TaskId,
+                    p.RunnerId,
+                    p.Amount,
+                    p.Status,
+                    p.MerchantReference,
+                    p.ProviderReference,
+                    p.CreatedAt,
+                    p.UpdatedAt,
+                    p.CompletedAt
+                }),
+                findings,
+                isConsistent = findings.Count == 0
+            };
+        }).ToList();
+
+        var completedLocalPayoutsNotReturnedByProvider = localPayouts
+            .Where(p => p.Status is "Completed" or "Paid")
+            .Where(p => !matchedLocalPayoutIds.Contains(p.Id))
+            .Select(p => new
+            {
+                p.Id,
+                p.TaskId,
+                p.RunnerId,
+                p.Amount,
+                p.Status,
+                p.MerchantReference,
+                p.ProviderReference,
+                p.CreatedAt,
+                p.CompletedAt
+            })
+            .ToList();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Message = providerResult.IsComplete
+                ? "Paystack transfer records were retrieved and compared with DFY payouts. Review findings before any corrective action."
+                : "Partial Paystack transfer data was retrieved. Narrow the date window and rerun before treating this report as complete.",
+            Data = new
+            {
+                generatedAtUtc = DateTimeOffset.UtcNow,
+                fromUtc = start,
+                toUtc = end,
+                provider = "Paystack",
+                providerRecordsRetrieved = true,
+                reconciliationComplete = providerResult.IsComplete,
+                providerError = providerResult.Error,
+                providerTransferCount = transferRows.Count,
+                transferFindings = transferRows.Count(t => !t.isConsistent),
+                completedLocalPayoutsNotReturnedByProvider,
+                transfers = transferRows,
+                note = "This report is read-only. Provider transfer fees are displayed when returned by Paystack but are not compared with a local fee ledger because DFY does not currently persist a provider transfer-fee field. Unmatched completed payouts are candidates for manual review, not proof of a missing bank credit. No transfer is created, retried, reversed or marked paid by this endpoint. No bank details are returned."
+            }
+        });
+    }
+
+    /// <summary>
     /// Read-only DFY ledger consistency report for paid/escrowed tasks.
     /// This endpoint never calls a payment provider, changes financial state, or triggers payouts.
     /// Provider settlement reconciliation must be performed separately against Paystack records.
