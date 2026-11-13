@@ -1926,6 +1926,8 @@ public class AdminController : ControllerBase
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
+            PaymentTransactionId = verifiedChargeIds[0],
+            Amount = task.Budget,
             Action = "force_escrow_release",
             Reason = reason,
             Status = "Pending",
@@ -2015,6 +2017,8 @@ public class AdminController : ControllerBase
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
+            PaymentTransactionId = successfulTransactionId!,
+            Amount = task.Budget,
             Action = "refund_creator",
             Reason = reason,
             Status = "Pending",
@@ -2095,6 +2099,8 @@ public class AdminController : ControllerBase
         var approval = new Models.FinancialApprovalRequest
         {
             TaskId = task.Id,
+            PaymentTransactionId = successfulPaymentTransactionIds[0],
+            Amount = task.Budget,
             Action = "release_to_runner",
             Reason = reason,
             Status = "Pending",
@@ -2151,9 +2157,10 @@ public class AdminController : ControllerBase
                 task.PaymentStatus == "EscrowHeld" && task.PayoutAmount > 0) &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
                     payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
-                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault() &&
+                    payment.Amount == approval.Amount &&
+                    payment.TransactionId == approval.PaymentTransactionId &&
                     _context.FinancialJournals.Any(journal => journal.SourceType == "paystack_transaction" &&
-                        journal.SourceId == payment.TransactionId && journal.EventType == "payment_collected")),
+                        journal.SourceId == approval.PaymentTransactionId && journal.EventType == "payment_collected")),
             "refund_creator" or "release_to_runner" => await _context.Tasks.AnyAsync(task =>
                 task.Id == approval.TaskId &&
                 (task.TaskStatus == "AwaitingConfirmation" || task.TaskStatus == "Completed") &&
@@ -2162,9 +2169,10 @@ public class AdminController : ControllerBase
                 await _context.Disputes.AnyAsync(dispute => dispute.TaskId == approval.TaskId && dispute.Status == "Open") &&
                 await _context.PaymentAttempts.AnyAsync(payment => payment.TaskId == approval.TaskId &&
                     payment.Provider == "Paystack" && payment.Status == "Completed" && payment.TransactionId != null &&
-                    payment.Amount == _context.Tasks.Where(task => task.Id == approval.TaskId).Select(task => task.Budget).FirstOrDefault() &&
+                    payment.Amount == approval.Amount &&
+                    payment.TransactionId == approval.PaymentTransactionId &&
                     _context.FinancialJournals.Any(journal => journal.SourceType == "paystack_transaction" &&
-                        journal.SourceId == payment.TransactionId && journal.EventType == "payment_collected")) &&
+                        journal.SourceId == approval.PaymentTransactionId && journal.EventType == "payment_collected")) &&
                 !await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
                     (payout.Status == "Pending" || payout.Status == "Processing" || payout.Status == "AwaitingFunds" ||
                      payout.Status == "AwaitingEligibility" || payout.Status == "AwaitingBankDetails" ||
