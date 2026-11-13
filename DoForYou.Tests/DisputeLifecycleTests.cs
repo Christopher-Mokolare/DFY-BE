@@ -404,6 +404,7 @@ public class DisputeLifecycleTests
             Issue = "The task was not completed", Category = "quality", Status = "Open"
         };
         context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
         context.PaymentAttempts.Add(new PaymentAttempt
         {
             TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_dispute",
@@ -411,7 +412,7 @@ public class DisputeLifecycleTests
         });
         var approval = new FinancialApprovalRequest
         {
-            TaskId = task.Id, PaymentTransactionId = "TX-DISPUTE-14", Amount = task.Budget,
+            TaskId = task.Id, DisputeId = dispute.Id, PaymentTransactionId = "TX-DISPUTE-14", Amount = task.Budget,
             Action = "refund_creator", Reason = "Refund after review of incomplete task evidence",
             Status = "Approved", IdempotencyKey = Guid.NewGuid().ToString("N"),
             RequestedByUserId = requester.Id, RequestedAt = DateTime.UtcNow,
