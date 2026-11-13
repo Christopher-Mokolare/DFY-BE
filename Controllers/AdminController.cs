@@ -23,8 +23,16 @@ public class AdminController : ControllerBase
     private readonly IPaymentProvider _paymentProvider;
     private readonly IBankingService _bankingService;
     private readonly IPaystackSettlementProvider _paystackSettlementProvider;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
-    public AdminController(AppDbContext context, IEscrowService escrowService, IUserPolicyService userPolicyService, IPaymentProvider paymentProvider, IBankingService bankingService, IPaystackSettlementProvider paystackSettlementProvider)
+    public AdminController(
+        AppDbContext context,
+        IEscrowService escrowService,
+        IUserPolicyService userPolicyService,
+        IPaymentProvider paymentProvider,
+        IBankingService bankingService,
+        IPaystackSettlementProvider paystackSettlementProvider,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _escrowService = escrowService;
@@ -32,6 +40,7 @@ public class AdminController : ControllerBase
         _paymentProvider = paymentProvider;
         _bankingService = bankingService;
         _paystackSettlementProvider = paystackSettlementProvider;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     private static string GetMarketplaceRole(string? userType) =>
@@ -630,6 +639,370 @@ public class AdminController : ControllerBase
                 journals
             }
         });
+    }
+
+    /// <summary>
+    /// Lists controlled requests to reverse an immutable journal. No balances are edited.
+    /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpGet("financial-reversal-requests")]
+    public async Task<ActionResult<ApiResponse<object>>> GetFinancialReversalRequests(
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var query = _context.FinancialReversalRequests
+            .AsNoTracking()
+            .Include(item => item.OriginalJournal)
+            .AsQueryable();
+        if (!string.IsNullOrWhiteSpace(status))
+            query = query.Where(item => item.Status == status.Trim());
+
+        var requests = await query
+            .OrderByDescending(item => item.RequestedAt)
+            .Take(100)
+            .Select(item => new
+            {
+                id = item.Id,
+                originalJournalId = item.OriginalJournalId,
+                originalJournalNumber = item.OriginalJournal.JournalNumber,
+                originalEventType = item.OriginalJournal.EventType,
+                originalSourceType = item.OriginalJournal.SourceType,
+                originalSourceId = item.OriginalJournal.SourceId,
+                originalAmount = item.OriginalJournal.Lines.Sum(line => line.Debit),
+                currency = item.OriginalJournal.Currency,
+                reason = item.Reason,
+                status = item.Status,
+                requestedByUserId = item.RequestedByUserId,
+                requestedAt = item.RequestedAt,
+                expiresAt = item.ExpiresAt,
+                decidedByUserId = item.DecidedByUserId,
+                decidedAt = item.DecidedAt,
+                decisionReason = item.DecisionReason,
+                executedByUserId = item.ExecutedByUserId,
+                executedAt = item.ExecutedAt,
+                failureReason = item.FailureReason
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object> { Success = true, Data = requests });
+    }
+
+    /// <summary>
+    /// Requests an exact, immutable reversal of an existing journal. A different SuperAdmin must approve it.
+    /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-reversal-requests")]
+    public async Task<ActionResult<ApiResponse<int>>> RequestFinancialReversal(
+        [FromBody] DoForYou.API.DTOs.FinancialReversalCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var reason = request?.Reason?.Trim();
+        if (request == null || request.OriginalJournalId <= 0 ||
+            string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<int> { Success = false, Message = "A valid original journal ID and a reason between 10 and 500 characters are required." });
+
+        var original = await _context.FinancialJournals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == request.OriginalJournalId, cancellationToken);
+        if (original == null)
+            return NotFound(new ApiResponse<int> { Success = false, Message = "Original journal not found." });
+        if (original.ReversalOfJournalId.HasValue || original.EventType == "reversal")
+            return Conflict(new ApiResponse<int> { Success = false, Message = "A reversal journal cannot itself be reversed through this workflow." });
+
+        if (await _context.FinancialJournals.AnyAsync(
+                item => item.ReversalOfJournalId == original.Id,
+                cancellationToken))
+            return Conflict(new ApiResponse<int> { Success = false, Message = "This journal has already been reversed." });
+
+        var now = DateTime.UtcNow;
+        var requestTransaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        await using (requestTransaction)
+        {
+            var expiredRequests = await _context.FinancialReversalRequests
+                .Where(item => item.OriginalJournalId == original.Id &&
+                    (item.Status == "Pending" || item.Status == "Approved") &&
+                    item.ExpiresAt <= now)
+                .ToListAsync(cancellationToken);
+            foreach (var expired in expiredRequests)
+            {
+                expired.Status = "Expired";
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = actorId,
+                    Action = "FinancialReversalRequestExpired",
+                    EntityType = "FinancialReversalRequest",
+                    EntityId = expired.Id,
+                    OldValues = expired.Status,
+                    NewValues = $"Expired at {now:O}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
+
+            var activeRequest = await _context.FinancialReversalRequests.AnyAsync(item =>
+                item.OriginalJournalId == original.Id &&
+                (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing") &&
+                item.ExpiresAt > now,
+                cancellationToken);
+            if (activeRequest)
+                return Conflict(new ApiResponse<int> { Success = false, Message = "An active reversal request already exists for this journal." });
+
+            var reversalRequest = new Models.FinancialReversalRequest
+            {
+                OriginalJournalId = original.Id,
+                Reason = reason,
+                Status = "Pending",
+                IdempotencyKey = $"admin-journal-reversal:{Guid.NewGuid():N}",
+                RequestedByUserId = actorId.Value,
+                RequestedAt = now,
+                ExpiresAt = now.AddMinutes(30)
+            };
+            _context.FinancialReversalRequests.Add(reversalRequest);
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = "FinancialReversalRequested",
+                EntityType = "FinancialJournal",
+                EntityId = checked((int)Math.Min(original.Id, int.MaxValue)),
+                NewValues = $"reversalRequestId=pending; journalId={original.Id}; reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+
+            try
+            {
+                await _context.SaveChangesAsync(cancellationToken);
+                if (requestTransaction != null)
+                    await requestTransaction.CommitAsync(cancellationToken);
+                return Ok(new ApiResponse<int> { Success = true, Data = reversalRequest.Id, Message = "Reversal request submitted. No journal or balance has been changed." });
+            }
+            catch (DbUpdateException)
+            {
+                return Conflict(new ApiResponse<int> { Success = false, Message = "Another reversal request was created concurrently, or this request could not be persisted. Refresh before retrying." });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records an independent SuperAdmin decision on a journal reversal request.
+    /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-reversal-requests/{id:int}/decide")]
+    public async Task<ActionResult<ApiResponse<bool>>> DecideFinancialReversal(
+        int id,
+        [FromBody] DoForYou.API.DTOs.FinancialReversalDecisionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var decision = request?.Decision?.Trim().ToLowerInvariant();
+        var reason = request?.Reason?.Trim();
+        if (decision is not ("approve" or "reject") ||
+            string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "Choose approve or reject and provide a reason between 10 and 500 characters." });
+
+        var now = DateTime.UtcNow;
+        var reversalRequest = await _context.FinancialReversalRequests.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (reversalRequest == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial reversal request not found." });
+        if (reversalRequest.RequestedByUserId == actorId.Value)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The requester cannot approve or reject their own reversal request." });
+        if (reversalRequest.Status != "Pending" || reversalRequest.ExpiresAt <= now)
+        {
+            if (reversalRequest.Status == "Pending" && reversalRequest.ExpiresAt <= now)
+            {
+                reversalRequest.Status = "Expired";
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = actorId,
+                    Action = "FinancialReversalRequestExpired",
+                    EntityType = "FinancialReversalRequest",
+                    EntityId = id,
+                    OldValues = "Pending",
+                    NewValues = $"Expired at {now:O}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only a current pending reversal request can be decided." });
+        }
+
+        var nextStatus = decision == "approve" ? "Approved" : "Rejected";
+        var affected = 1;
+        if (_context.Database.IsRelational())
+        {
+            affected = await _context.FinancialReversalRequests
+                .Where(item => item.Id == id && item.Status == "Pending" &&
+                    item.ExpiresAt > now && item.RequestedByUserId != actorId.Value)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, nextStatus)
+                    .SetProperty(item => item.DecidedByUserId, actorId.Value)
+                    .SetProperty(item => item.DecidedAt, now)
+                    .SetProperty(item => item.DecisionReason, reason),
+                    cancellationToken);
+        }
+        else
+        {
+            reversalRequest.Status = nextStatus;
+            reversalRequest.DecidedByUserId = actorId.Value;
+            reversalRequest.DecidedAt = now;
+            reversalRequest.DecisionReason = reason;
+        }
+
+        if (affected != 1)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The reversal request was already decided or expired. Refresh the queue." });
+
+        if (_context.Database.IsRelational())
+        {
+            _context.ChangeTracker.Clear();
+            reversalRequest = await _context.FinancialReversalRequests.FirstAsync(item => item.Id == id, cancellationToken);
+        }
+
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId,
+            Action = decision == "approve" ? "FinancialReversalApproved" : "FinancialReversalRejected",
+            EntityType = "FinancialReversalRequest",
+            EntityId = id,
+            OldValues = "Pending",
+            NewValues = $"{nextStatus}; originalJournalId={reversalRequest.OriginalJournalId}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync(cancellationToken);
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = $"Financial reversal request {nextStatus.ToLowerInvariant()}." });
+    }
+
+    /// <summary>
+    /// Executes an approved exact reversal. The executor must differ from the approver.
+    /// </summary>
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-reversal-requests/{id:int}/execute")]
+    public async Task<ActionResult<ApiResponse<long>>> ExecuteFinancialReversal(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var current = await _context.FinancialReversalRequests
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (current == null)
+            return NotFound(new ApiResponse<long> { Success = false, Message = "Financial reversal request not found." });
+        if (current.Status != "Approved" || current.ExpiresAt <= DateTime.UtcNow ||
+            !current.DecidedByUserId.HasValue ||
+            current.DecidedByUserId.Value == current.RequestedByUserId ||
+            current.DecidedByUserId.Value == actorId.Value)
+            return Conflict(new ApiResponse<long> { Success = false, Message = "Execution requires a current independent approval and an executor other than the approver." });
+        if (!await IsFreshActiveSuperAdminAsync(current.DecidedByUserId.Value))
+            return Conflict(new ApiResponse<long> { Success = false, Message = "The approving SuperAdmin is no longer active or their authenticator verification is stale." });
+
+        await using var transaction = _context.Database.IsRelational()
+            ? await _context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        var now = DateTime.UtcNow;
+        var claimed = 1;
+        if (_context.Database.IsRelational())
+        {
+            claimed = await _context.FinancialReversalRequests
+                .Where(item => item.Id == id && item.Status == "Approved" &&
+                    item.ExpiresAt > now && item.DecidedByUserId != actorId.Value &&
+                    item.RequestedByUserId != item.DecidedByUserId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "Executing"), cancellationToken);
+        }
+        else
+        {
+            var tracked = await _context.FinancialReversalRequests.FirstAsync(item => item.Id == id, cancellationToken);
+            tracked.Status = "Executing";
+        }
+
+        if (claimed != 1)
+            return Conflict(new ApiResponse<long> { Success = false, Message = "The reversal approval was already consumed or expired." });
+
+        _context.ChangeTracker.Clear();
+        var executing = await _context.FinancialReversalRequests
+            .Include(item => item.OriginalJournal)
+            .FirstAsync(item => item.Id == id, cancellationToken);
+
+        try
+        {
+            var reversal = await _financialLedgerService.ReverseAsync(
+                executing.OriginalJournalId,
+                sourceType: "admin_financial_reversal_request",
+                sourceId: executing.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                idempotencyKey: executing.IdempotencyKey,
+                description: executing.Reason,
+                provider: executing.OriginalJournal.Provider,
+                providerReference: executing.OriginalJournal.ProviderReference,
+                createdByUserId: actorId.Value,
+                occurredAt: now,
+                cancellationToken: cancellationToken);
+
+            executing.Status = "Executed";
+            executing.ExecutedByUserId = actorId.Value;
+            executing.ExecutedAt = now;
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = "FinancialReversalExecuted",
+                EntityType = "FinancialReversalRequest",
+                EntityId = id,
+                OldValues = "Approved",
+                NewValues = $"Executed; reversalJournalId={reversal.Id}; originalJournalId={executing.OriginalJournalId}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+            if (transaction != null)
+                await transaction.CommitAsync(cancellationToken);
+
+            return Ok(new ApiResponse<long> { Success = true, Data = reversal.Id, Message = "The exact journal reversal was posted. Original journal entries remain unchanged." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            if (transaction != null)
+                await transaction.RollbackAsync(cancellationToken);
+            _context.ChangeTracker.Clear();
+            var failed = await _context.FinancialReversalRequests.FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+            if (failed != null && failed.Status == "Approved")
+            {
+                failed.Status = "Failed";
+                failed.FailureReason = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = actorId,
+                    Action = "FinancialReversalExecutionFailed",
+                    EntityType = "FinancialReversalRequest",
+                    EntityId = id,
+                    OldValues = "Approved",
+                    NewValues = failed.FailureReason,
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            return Conflict(new ApiResponse<long> { Success = false, Message = "The exact reversal could not be posted. Review the request and journal state before creating another request." });
+        }
     }
 
     /// <summary>
