@@ -51,7 +51,7 @@ namespace DoForYou.API.Migrations
                 table: "FinancialApprovalRequests",
                 columns: new[] { "TaskId", "Action" },
                 unique: true,
-                filter: "\\"Status\\" IN ('Pending', 'Approved', 'Executing')");
+                filter: "\"Status\" IN ('Pending', 'Approved', 'Executing')");
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)
