@@ -4358,6 +4358,103 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/super-admin/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CreateSuperAdminChangeRequest"];
+                    "text/json": components["schemas"]["CreateSuperAdminChangeRequest"];
+                    "application/*+json": components["schemas"]["CreateSuperAdminChangeRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/super-admin/changes/{id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DecideSuperAdminChangeRequest"];
+                    "text/json": components["schemas"]["DecideSuperAdminChangeRequest"];
+                    "application/*+json": components["schemas"]["DecideSuperAdminChangeRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/super-admin/invitations": {
         parameters: {
             query?: never;
@@ -6908,6 +7005,12 @@ export interface components {
             email?: string | null;
             reason?: string | null;
         };
+        CreateSuperAdminChangeRequest: {
+            action?: string | null;
+            /** Format: int32 */
+            targetUserId?: number;
+            reason?: string | null;
+        };
         CreateSupportTicketRequest: {
             name?: string | null;
             email?: string | null;
@@ -6937,6 +7040,10 @@ export interface components {
             latitude?: number | null;
             /** Format: double */
             longitude?: number | null;
+        };
+        DecideSuperAdminChangeRequest: {
+            decision?: string | null;
+            reason?: string | null;
         };
         DisableTwoFactorRequest: {
             currentPassword?: string | null;
