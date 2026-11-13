@@ -269,6 +269,9 @@ namespace DoForYou.API.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<string>("Action")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -304,6 +307,11 @@ namespace DoForYou.API.Migrations
                     b.Property<string>("LastExecutionError")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("PaymentTransactionId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
 
                     b.Property<string>("Reason")
                         .IsRequired()
