@@ -640,17 +640,32 @@ public class DisputesController : ControllerBase
 
             if (!refund.Success || string.IsNullOrWhiteSpace(refund.RefundId))
             {
-                refundRecord.Status = "Failed";
+                refundRecord.Status = refund.OutcomeUnknown ? "ReconciliationRequired" : "Failed";
                 refundRecord.FailureReason = refund.Error;
                 refundRecord.LastReconciledAt = DateTime.UtcNow;
-                task.PaymentStatus = "DisputePending";
-                task.TaskStatus = priorTaskStatus;
-                task.EscrowStatus = "disputed";
-                dispute.Status = "Open";
-                dispute.ResolvedAt = null;
+                if (refund.OutcomeUnknown)
+                {
+                    task.PaymentStatus = "RefundPending";
+                    task.TaskStatus = "RefundPending";
+                    task.EscrowStatus = "refund_pending";
+                    dispute.Status = "RefundPending";
+                    dispute.Resolution = resolution;
+                    dispute.ResolvedAt = null;
+                }
+                else
+                {
+                    task.PaymentStatus = "DisputePending";
+                    task.TaskStatus = priorTaskStatus;
+                    task.EscrowStatus = "disputed";
+                    dispute.Status = "Open";
+                    dispute.ResolvedAt = null;
+                }
                 await _context.SaveChangesAsync();
-                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", refund.Error ?? "Paystack refund submission failed.");
-                return StatusCode(StatusCodes.Status502BadGateway,
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed",
+                    refund.OutcomeUnknown
+                        ? "Paystack submission outcome is unknown; task remains frozen and no automatic retry is allowed."
+                        : refund.Error ?? "Paystack refund submission failed.");
+                return StatusCode(refund.OutcomeUnknown ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status502BadGateway,
                     new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Paystack refund." });
             }
 
