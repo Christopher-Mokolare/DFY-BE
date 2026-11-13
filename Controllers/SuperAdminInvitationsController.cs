@@ -30,8 +30,12 @@ public sealed class SuperAdminInvitationsController(
         var actorId = GetCurrentUserId();
         if (actorId == null) return Unauthorized();
 
+        await using var createTransaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken)
+            : null;
+
         var actor = await context.Users.AsNoTracking()
-            .Where(user => user.Id == actorId.Value && !user.IsArchived)
+            .Where(user => user.Id == actorId.Value && !user.IsArchived && !user.IsSuspended)
             .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
             .FirstOrDefaultAsync(cancellationToken);
         if (!HasRole(actor?.Roles, "SuperAdmin")) return Forbid();
@@ -101,8 +105,6 @@ public sealed class SuperAdminInvitationsController(
             ExpiresAt = now.Add(InvitationLifetime)
         };
         context.AdminInvitations.Add(invitation);
-        await context.SaveChangesAsync(cancellationToken);
-
         context.AuditLogs.Add(new AuditLog
         {
             UserId = actorId.Value,
@@ -115,6 +117,7 @@ public sealed class SuperAdminInvitationsController(
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await context.SaveChangesAsync(cancellationToken);
+        if (createTransaction != null) await createTransaction.CommitAsync(cancellationToken);
 
         var acceptUrl = new Uri(frontendUri, $"/admin-invitation/accept#token={Uri.EscapeDataString(rawToken)}");
         var body = $"""
@@ -275,7 +278,7 @@ public sealed class SuperAdminInvitationsController(
     private async Task<bool> IsFreshSuperAdminAsync(int userId, CancellationToken cancellationToken)
     {
         var user = await context.Users.AsNoTracking()
-            .Where(item => item.Id == userId && !item.IsArchived)
+            .Where(item => item.Id == userId && !item.IsArchived && !item.IsSuspended)
             .Select(item => new { item.Roles, item.AuthenticatorTwoFactorEnabled, item.LastTwoFactorVerifiedAt })
             .FirstOrDefaultAsync(cancellationToken);
         return HasRole(user?.Roles, "SuperAdmin") &&
