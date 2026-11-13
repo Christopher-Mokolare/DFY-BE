@@ -50,8 +50,7 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
         {
             if (!targetIsSuperAdmin)
                 return Conflict(new { message = "The target is not a SuperAdmin." });
-            var activeCount = await context.Users.CountAsync(user => !user.IsArchived && user.Roles != null &&
-                EF.Functions.Like("," + user.Roles.Replace(" ", "") + ",", "%,SuperAdmin,%"), cancellationToken);
+            var activeCount = await CountActiveSuperAdminsAsync(cancellationToken);
             if (activeCount <= 1)
                 return Conflict(new { message = "The last active SuperAdmin cannot be removed." });
         }
@@ -151,8 +150,7 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
             {
                 if (!HasRole(target.Roles, "SuperAdmin"))
                     return Conflict(new { message = "The target is no longer a SuperAdmin." });
-                var activeCount = await context.Users.CountAsync(user => !user.IsArchived && user.Roles != null &&
-                    EF.Functions.Like("," + user.Roles.Replace(" ", "") + ",", "%,SuperAdmin,%"), cancellationToken);
+                var activeCount = await CountActiveSuperAdminsAsync(cancellationToken);
                 if (activeCount <= 1)
                     return Conflict(new { message = "The last active SuperAdmin cannot be removed." });
                 target.Roles = "Admin";
@@ -181,6 +179,15 @@ public sealed class SuperAdminChangesController(AppDbContext context) : Controll
             data = new { change.Id, change.Status, change.DecidedAt },
             message = decision == "approve" ? "The SuperAdmin change has been applied." : "The SuperAdmin change request has been rejected."
         });
+    }
+
+    private async Task<int> CountActiveSuperAdminsAsync(CancellationToken cancellationToken)
+    {
+        var roles = await context.Users.AsNoTracking()
+            .Where(user => !user.IsArchived && user.Roles != null && user.Roles.Contains("SuperAdmin"))
+            .Select(user => user.Roles)
+            .ToListAsync(cancellationToken);
+        return roles.Count(value => HasRole(value, "SuperAdmin"));
     }
 
     private async Task<bool> IsFreshSuperAdminAsync(int userId, CancellationToken cancellationToken)
