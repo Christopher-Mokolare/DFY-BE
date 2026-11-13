@@ -146,7 +146,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("TaskId", "Action")
                         .IsUnique()
-                        .HasFilter("\\"Status\\" IN ('Pending', 'Approved', 'Executing')")
+                        .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
                         .HasDatabaseName("IX_FinancialApprovalRequests_OpenTaskAction");
 
                     b.ToTable("FinancialApprovalRequests");
