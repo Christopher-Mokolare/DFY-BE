@@ -75,6 +75,18 @@ public class CreatorConfirmation24HourTests
         Assert.Equal(680m, payout.Amount);
         Assert.Equal("Pending", payout.Status);
         Assert.Equal("Paystack", payout.Provider);
+
+        var journals = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .OrderBy(journal => journal.Id)
+            .ToListAsync();
+        Assert.Equal(2, journals.Count);
+        var releaseJournal = Assert.Single(journals.Where(journal => journal.EventType == "escrow_released"));
+        Assert.Equal(800m, releaseJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(800m, releaseJournal.Lines.Sum(line => line.Credit));
+        Assert.Equal(680m, releaseJournal.Lines.Single(line => line.Account.Code == "2100").Credit);
+        Assert.Equal(120m, releaseJournal.Lines.Single(line => line.Account.Code == "4000").Credit);
     }
 
     [Fact]
