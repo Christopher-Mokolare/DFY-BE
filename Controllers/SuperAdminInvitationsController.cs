@@ -50,7 +50,8 @@ public sealed class SuperAdminInvitationsController(
 
         var normalizedEmail = email.ToLowerInvariant();
         var frontendBaseUrl = Environment.GetEnvironmentVariable("DFY_FRONTEND_URL")
-            ?? configuration["Frontend:BaseUrl"];
+            ?? configuration["Frontend:BaseUrl"]
+            ?? configuration["AllowedOrigin"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
         if (!Uri.TryCreate(frontendBaseUrl, UriKind.Absolute, out var frontendUri) ||
             frontendUri.Scheme != Uri.UriSchemeHttps)
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
