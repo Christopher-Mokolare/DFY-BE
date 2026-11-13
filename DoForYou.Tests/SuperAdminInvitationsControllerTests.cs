@@ -164,7 +164,7 @@ public sealed class SuperAdminInvitationsControllerTests
     private sealed class FakeEmailSender : IEmailSender
     {
         public string Body { get; private set; } = string.Empty;
-        public Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken = default)
+        public System.Threading.Tasks.Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken = default)
         {
             Body = body;
             return Task.CompletedTask;
