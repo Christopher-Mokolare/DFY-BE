@@ -18,6 +18,9 @@ public static class AdminPermissionPolicies
     public const string ConfigurationManage = "configuration.manage";
     public const string AuditRead = "audit.read";
 
+    public const string KycReviewPolicy = "AdminPermission:" + KycReview;
+    public const string KycViewDocumentsPolicy = "AdminPermission:" + KycViewDocuments;
+
     public static readonly string[] All =
     [
         UsersManage, KycReview, KycViewDocuments, KycOverride, DisputesManage,
