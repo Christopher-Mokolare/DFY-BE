@@ -121,7 +121,7 @@ namespace DoForYou.API.Migrations
                     b.ToTable("FinancialAccounts");
 
                     b.HasData(
-                        new { Id = 1, AccountType = "Asset", Code = "1000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Paystack Clearing" },
+                        new { Id = 1, AccountType = "Asset", Code = "1000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Payment Provider Clearing" },
                         new { Id = 2, AccountType = "Asset", Code = "1100", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Merchant Bank Settlement" },
                         new { Id = 3, AccountType = "Liability", Code = "2000", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Escrow Liability" },
                         new { Id = 4, AccountType = "Liability", Code = "2100", CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc), Currency = "ZAR", IsActive = true, IsSystem = true, Name = "Runner Payable" },
