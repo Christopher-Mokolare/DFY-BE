@@ -165,7 +165,7 @@ public sealed class AdminUserProfileCorrectionsController(
         var message = emailChanged
             ? "Profile corrected. The new email address is unverified; the user must complete the emailed verification link before signing in."
             : phoneChanged
-                ? "Profile corrected. The changed phone number is now unverified and must be verified through the supported account process."
+                ? "Profile corrected. The changed phone number is now unverified; this correction does not send an SMS verification code."
                 : "Profile corrected. The previous and new values are retained in the restricted audit history.";
 
         try
