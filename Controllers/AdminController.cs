@@ -1015,6 +1015,85 @@ public class AdminController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Lists accounts for the dedicated SuperAdmin access-management workspace.
+    /// The caller is checked against persisted roles; frontend route guards are not security boundaries.
+    /// </summary>
+    [HttpGet("superadmin/accounts")]
+    public async Task<ActionResult<ApiResponse<object>>> GetSuperAdminAccounts(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        [FromQuery] string? search = null,
+        [FromQuery] bool includeArchived = false)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue)
+            return Unauthorized(new ApiResponse<object> { Success = false, Message = "An authenticated administrator is required." });
+
+        var actorRoles = await _context.Users.AsNoTracking()
+            .Where(candidate => candidate.Id == actorId.Value && !candidate.IsArchived)
+            .Select(candidate => candidate.Roles)
+            .FirstOrDefaultAsync();
+        var actorIsSuperAdmin = actorRoles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(value => string.Equals(value.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true;
+        if (!actorIsSuperAdmin)
+            return Forbid();
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        IQueryable<Models.User> query = _context.Users.AsNoTracking();
+        if (!includeArchived)
+            query = query.Where(user => !user.IsArchived);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLowerInvariant();
+            query = query.Where(user =>
+                user.Email.ToLower().Contains(term) ||
+                user.FirstName.ToLower().Contains(term) ||
+                user.LastName.ToLower().Contains(term));
+        }
+
+        var totalCount = await query.CountAsync();
+        var accounts = await query
+            .OrderByDescending(user => user.Roles != null && user.Roles.Contains("Admin"))
+            .ThenBy(user => user.FirstName)
+            .ThenBy(user => user.LastName)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(user => new
+            {
+                id = user.Id,
+                name = (user.FirstName + " " + user.LastName).Trim(),
+                email = user.Email,
+                roles = user.Roles,
+                isAdministrator = user.Roles != null && user.Roles.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Any(role => role.Trim() == "Admin" || role.Trim() == "SuperAdmin"),
+                isSuperAdmin = user.Roles != null && user.Roles.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Any(role => role.Trim() == "SuperAdmin"),
+                emailVerified = user.EmailVerified,
+                authenticatorTwoFactorEnabled = user.AuthenticatorTwoFactorEnabled,
+                isArchived = user.IsArchived,
+                lastLoginAt = user.LastLoginAt,
+                createdAt = user.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new
+            {
+                accounts,
+                totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                includeArchived
+            }
+        });
+    }
+
     [HttpPatch("users/{userId}/status")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserStatus(int userId, [FromBody] UpdateUserStatusRequest request)
     {
