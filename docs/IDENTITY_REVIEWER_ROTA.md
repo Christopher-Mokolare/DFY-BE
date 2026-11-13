@@ -14,3 +14,19 @@ Near-deadline and one-business-day overdue alerts go to configured primary revie
 If either list is empty or contains no eligible account, the worker logs a warning and does not fall back to notifying every administrator. Configure and verify at least one primary and one backup reviewer before relying on the one-business-day operational target.
 
 IDs are internal account identifiers, not email addresses. Never place passwords, MFA seeds, document data, or other secrets in these settings. Apply the same configuration separately to staging and production; this change does not modify either environment's settings.
+
+
+## Coverage record to complete before sign-off
+
+Record this in the staging operations handover after the named reviewers have accepted responsibility:
+
+| Coverage item | Staging value |
+|---|---|
+| Primary reviewer account ID | Pending assignment |
+| Backup reviewer account ID | Pending assignment |
+| Primary coverage hours (SAST) | Pending agreement |
+| Backup escalation contact | Pending agreement |
+| Last rota review date | Pending |
+| Next rota review date | Before the next public-holiday calendar year |
+
+Do not treat the placeholders as active coverage. The one-business-day target remains internal until these fields are completed and the corresponding Render staging variables have been verified.
