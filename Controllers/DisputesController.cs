@@ -568,10 +568,26 @@ public class DisputesController : ControllerBase
                 return StatusCode(StatusCodes.Status503ServiceUnavailable,
                     new ApiResponse<bool> { Success = false, Message = "Paystack refund state could not be verified. No new refund was submitted; the case is held for manual reconciliation." });
             }
-            var matchingProviderRefund = providerRefunds
-                .Where(r => r.Amount == refundRecord.Amount)
-                .OrderByDescending(r => string.Equals(r.Status, "processed", StringComparison.OrdinalIgnoreCase))
-                .FirstOrDefault();
+            var matchingProviderRefunds = providerRefunds
+                .Where(item => item.Amount == refundRecord.Amount &&
+                    string.Equals(item.TransactionId, refundRecord.TransactionId, StringComparison.Ordinal))
+                .ToList();
+            if (providerRefunds.Count > 0 && matchingProviderRefunds.Count != 1)
+            {
+                refundRecord.Status = "ReconciliationRequired";
+                refundRecord.FailureReason = "Paystack returned partial or ambiguous refund records for this charge. Manual reconciliation is required; no additional refund was submitted.";
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                task.PaymentStatus = "RefundPending";
+                task.TaskStatus = "RefundPending";
+                task.EscrowStatus = "refund_pending";
+                dispute.Status = "RefundPending";
+                dispute.Resolution = resolution;
+                dispute.ResolvedAt = null;
+                await _context.SaveChangesAsync();
+                await CompleteRefundApprovalAsync(refundApproval, actorId, "Failed", "Provider returned ambiguous existing refund records; no new refund submitted.");
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack has existing refund records that do not match one exact full refund. The task remains frozen for manual reconciliation." });
+            }
+            var matchingProviderRefund = matchingProviderRefunds.SingleOrDefault();
 
             if (matchingProviderRefund != null)
             {
