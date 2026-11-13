@@ -258,6 +258,7 @@ public class DisputesController : ControllerBase
     [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
     [Authorize(Policy = "SuperAdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.DisputesManagePolicy)]
     public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] JsonElement request)
     {
         var actorId = GetCurrentUserId();
