@@ -412,7 +412,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("OriginalJournalId", "Status")
                         .IsUnique()
-                        .HasFilter("\\\"Status\\\" IN ('Pending', 'Approved', 'Executing')")
+                        .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
                         .HasDatabaseName("IX_FinancialReversalRequests_OpenJournal");
 
                     b.HasIndex("Status", "ExpiresAt")
