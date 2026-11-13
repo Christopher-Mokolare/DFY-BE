@@ -15,6 +15,8 @@ public sealed class FinancialApprovalRequest
 
     public int TaskId { get; set; }
 
+    public int? DisputeId { get; set; }
+
     [MaxLength(120)]
     public string PaymentTransactionId { get; set; } = string.Empty;
 
