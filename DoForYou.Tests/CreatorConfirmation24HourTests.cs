@@ -90,6 +90,55 @@ public class CreatorConfirmation24HourTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Escrow_release_fails_closed_when_only_legacy_task_totals_exist()
+    {
+        using var context = CreateContext(nameof(Escrow_release_fails_closed_when_only_legacy_task_totals_exist));
+        var creator = CreateUser(3, "creator", "legacy-escrow-creator@test.com");
+        var runner = CreateUser(4, "runner", "legacy-escrow-runner@test.com");
+        context.Users.AddRange(creator, runner);
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 102,
+            TaskId = "DFY-LEGACY-ESCROW-NO-LEDGER",
+            TaskName = "Legacy escrow task",
+            TaskDescription = "This task has historical task totals but no new ledger source.",
+            Category = "Home",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 500m,
+            CommissionAmount = 75m,
+            PayoutAmount = 425m,
+            PaymentStatus = "EscrowHeld",
+            TaskStatus = "AwaitingConfirmation",
+            EscrowStatus = "held",
+            EscrowHoldUntil = DateTime.UtcNow.AddMinutes(-1),
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            UpdatedAt = DateTime.UtcNow
+        };
+        context.Tasks.Add(task);
+        context.AuditLogs.Add(new AuditLog
+        {
+            Action = "PaystackPaymentVerified",
+            EntityType = "Task",
+            EntityId = task.Id,
+            NewValues = "transactionId=TX-LEGACY-AUDIT-ONLY"
+        });
+        await context.SaveChangesAsync();
+
+        var escrow = new EscrowService(context, NullLogger<EscrowService>.Instance);
+        var released = await escrow.ReleaseEscrowAsync(task.Id, force: true);
+
+        Assert.False(released);
+        Assert.Empty(await context.Payouts.ToListAsync());
+        Assert.Empty(await context.FinancialJournals.ToListAsync());
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("held", task.EscrowStatus);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task ActiveCreatorConfirmation_DoesNotReleaseBefore24Hours()
     {
         using var context = CreateContext(nameof(ActiveCreatorConfirmation_DoesNotReleaseBefore24Hours));
