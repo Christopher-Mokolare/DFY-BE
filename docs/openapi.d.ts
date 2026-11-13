@@ -78,6 +78,7 @@ export interface paths {
                 };
             };
         };
+        put?: never;
         post: {
             parameters: {
                 query?: never;
@@ -85,7 +86,7 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody: {
+            requestBody?: {
                 content: {
                     "application/json": components["schemas"]["FinancialReversalCreateRequest"];
                     "text/json": components["schemas"]["FinancialReversalCreateRequest"];
@@ -106,7 +107,6 @@ export interface paths {
                 };
             };
         };
-        put?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -131,7 +131,7 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody: {
+            requestBody?: {
                 content: {
                     "application/json": components["schemas"]["FinancialReversalDecisionRequest"];
                     "text/json": components["schemas"]["FinancialReversalDecisionRequest"];
@@ -8085,15 +8085,6 @@ export interface components {
             currentPassword?: string | null;
             code: string;
         };
-        FinancialReversalCreateRequest: {
-            /** Format: int64 */
-            originalJournalId: number;
-            reason: string;
-        };
-        FinancialReversalDecisionRequest: {
-            decision: "approve" | "reject";
-            reason: string;
-        };
         ForgotPasswordRequest: {
             /** Format: email */
             email: string;
@@ -8429,6 +8420,16 @@ export interface components {
         };
         VerifyEmailRequest: {
             token: string;
+        };
+        FinancialReversalCreateRequest: {
+            /** Format: int64 */
+            originalJournalId: number;
+            reason: string;
+        };
+        FinancialReversalDecisionRequest: {
+            /** @enum {string} */
+            decision: "approve" | "reject";
+            reason: string;
         };
     };
     responses: never;
