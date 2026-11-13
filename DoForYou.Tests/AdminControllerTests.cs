@@ -301,11 +301,12 @@ public class AdminControllerTests
             PaymentStatus = "EscrowHeld",
             EscrowStatus = "held",
             Budget = 200m,
+            CommissionAmount = 30m,
             PayoutAmount = 170m
         };
         context.Users.AddRange(requester, approver, creator, runner);
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-FINANCIAL-APPROVAL-85");
 
         var requesterController = CreateController(context, requester.Id);
         var requested = await requesterController.RequestFinancialApproval(
@@ -473,12 +474,7 @@ public class AdminControllerTests
             TaskId = task.Id, ReportedByUserId = creator.Id,
             Issue = "Task incomplete", Category = "quality", Status = "Open"
         });
-        context.PaymentAttempts.Add(new PaymentAttempt
-        {
-            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_114",
-            TransactionId = "987654", Amount = 200m, Status = "Completed"
-        });
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "987654", "pay_ref_114");
 
         var requested = await CreateController(context, requester.Id).RequestFinancialRefundApproval(
             task.TaskId,
@@ -530,12 +526,7 @@ public class AdminControllerTests
             TaskId = task.Id, ReportedByUserId = creator.Id,
             Issue = "Work completed", Category = "quality", Status = "Open"
         });
-        context.PaymentAttempts.Add(new PaymentAttempt
-        {
-            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_release",
-            TransactionId = "987656", Amount = 200m, Status = "Completed"
-        });
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "987656", "pay_ref_release");
 
         var requested = await CreateController(context, requester.Id).RequestDisputeReleaseApproval(
             task.TaskId,
@@ -662,6 +653,44 @@ public class AdminControllerTests
         Assert.IsType<ForbidResult>(denied.Result);
         Assert.Empty(context.FinancialApprovalRequests);
         Assert.Empty(context.Payouts);
+    }
+
+    private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
+        AppDbContext context,
+        DoForYou.API.Models.Task task,
+        string transactionId,
+        string? reference = null)
+    {
+        context.Database.EnsureCreated();
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = reference ?? $"REF-{task.TaskId}",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = transactionId,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var ledger = new DoForYou.API.Services.FinancialLedgerService(context);
+        await ledger.PostAsync(new DoForYou.API.Services.FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            transactionId,
+            $"paystack:charge:{transactionId}",
+            "ZAR",
+            "Verified Paystack charge for SuperAdmin financial approval test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new DoForYou.API.Services.FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new DoForYou.API.Services.FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            reference ?? $"REF-{task.TaskId}"));
     }
 
     private static User CreateUser(int id, string roles) => new()
