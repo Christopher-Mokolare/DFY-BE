@@ -724,25 +724,55 @@ public class AdminControllerTests
         approver.EmailVerified = true;
         approver.AuthenticatorTwoFactorEnabled = true;
         approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
-        context.Users.AddRange(requester, approver);
+        var runner = CreateUser(703, "Runner");
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 703,
+            TaskId = "DFY-SUPERADMIN-REVERSAL",
+            TaskDescription = "Returned provider payout for reversal approval test",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 125m,
+            PaymentStatus = "Paid",
+            TaskStatus = "PayoutPending",
+            EscrowStatus = "released",
+            PayoutStatus = "Returned",
+            CreatedByUserId = requester.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow
+        };
+        context.Users.AddRange(requester, approver, runner);
+        context.Tasks.Add(task);
+        context.Payouts.Add(new DoForYou.API.Models.Payout
+        {
+            Id = 703,
+            TaskId = task.Id,
+            RunnerId = runner.Id,
+            Amount = 125m,
+            Status = "Returned",
+            Provider = "Paystack",
+            MerchantReference = "DFY-PAYOUT-REVERSAL-TEST",
+            ProviderReference = "TRF-SUPERADMIN-REVERSAL"
+        });
         await context.SaveChangesAsync();
 
         var ledger = new DoForYou.API.Services.FinancialLedgerService(context);
         var original = await ledger.PostAsync(new DoForYou.API.Services.FinancialJournalDraft(
-            "payment_collected",
-            "paystack_transaction",
-            "TX-SUPERADMIN-REVERSAL",
-            "paystack:charge:TX-SUPERADMIN-REVERSAL",
+            "runner_payout_completed",
+            "payout",
+            "703",
+            "paystack:payout:703:completed",
             "ZAR",
-            "Verified Paystack collection for reversal approval test",
+            "Paystack payout completion journal for provider-confirmed reversal approval test",
             DateTime.UtcNow,
             new[]
             {
-                new DoForYou.API.Services.FinancialJournalLineDraft("1000", 125m, 0m),
-                new DoForYou.API.Services.FinancialJournalLineDraft("2000", 0m, 125m)
+                new DoForYou.API.Services.FinancialJournalLineDraft("2100", 125m, 0m),
+                new DoForYou.API.Services.FinancialJournalLineDraft("1000", 0m, 125m)
             },
             "Paystack",
-            "REF-SUPERADMIN-REVERSAL"));
+            "TRF-SUPERADMIN-REVERSAL"));
 
         var create = await CreateController(context, requester.Id).RequestFinancialReversal(
             new FinancialReversalCreateRequest
@@ -780,11 +810,11 @@ public class AdminControllerTests
                 .ThenInclude(line => line.Account)
             .SingleAsync(journal => journal.ReversalOfJournalId == original.Id);
         Assert.Equal(2, reversal.Lines.Count);
-        Assert.Contains(reversal.Lines, line => line.Account.Code == "1000" && line.Debit == 0m && line.Credit == 125m);
-        Assert.Contains(reversal.Lines, line => line.Account.Code == "2000" && line.Debit == 125m && line.Credit == 0m);
+        Assert.Contains(reversal.Lines, line => line.Account.Code == "1000" && line.Debit == 125m && line.Credit == 0m);
+        Assert.Contains(reversal.Lines, line => line.Account.Code == "2100" && line.Debit == 0m && line.Credit == 125m);
         Assert.Equal("Executed", (await context.FinancialReversalRequests.SingleAsync()).Status);
         Assert.Equal(0m, await ledger.GetAccountBalanceAsync("1000"));
-        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2000"));
+        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2100"));
     }
 
     private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
