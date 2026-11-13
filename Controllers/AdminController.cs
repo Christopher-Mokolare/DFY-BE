@@ -1484,10 +1484,29 @@ public class AdminController : ControllerBase
         await using var rejectionTransaction = _context.Database.IsRelational()
             ? await _context.Database.BeginTransactionAsync()
             : null;
-        approval.Status = "Rejected";
-        approval.DecidedByUserId = actorId.Value;
-        approval.DecidedAt = DateTime.UtcNow;
-        approval.DecisionReason = reason;
+        var decidedAt = DateTime.UtcNow;
+        var changed = 0;
+        if (_context.Database.IsRelational())
+        {
+            changed = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id && item.Status == "Pending" && item.ExpiresAt > decidedAt && item.RequestedByUserId != actorId.Value)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Rejected")
+                    .SetProperty(item => item.DecidedByUserId, actorId.Value)
+                    .SetProperty(item => item.DecidedAt, decidedAt)
+                    .SetProperty(item => item.DecisionReason, reason));
+        }
+        else
+        {
+            approval.Status = "Rejected";
+            approval.DecidedByUserId = actorId.Value;
+            approval.DecidedAt = decidedAt;
+            approval.DecisionReason = reason;
+            changed = 1;
+        }
+        if (changed != 1)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The request changed while rejection was being recorded. Refresh and review it again." });
+
         _context.AuditLogs.Add(new Models.AuditLog
         {
             UserId = actorId.Value,
