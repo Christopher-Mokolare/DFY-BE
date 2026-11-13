@@ -201,9 +201,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
                 var account = await db.Users.AsNoTracking()
                     .Where(u => u.Id == userId)
-                    .Select(u => new { u.IsArchived, u.EmailVerified, u.Roles, u.SecurityStamp })
+                    .Select(u => new { u.IsArchived, u.IsSuspended, u.EmailVerified, u.Roles, u.SecurityStamp })
                     .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
-                if (account == null || account.IsArchived)
+                if (account == null || account.IsArchived || account.IsSuspended)
                 {
                     context.Fail("The account is archived or no longer active.");
                     return;
