@@ -30,6 +30,10 @@ public sealed class FinancialApprovalRequest
     public int? DecidedByUserId { get; set; }
     public DateTime? DecidedAt { get; set; }
 
+    [MaxLength(500)]
+    public string? DecisionReason { get; set; }
+
+    public DateTime? ExecutionStartedAt { get; set; }
     public int ExecutionAttempts { get; set; }
     public DateTime? ExecutedAt { get; set; }
 
