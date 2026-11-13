@@ -205,7 +205,7 @@ namespace DoForYou.API.Migrations
 
                     b.HasIndex("ReversalOfJournalId")
                         .IsUnique()
-                        .HasFilter("\\"ReversalOfJournalId\\" IS NOT NULL");
+                        .HasFilter("\"ReversalOfJournalId\" IS NOT NULL");
 
                     b.HasIndex("SourceType", "SourceId", "EventType")
                         .IsUnique();
@@ -256,8 +256,8 @@ namespace DoForYou.API.Migrations
 
                     b.ToTable("FinancialJournalLines", t =>
                         {
-                            t.HasCheckConstraint("CK_FinancialJournalLines_OneSidedPositiveAmount", "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))");
-                            t.HasCheckConstraint("CK_FinancialJournalLines_NonNegativeAmounts", "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0");
+                            t.HasCheckConstraint("CK_FinancialJournalLines_OneSidedPositiveAmount", "((\"Debit\" > 0 AND \"Credit\" = 0) OR (\"Credit\" > 0 AND \"Debit\" = 0))");
+                            t.HasCheckConstraint("CK_FinancialJournalLines_NonNegativeAmounts", "\"Debit\" >= 0 AND \"Credit\" >= 0");
                         });
                 });
 
