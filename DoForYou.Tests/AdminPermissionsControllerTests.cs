@@ -96,6 +96,34 @@ public sealed class AdminPermissionsControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Expired_grant_is_retired_and_audited_before_regrant()
+    {
+        await using var db = CreateContext();
+        db.Users.AddRange(SuperAdmin(1), Admin(2));
+        var expired = new AdminPermissionGrant
+        {
+            UserId = 2, PermissionKey = AdminPermissionPolicies.KycReview,
+            GrantedByUserId = 1, Reason = "Previous review assignment.",
+            GrantedAt = DateTime.UtcNow.AddDays(-10), ExpiresAt = DateTime.UtcNow.AddHours(-1)
+        };
+        db.AdminPermissionGrants.Add(expired);
+        await db.SaveChangesAsync();
+
+        var result = await CreateController(db, 1).Grant(new GrantAdminPermissionRequest
+        {
+            UserId = 2, PermissionKey = AdminPermissionPolicies.KycReview,
+            Reason = "Renewed assignment for the review team.",
+            ExpiresAt = DateTime.UtcNow.AddDays(7)
+        }, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(expired.ExpiresAt, expired.RevokedAt);
+        Assert.Equal(2, await db.AdminPermissionGrants.CountAsync());
+        Assert.Contains(await db.AuditLogs.ToListAsync(), item => item.Action == "ExpireAdminPermissionGrant");
+        Assert.Contains(await db.AuditLogs.ToListAsync(), item => item.Action == "GrantAdminPermission");
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Fresh_SuperAdmin_can_revoke_a_grant_and_audit_it()
     {
         await using var db = CreateContext();
