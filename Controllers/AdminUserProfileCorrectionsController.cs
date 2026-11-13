@@ -82,6 +82,8 @@ public sealed class AdminUserProfileCorrectionsController(
 
         var normalizedEmail = email;
         var emailChanged = !string.Equals(target.NormalizedEmail ?? target.Email, normalizedEmail, StringComparison.OrdinalIgnoreCase);
+        if (emailChanged && !string.IsNullOrWhiteSpace(target.GoogleSubject))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Google-linked accounts require a separate provider re-verification and account-relink process before their primary email can be changed." });
         if (emailChanged)
         {
             var emailInUse = await context.Users.AnyAsync(user => user.Id != userId &&
