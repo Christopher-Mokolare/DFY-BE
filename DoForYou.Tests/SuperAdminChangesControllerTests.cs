@@ -56,6 +56,42 @@ public sealed class SuperAdminChangesControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Target_SuperAdmin_cannot_approve_their_own_revocation()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"superadmin-target-approval-{Guid.NewGuid():N}").Options;
+        await using var context = new AppDbContext(options);
+        context.Users.AddRange(
+            CreateUser(21, "requester@example.com", "Admin,SuperAdmin"),
+            CreateUser(22, "target@example.com", "Admin,SuperAdmin"),
+            CreateUser(23, "reviewer@example.com", "Admin,SuperAdmin"));
+        await context.SaveChangesAsync();
+
+        var requester = CreateController(context, 21);
+        var created = await requester.Create(new CreateSuperAdminChangeRequest
+        {
+            Action = "revoke",
+            TargetUserId = 22,
+            Reason = "Remove target access following formal security review"
+        }, CancellationToken.None);
+        Assert.IsType<OkObjectResult>(created);
+
+        var targetApprover = CreateController(context, 22);
+        var result = await targetApprover.Decide(
+            (await context.SuperAdminChangeRequests.SingleAsync()).Id,
+            new DecideSuperAdminChangeRequest
+            {
+                Decision = "approve",
+                Reason = "I approve the revocation of my own account access"
+            },
+            CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(result).StatusCode);
+        Assert.Equal("Admin,SuperAdmin", (await context.Users.FindAsync(22))!.Roles);
+        Assert.Equal("pending", (await context.SuperAdminChangeRequests.SingleAsync()).Status);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task SuperAdmin_cannot_request_own_removal()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
