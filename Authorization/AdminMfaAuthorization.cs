@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DoForYou.API.Authorization;
 
-public sealed class AdminMfaRequirement : IAuthorizationRequirement;
+public sealed class AdminMfaRequirement : IAuthorizationRequirement { }
 
 public sealed class AdminMfaAuthorizationHandler(AppDbContext context)
     : AuthorizationHandler<AdminMfaRequirement>
