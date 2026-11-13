@@ -341,6 +341,14 @@ public class ScenarioTests
         Assert.Equal("Completed", attempt.Status);
         Assert.Single(await context.Payments.ToListAsync());
         Assert.Single(await context.AuditLogs.Where(a => a.Action == "PaystackPaymentVerified").ToListAsync());
+        var chargeJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync();
+        Assert.Equal("payment_collected", chargeJournal.EventType);
+        Assert.Equal("paystack_transaction", chargeJournal.SourceType);
+        Assert.Equal("TX-WEBHOOK-1", chargeJournal.SourceId);
+        Assert.Equal(500m, chargeJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(500m, chargeJournal.Lines.Sum(line => line.Credit));
 
         Assert.IsType<OkResult>(await InvokeWebhook(controller, validEvent));
         Assert.Equal("Posted", task.TaskStatus);
