@@ -103,6 +103,38 @@ public sealed class FinancialLedgerServiceTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task SaveChanges_overloads_reject_mutation_of_posted_journals()
+    {
+        await using var context = CreateContext(nameof(SaveChanges_overloads_reject_mutation_of_posted_journals));
+        var service = new FinancialLedgerService(context);
+        var journal = await service.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-LEDGER-SAVE-OVERLOAD",
+            "paystack:charge:TX-LEDGER-SAVE-OVERLOAD",
+            "ZAR",
+            "Append-only overload test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", 25m, 0m),
+                new FinancialJournalLineDraft("2000", 0m, 25m)
+            }));
+
+        journal.Description = "Attempted sync edit";
+        Assert.Throws<InvalidOperationException>(() => context.SaveChanges());
+
+        context.Entry(journal).State = EntityState.Unchanged;
+        journal.Description = "Attempted sync overload edit";
+        Assert.Throws<InvalidOperationException>(() => context.SaveChanges(acceptAllChangesOnSuccess: false));
+
+        context.Entry(journal).State = EntityState.Unchanged;
+        journal.Description = "Attempted async overload edit";
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => context.SaveChangesAsync(acceptAllChangesOnSuccess: false));
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task PostAsync_rejects_unbalanced_journals_without_persisting_anything()
     {
         await using var context = CreateContext(nameof(PostAsync_rejects_unbalanced_journals_without_persisting_anything));
