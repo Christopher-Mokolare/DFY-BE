@@ -22,6 +22,26 @@ public sealed class AdminUserProfileCorrectionsController(
     IEmailSender emailSender,
     INotificationService notifications) : ControllerBase
 {
+    [HttpGet("{userId:int}/profile-correction")]
+    public async Task<ActionResult<ApiResponse<object>>> GetProfileForCorrection(int userId, CancellationToken cancellationToken)
+    {
+        var user = await context.Users.AsNoTracking()
+            .Where(item => item.Id == userId && !item.IsArchived && !item.IsSuspended)
+            .Select(item => new
+            {
+                item.Id, item.FirstName, item.LastName, item.Email, item.EmailVerified,
+                item.PhoneNumber, item.PhoneVerified, item.Address,
+                isAdmin = item.Roles != null && (item.Roles.Contains("Admin") || item.Roles.Contains("SuperAdmin"))
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (user == null)
+            return NotFound(new ApiResponse<object> { Success = false, Message = "Active user not found." });
+        if (user.isAdmin)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Administrative accounts require the separately controlled administrator identity-change process." });
+
+        return Ok(new ApiResponse<object> { Success = true, Data = user });
+    }
+
     [HttpPatch("{userId:int}/profile-correction")]
     public async Task<ActionResult<ApiResponse<object>>> CorrectProfile(
         int userId,
