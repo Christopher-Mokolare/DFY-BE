@@ -64,6 +64,7 @@ public sealed class PayoutProcessorService(
         var provider = scope.ServiceProvider.GetRequiredService<IPayoutProvider>();
         var notifications = scope.ServiceProvider.GetRequiredService<INotificationService>();
         var userPolicy = scope.ServiceProvider.GetRequiredService<IUserPolicyService>();
+        var financialLedger = scope.ServiceProvider.GetRequiredService<IFinancialLedgerService>();
 
         var automaticPayoutsEnabled = string.Equals(
             Environment.GetEnvironmentVariable("PAYSTACK_AUTOMATIC_PAYOUTS_ENABLED"),
@@ -114,6 +115,7 @@ public sealed class PayoutProcessorService(
                     context,
                     provider,
                     notifications,
+                    financialLedger,
                     payout,
                     automaticPayoutsEnabled,
                     cancellationToken);
@@ -304,6 +306,7 @@ public sealed class PayoutProcessorService(
         AppDbContext context,
         IPayoutProvider provider,
         INotificationService notifications,
+        IFinancialLedgerService financialLedger,
         Payout payout,
         bool automaticPayoutsEnabled,
         CancellationToken cancellationToken)
@@ -347,6 +350,24 @@ public sealed class PayoutProcessorService(
         switch (status)
         {
             case "success":
+                // A transfer may be confirmed by a webhook or discovered later by
+                // reconciliation. Both paths must produce the same idempotent journal.
+                await financialLedger.PostAsync(new FinancialJournalDraft(
+                    EventType: "runner_payout_completed",
+                    SourceType: "payout",
+                    SourceId: payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    IdempotencyKey: $"paystack:payout:{payout.Id}:completed",
+                    Currency: "ZAR",
+                    Description: "Paystack reconciliation confirmed the runner transfer; settle runner payable against Paystack clearing.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: new[]
+                    {
+                        new FinancialJournalLineDraft("2100", payout.Amount, 0m, "Settle runner payable"),
+                        new FinancialJournalLineDraft("1000", 0m, payout.Amount, "Paystack clearing transfer")
+                    },
+                    Provider: "Paystack",
+                    ProviderReference: payout.ProviderReference ?? payout.MerchantReference));
+
                 payout.Status = "Completed";
                 payout.CompletedAt = DateTime.UtcNow;
                 payout.NextAttemptAt = null;
@@ -380,6 +401,41 @@ public sealed class PayoutProcessorService(
                 break;
 
             case "reversed":
+                var originalPayoutJournal = await context.FinancialJournals
+                    .Include(journal => journal.Lines)
+                        .ThenInclude(line => line.Account)
+                    .FirstOrDefaultAsync(journal =>
+                        journal.SourceType == "payout" &&
+                        journal.SourceId == payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+                        journal.EventType == "runner_payout_completed",
+                        cancellationToken);
+                if (originalPayoutJournal != null)
+                {
+                    await financialLedger.ReverseAsync(
+                        originalPayoutJournal.Id,
+                        sourceType: "payout",
+                        sourceId: $"{payout.Id}:reversal",
+                        idempotencyKey: $"paystack:payout:{payout.Id}:reversal",
+                        description: "Reverse the completed runner payout after Paystack reconciliation confirmed a transfer reversal.",
+                        provider: "Paystack",
+                        providerReference: payout.ProviderReference ?? payout.MerchantReference,
+                        occurredAt: DateTime.UtcNow,
+                        cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    context.AuditLogs.Add(new Models.AuditLog
+                    {
+                        UserId = null,
+                        Action = "PayoutReversedWithoutLedgerSource",
+                        EntityType = "Payout",
+                        EntityId = payout.Id,
+                        NewValues = "Paystack confirmed a reversal, but no original payout journal exists. Historical entries were not fabricated.",
+                        IpAddress = "background-service",
+                        UserAgent = "PayoutProcessorService"
+                    });
+                }
+
                 payout.Status = "Returned";
                 payout.FailureReason = "Paystack reversed the runner payout.";
                 payout.NextAttemptAt = null;
