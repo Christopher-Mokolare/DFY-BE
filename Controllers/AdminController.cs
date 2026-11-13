@@ -1764,26 +1764,7 @@ public class AdminController : ControllerBase
             return Conflict(new ApiResponse<int> { Success = false, Message = "Only an assigned task with held escrow can enter exceptional release approval." });
 
         var now = DateTime.UtcNow;
-        if (_context.Database.IsRelational())
-        {
-            await _context.FinancialApprovalRequests
-                .Where(item => item.TaskId == task.Id &&
-                    (item.Status == "Pending" || item.Status == "Approved") &&
-                    item.ExpiresAt <= now)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "Expired"));
-        }
-        else
-        {
-            var expired = await _context.FinancialApprovalRequests
-                .Where(item => item.TaskId == task.Id &&
-                    (item.Status == "Pending" || item.Status == "Approved") &&
-                    item.ExpiresAt <= now)
-                .ToListAsync();
-            foreach (var item in expired)
-                item.Status = "Expired";
-            if (expired.Count > 0)
-                await _context.SaveChangesAsync();
-        }
+        await ExpireOpenFinancialApprovalsAsync(task.Id, now, HttpContext.RequestAborted);
 
         var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
             item.TaskId == task.Id &&
