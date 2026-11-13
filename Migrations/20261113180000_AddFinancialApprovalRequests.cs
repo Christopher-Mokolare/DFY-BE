@@ -47,9 +47,9 @@ namespace DoForYou.API.Migrations
                 columns: new[] { "Status", "ExpiresAt" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_FinancialApprovalRequests_OpenTaskAction",
+                name: "IX_FinancialApprovalRequests_OpenTask",
                 table: "FinancialApprovalRequests",
-                columns: new[] { "TaskId", "Action" },
+                column: "TaskId",
                 unique: true,
                 filter: "\"Status\" IN ('Pending', 'Approved', 'Executing')");
         }
