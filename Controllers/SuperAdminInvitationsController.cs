@@ -85,12 +85,14 @@ public sealed class SuperAdminInvitationsController(
             ExpiresAt = now.Add(InvitationLifetime)
         };
         context.AdminInvitations.Add(invitation);
+        await context.SaveChangesAsync(cancellationToken);
+
         context.AuditLogs.Add(new AuditLog
         {
             UserId = actorId.Value,
             Action = "CreateAdminInvitation",
             EntityType = "AdminInvitation",
-            EntityId = null,
+            EntityId = invitation.Id,
             OldValues = null,
             NewValues = $"email={normalizedEmail}; expiresAt={invitation.ExpiresAt:O}; reason={reason}",
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
