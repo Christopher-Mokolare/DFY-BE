@@ -275,6 +275,111 @@ public class AdminControllerTests
             log.EntityId == task.Id);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Financial_approval_requires_a_distinct_fresh_MFA_SuperAdmin_and_executes_only_after_approval()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-approval-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(81, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(82, "Admin,SuperAdmin");
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(83, "User");
+        var runner = CreateUser(84, "User");
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 85,
+            TaskId = "DFY-FINANCIAL-APPROVAL-TEST",
+            TaskDescription = "Two person release test",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            TaskStatus = "AwaitingConfirmation",
+            PaymentStatus = "EscrowHeld",
+            EscrowStatus = "held",
+            Budget = 200m,
+            PayoutAmount = 170m
+        };
+        context.Users.AddRange(requester, approver, creator, runner);
+        context.Tasks.Add(task);
+        await context.SaveChangesAsync();
+
+        var requesterController = CreateController(context, requester.Id);
+        var requested = await requesterController.RequestFinancialApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Exceptional escrow release after completed dispute review" });
+        var requestOk = Assert.IsType<OkObjectResult>(requested.Result);
+        var requestId = (int)requestOk.Value!.GetType().GetProperty("Data")!.GetValue(requestOk.Value)!;
+
+        var selfApproval = await requesterController.ApproveFinancialRequest(
+            requestId,
+            new AdminActionReasonRequest { Reason = "I approve my own requested release" });
+        Assert.IsType<ConflictObjectResult>(selfApproval.Result);
+        Assert.Empty(context.Payouts);
+
+        var approved = await CreateController(context, approver.Id).ApproveFinancialRequest(
+            requestId,
+            new AdminActionReasonRequest { Reason = "Independently reviewed task evidence and escrow eligibility" });
+        Assert.IsType<OkObjectResult>(approved.Result);
+        Assert.Equal("Approved", (await context.FinancialApprovalRequests.SingleAsync()).Status);
+        Assert.Empty(context.Payouts);
+
+        var escrow = new DoForYou.API.Services.EscrowService(
+            context,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DoForYou.API.Services.EscrowService>.Instance);
+        var executed = await CreateController(context, requester.Id, escrow).ExecuteFinancialApproval(requestId);
+
+        Assert.IsType<OkObjectResult>(executed.Result);
+        var approval = await context.FinancialApprovalRequests.SingleAsync();
+        Assert.Equal("Executed", approval.Status);
+        Assert.Equal(requester.Id, approval.RequestedByUserId);
+        Assert.Equal(approver.Id, approval.DecidedByUserId);
+        Assert.NotNull(approval.ExecutedAt);
+        Assert.Equal("PayoutPending", task.TaskStatus);
+        Assert.Equal("EscrowReleased", task.PaymentStatus);
+        Assert.Equal("released", task.EscrowStatus);
+        var payout = await context.Payouts.SingleAsync();
+        Assert.Equal(170m, payout.Amount);
+        Assert.Equal("AwaitingBankDetails", payout.Status);
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalRequested");
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalGranted");
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalExecuted");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Financial_approval_request_rejects_stale_MFA_and_non_SuperAdmins()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-approval-denied-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(91, "Admin,SuperAdmin");
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow.AddMinutes(-16);
+        var creator = CreateUser(92, "User");
+        var runner = CreateUser(93, "User");
+        context.Users.AddRange(actor, creator, runner);
+        context.Tasks.Add(new DoForYou.API.Models.Task
+        {
+            Id = 94, TaskId = "DFY-STALE-MFA", TaskDescription = "Stale MFA test",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "AwaitingConfirmation", PaymentStatus = "EscrowHeld",
+            EscrowStatus = "held", Budget = 100m, PayoutAmount = 85m
+        });
+        await context.SaveChangesAsync();
+
+        var denied = await CreateController(context, actor.Id).RequestFinancialApproval(
+            "DFY-STALE-MFA",
+            new AdminActionReasonRequest { Reason = "Exceptional escrow release after operational review" });
+
+        Assert.IsType<ForbidResult>(denied.Result);
+        Assert.Empty(context.FinancialApprovalRequests);
+        Assert.Empty(context.Payouts);
+    }
+
     private static User CreateUser(int id, string roles) => new()
     {
         Id = id,
@@ -287,9 +392,9 @@ public class AdminControllerTests
         SecurityStamp = $"session-stamp-{id}"
     };
 
-    private static AdminController CreateController(AppDbContext context, int actorId)
+    private static AdminController CreateController(AppDbContext context, int actorId, DoForYou.API.Services.IEscrowService? escrowService = null)
     {
-        var controller = new AdminController(context, null!, null!, null!, null!, null!)
+        var controller = new AdminController(context, escrowService!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext
             {
