@@ -261,7 +261,7 @@ public class DisputesController : ControllerBase
     {
         var actorId = GetCurrentUserId();
         var actor = actorId.HasValue
-            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived)
+            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived && !user.IsSuspended)
                 .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
                 .FirstOrDefaultAsync()
             : null;
@@ -284,6 +284,18 @@ public class DisputesController : ControllerBase
             reason.Length < 5 ||
             reason.Length > 500)
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "Action, resolution and a reason between 5 and 500 characters are required." });
+
+        if (action is "release_to_runner" or "refund_creator")
+        {
+            // Both outcomes can move funds. A single SuperAdmin must not execute
+            // either path until the independent two-person financial approval
+            // workflow is implemented and wired to the idempotent provider flow.
+            return Conflict(new ApiResponse<bool>
+            {
+                Success = false,
+                Message = "Financial dispute resolution is temporarily blocked pending two-person approval. No funds were moved."
+            });
+        }
 
         var dispute = await _context.Disputes
             .Include(d => d.Task)
