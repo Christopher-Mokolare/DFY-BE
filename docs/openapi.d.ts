@@ -894,6 +894,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/financial-approvals/disputes/release/tasks/{taskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    taskId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AdminActionReasonRequest"];
+                    "text/json": components["schemas"]["AdminActionReasonRequest"];
+                    "application/*+json": components["schemas"]["AdminActionReasonRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["Int32ApiResponse"];
+                        "application/json": components["schemas"]["Int32ApiResponse"];
+                        "text/json": components["schemas"]["Int32ApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/financial-approvals/{id}/approve": {
         parameters: {
             query?: never;
