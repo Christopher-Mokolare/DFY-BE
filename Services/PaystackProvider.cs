@@ -486,6 +486,119 @@ public sealed class PaystackProvider(
         }
     }
 
+    /// <summary>
+    /// Reads Paystack chargeback/dispute cases for operator visibility only.
+    /// This method never uploads evidence, accepts a dispute, or resolves a dispute.
+    /// </summary>
+    public async Task<PaystackDisputeReadResult> GetDisputesAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        int maxPages = 20,
+        int perPage = 100,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(SecretKey))
+            return new(false, false, Array.Empty<PaystackDisputeRecord>(),
+                "Paystack secret key is not configured.");
+
+        if (to < from)
+            return new(false, false, Array.Empty<PaystackDisputeRecord>(),
+                "The dispute end date must be on or after the start date.");
+
+        maxPages = Math.Clamp(maxPages, 1, 20);
+        perPage = Math.Clamp(perPage, 1, 100);
+        var fromText = Uri.EscapeDataString(from.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+        var toText = Uri.EscapeDataString(to.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+        var disputes = new List<PaystackDisputeRecord>();
+        var pageCount = 1;
+        var hasPageCount = false;
+
+        static DateTimeOffset? ParseDate(string? value) =>
+            DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var parsed) ? parsed : null;
+
+        try
+        {
+            for (var page = 1; page <= Math.Min(pageCount, maxPages); page++)
+            {
+                using var request = Request(HttpMethod.Get,
+                    $"dispute?perPage={perPage}&page={page}&from={fromText}&to={toText}");
+                using var response = await Client.SendAsync(request, cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+
+                if (!response.IsSuccessStatusCode || !GetBool(root, "status"))
+                    return new(false, false, disputes,
+                        GetString(root, "message") ?? "Paystack disputes could not be retrieved.");
+
+                if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    return new(false, false, disputes, "Paystack returned an invalid dispute list.");
+
+                foreach (var item in data.EnumerateArray())
+                {
+                    var id = GetString(item, "id") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(id))
+                        continue;
+
+                    var transactionId = string.Empty;
+                    var transactionReference = GetString(item, "transaction_reference") ?? string.Empty;
+                    var currency = string.Empty;
+                    decimal amount = 0m;
+
+                    if (item.TryGetProperty("transaction", out var transaction) &&
+                        transaction.ValueKind == JsonValueKind.Object)
+                    {
+                        transactionId = GetString(transaction, "id") ?? string.Empty;
+                        transactionReference = GetString(transaction, "reference") ?? transactionReference;
+                        currency = GetString(transaction, "currency") ?? string.Empty;
+                        amount = (GetDecimal(transaction, "amount") ?? 0m) / 100m;
+                    }
+
+                    disputes.Add(new PaystackDisputeRecord(
+                        id,
+                        GetString(item, "status") ?? "unknown",
+                        GetString(item, "category") ?? "unspecified",
+                        transactionId,
+                        transactionReference,
+                        currency,
+                        amount,
+                        GetDecimal(item, "refund_amount") is { } refundMinor ? refundMinor / 100m : null,
+                        ParseDate(GetString(item, "dueAt")),
+                        ParseDate(GetString(item, "resolvedAt")),
+                        ParseDate(GetString(item, "createdAt")),
+                        ParseDate(GetString(item, "updatedAt")),
+                        GetString(item, "domain") ?? "unknown"));
+                }
+
+                if (root.TryGetProperty("meta", out var meta) &&
+                    GetDecimal(meta, "pageCount") is { } count)
+                {
+                    pageCount = Math.Max(pageCount, Math.Max(1, (int)count));
+                    hasPageCount = true;
+                }
+                else
+                {
+                    hasPageCount = false;
+                    break;
+                }
+            }
+
+            var complete = hasPageCount && pageCount <= maxPages;
+            return new(true, complete, disputes,
+                complete ? null : "Dispute results are partial or provider pagination metadata was missing. Narrow the date window and rerun.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Paystack dispute visibility request failed.");
+            return new(false, false, disputes, "Unable to retrieve Paystack dispute records.");
+        }
+    }
+
     public bool VerifyWebhookSignature(
         string rawBody,
         string? signature,
