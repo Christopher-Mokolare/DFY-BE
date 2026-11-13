@@ -380,10 +380,21 @@ public sealed class ManualIdentityVerificationControllerTests
         Assert.Null(submission.ReviewClaimedByUserId);
         Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
             item => item.EventType == "review_claim_released" && item.ActorUserId == admin1.Id && item.SubmissionId == submission.Id);
-        var releaseAudit = await context.AuditLogs.SingleAsync();
-        Assert.Equal("AdminIdentityReviewClaimReleased", releaseAudit.Action);
-        Assert.Equal(admin1.Id, releaseAudit.UserId);
-        Assert.Equal(submission.Id, releaseAudit.EntityId);
+        var auditLogs = await context.AuditLogs
+            .OrderBy(item => item.Id)
+            .ToListAsync();
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimed" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimHeartbeat" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimReleased" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
         Assert.IsType<OkObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
     }
 
