@@ -4563,6 +4563,37 @@
         }
       }
     },
+    "/api/v1/admin/bootstrap/super-admin": {
+      "post": {
+        "tags": [
+          "SuperAdminBootstrap"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuperAdminBootstrapRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuperAdminBootstrapRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuperAdminBootstrapRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/v1/support/tickets": {
       "post": {
         "tags": [
@@ -8094,6 +8125,26 @@
           "review": {
             "type": "string",
             "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "SuperAdminBootstrapRequest": {
+        "required": [
+          "authenticatorCode",
+          "bootstrapSecret"
+        ],
+        "type": "object",
+        "properties": {
+          "bootstrapSecret": {
+            "maxLength": 512,
+            "minLength": 32,
+            "type": "string"
+          },
+          "authenticatorCode": {
+            "minLength": 1,
+            "pattern": "^[0-9]{6}$",
+            "type": "string"
           }
         },
         "additionalProperties": false
