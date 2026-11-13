@@ -3764,6 +3764,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/manual-identity-verification/admin/{id}/override/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["KycOverrideReopenRequest"];
+                    "text/json": components["schemas"]["KycOverrideReopenRequest"];
+                    "application/*+json": components["schemas"]["KycOverrideReopenRequest"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ObjectApiResponse"];
+                        "application/json": components["schemas"]["ObjectApiResponse"];
+                        "text/json": components["schemas"]["ObjectApiResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/manual-identity-verification/admin/{id}/decision": {
         parameters: {
             query?: never;
@@ -7774,6 +7819,9 @@ export interface components {
             data?: number;
             message?: string | null;
             error?: string | null;
+        };
+        KycOverrideReopenRequest: {
+            reason: string;
         };
         LoginRequest: {
             /** Format: email */
