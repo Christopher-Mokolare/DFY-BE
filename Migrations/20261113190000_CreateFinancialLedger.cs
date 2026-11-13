@@ -107,7 +107,7 @@ namespace DoForYou.API.Migrations
                 columns: new[] { "Id", "Code", "Name", "AccountType", "Currency", "IsSystem", "IsActive", "CreatedAt" },
                 values: new object[,]
                 {
-                    { 1, "1000", "Paystack Clearing", "Asset", "ZAR", true, true, new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                    { 1, "1000", "Payment Provider Clearing", "Asset", "ZAR", true, true, new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                     { 2, "1100", "Merchant Bank Settlement", "Asset", "ZAR", true, true, new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                     { 3, "2000", "Escrow Liability", "Liability", "ZAR", true, true, new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
                     { 4, "2100", "Runner Payable", "Liability", "ZAR", true, true, new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
