@@ -92,15 +92,20 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
                 throw new InvalidOperationException("The original journal has already been reversed.");
 
             var expectedReversal = original.Lines
-                .OrderBy(line => line.Account.Code, StringComparer.Ordinal)
-                .ThenBy(line => line.LineNumber)
-                .Select(line => (line.Account.Code, Debit: line.Credit, Credit: line.Debit))
+                .GroupBy(line => line.Account.Code, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => (
+                    AccountCode: group.Key,
+                    Debit: group.Sum(line => line.Credit),
+                    Credit: group.Sum(line => line.Debit)))
                 .ToArray();
             var actualReversal = draft.Lines
-                .OrderBy(line => line.AccountCode, StringComparer.Ordinal)
-                .ThenBy(line => line.Debit)
-                .ThenBy(line => line.Credit)
-                .Select(line => (line.AccountCode, line.Debit, line.Credit))
+                .GroupBy(line => line.AccountCode, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => (
+                    AccountCode: group.Key,
+                    Debit: group.Sum(line => line.Debit),
+                    Credit: group.Sum(line => line.Credit)))
                 .ToArray();
             if (!expectedReversal.SequenceEqual(actualReversal))
                 throw new InvalidOperationException("A reversal must exactly invert every line in the original journal.");
@@ -122,9 +127,12 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
             Provider = draft.Provider,
             ProviderReference = draft.ProviderReference,
             CreatedByUserId = draft.CreatedByUserId,
-            OccurredAt = draft.OccurredAt.Kind == DateTimeKind.Utc
-                ? draft.OccurredAt
-                : draft.OccurredAt.ToUniversalTime(),
+            OccurredAt = draft.OccurredAt.Kind switch
+            {
+                DateTimeKind.Utc => draft.OccurredAt,
+                DateTimeKind.Unspecified => DateTime.SpecifyKind(draft.OccurredAt, DateTimeKind.Utc),
+                _ => draft.OccurredAt.ToUniversalTime()
+            },
             RecordedAt = DateTime.UtcNow,
             ReversalOfJournalId = draft.ReversalOfJournalId
         };
@@ -156,9 +164,9 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
             if (transaction != null)
                 await transaction.RollbackAsync(cancellationToken);
 
-            foreach (var entry in _context.ChangeTracker.Entries<FinancialJournal>()
-                         .Where(entry => entry.Entity == journal).ToArray())
-                entry.State = EntityState.Detached;
+            foreach (var line in journal.Lines)
+                _context.Entry(line).State = EntityState.Detached;
+            _context.Entry(journal).State = EntityState.Detached;
 
             var concurrent = await _context.FinancialJournals
                 .Include(item => item.Lines)
