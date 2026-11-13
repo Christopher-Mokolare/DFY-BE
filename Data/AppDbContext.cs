@@ -41,21 +41,33 @@ public class AppDbContext : DbContext
     public DbSet<IdentityVerificationSubmission> IdentityVerificationSubmissions { get; set; } = null!;
     public DbSet<IdentityNotificationOutbox> IdentityNotificationOutbox { get; set; } = null!;
 
-    public override int SaveChanges()
+    public override int SaveChanges() => SaveChanges(acceptAllChangesOnSuccess: true);
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnsureAppendOnlyRecords();
+        NormalizeUserEmails();
+        NormalizeUtcDates();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
+        SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureAppendOnlyRecords();
+        NormalizeUserEmails();
+        NormalizeUtcDates();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void EnsureAppendOnlyRecords()
     {
         EnsureAuditLogsAppendOnly();
         EnsureFinancialLedgerAppendOnly();
-        NormalizeUserEmails();
-        NormalizeUtcDates();
-        return base.SaveChanges();
-    }
-
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
-    {
-        EnsureAuditLogsAppendOnly();
-        NormalizeUserEmails();
-        NormalizeUtcDates();
-        return base.SaveChangesAsync(cancellationToken);
     }
 
     // Audit history is append-only through the application data layer.
