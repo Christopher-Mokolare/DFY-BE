@@ -28,6 +28,9 @@ public class AppDbContext : DbContext
     public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
     public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
     public DbSet<FinancialApprovalRequest> FinancialApprovalRequests { get; set; } = null!;
+    public DbSet<FinancialAccount> FinancialAccounts { get; set; } = null!;
+    public DbSet<FinancialJournal> FinancialJournals { get; set; } = null!;
+    public DbSet<FinancialJournalLine> FinancialJournalLines { get; set; } = null!;
     public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
     public DbSet<DuplicateAccountCase> DuplicateAccountCases { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
@@ -88,6 +91,63 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<FinancialAccount>(entity =>
+        {
+            entity.HasIndex(account => account.Code).IsUnique();
+            entity.Property(account => account.Code).IsRequired();
+            entity.Property(account => account.Name).IsRequired();
+            entity.Property(account => account.AccountType).IsRequired();
+            entity.Property(account => account.Currency).HasDefaultValue("ZAR");
+            entity.HasData(
+                new FinancialAccount { Id = 1, Code = "1000", Name = "Paystack Clearing", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 2, Code = "1100", Name = "Merchant Bank Settlement", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 3, Code = "2000", Name = "Escrow Liability", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 4, Code = "2100", Name = "Runner Payable", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 5, Code = "2200", Name = "Unallocated Paystack Receipts", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 6, Code = "4000", Name = "Platform Commission Revenue", AccountType = "Revenue", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 7, Code = "5000", Name = "Payment Processing Fees", AccountType = "Expense", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) });
+        });
+
+        modelBuilder.Entity<FinancialJournal>(entity =>
+        {
+            entity.HasIndex(journal => journal.JournalNumber).IsUnique();
+            entity.HasIndex(journal => journal.IdempotencyKey).IsUnique();
+            entity.HasIndex(journal => new { journal.SourceType, journal.SourceId, journal.EventType }).IsUnique();
+            entity.HasIndex(journal => journal.ReversalOfJournalId).IsUnique()
+                .HasFilter("\\"ReversalOfJournalId\\" IS NOT NULL");
+            entity.Property(journal => journal.JournalNumber).IsRequired();
+            entity.Property(journal => journal.EventType).IsRequired();
+            entity.Property(journal => journal.SourceType).IsRequired();
+            entity.Property(journal => journal.SourceId).IsRequired();
+            entity.Property(journal => journal.IdempotencyKey).IsRequired();
+            entity.Property(journal => journal.Currency).HasDefaultValue("ZAR");
+            entity.HasOne(journal => journal.ReversalOfJournal)
+                .WithOne()
+                .HasForeignKey<FinancialJournal>(journal => journal.ReversalOfJournalId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<FinancialJournalLine>(entity =>
+        {
+            entity.HasIndex(line => new { line.JournalId, line.LineNumber }).IsUnique();
+            entity.HasIndex(line => line.AccountId);
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_FinancialJournalLines_OneSidedPositiveAmount",
+                "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))"));
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_FinancialJournalLines_NonNegativeAmounts",
+                "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0"));
+            entity.HasOne(line => line.Journal)
+                .WithMany(journal => journal.Lines)
+                .HasForeignKey(line => line.JournalId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(line => line.Account)
+                .WithMany(account => account.JournalLines)
+                .HasForeignKey(line => line.AccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<AdminPermissionGrant>()
             .HasIndex(grant => new { grant.UserId, grant.PermissionKey })
             .IsUnique()
