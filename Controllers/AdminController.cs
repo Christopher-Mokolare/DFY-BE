@@ -2851,67 +2851,12 @@ public class AdminController : ControllerBase
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPost("refunds/reconcile")]
-    public async Task<ActionResult<ApiResponse<object>>> ReconcileRefunds()
+    public ActionResult<ApiResponse<object>> ReconcileRefunds()
     {
-        var pending = await _context.Refunds
-            .Where(r => r.Status == "Pending" || r.Status == "Submitted" || r.Status == "PendingInvestigation")
-            .ToListAsync();
-
-        var reconciled = 0;
-        foreach (var refund in pending)
+        return StatusCode(StatusCodes.Status410Gone, new ApiResponse<object>
         {
-            var providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(
-                refund.TransactionId,
-                HttpContext.RequestAborted);
-
-            var match = providerRefunds
-                .Where(r => r.Amount == refund.Amount)
-                .OrderByDescending(r => string.Equals(r.Status, "processed", StringComparison.OrdinalIgnoreCase))
-                .FirstOrDefault();
-
-            if (match == null)
-            {
-                refund.LastReconciledAt = DateTime.UtcNow;
-                continue;
-            }
-
-            refund.RefundId = match.RefundId;
-            refund.Status = match.Status.ToLowerInvariant() switch
-            {
-                "pending" or "processing" => "Submitted",
-                "processed" => "Complete",
-                "failed" => "Failed",
-                "needs-attention" => "PendingInvestigation",
-                _ => "Submitted"
-            };
-            refund.LastReconciledAt = DateTime.UtcNow;
-            if (refund.Status == "Complete")
-                refund.CompletedAt ??= DateTime.UtcNow;
-
-            var task = await _context.Tasks.FirstOrDefaultAsync(t => t.Id == refund.TaskId);
-            if (task != null && refund.Status == "Complete")
-            {
-                task.PaymentStatus = "Refunded";
-                task.TaskStatus = "Cancelled";
-                task.EscrowStatus = "refunded";
-                task.PayoutStatus = "NotStarted";
-                task.PayoutReference = null;
-                task.PayoutInitiatedAt = null;
-                task.PayoutCompletedAt = null;
-                task.PaidToRunnerAt = null;
-                task.UpdatedAt = DateTime.UtcNow;
-            }
-            reconciled++;
-        }
-
-        await _context.SaveChangesAsync();
-        await WriteAuditAsync("ReconcileRefunds", "Refund", null, null, $"reconciled={reconciled}");
-
-        return Ok(new ApiResponse<object>
-        {
-            Success = true,
-            Data = new { scanned = pending.Count, reconciled },
-            Message = "Refund reconciliation completed."
+            Success = false,
+            Message = "Bulk refund reconciliation is retired because it could mutate task state without the approved two-person workflow. Use the specific financial approval reconciliation after provider state is verified."
         });
     }
 
