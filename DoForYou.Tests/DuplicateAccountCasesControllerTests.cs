@@ -94,6 +94,8 @@ public sealed class DuplicateAccountCasesControllerTests
     public async System.Threading.Tasks.Task Creator_cannot_resolve_case_but_independent_admin_can()
     {
         await using var db = CreateContext();
+        db.Users.AddRange(UserAccount(1), UserAccount(2));
+        await db.SaveChangesAsync();
         var investigation = new DuplicateAccountCase
         {
             PrimaryUserId = 1, CandidateUserId = 2,
