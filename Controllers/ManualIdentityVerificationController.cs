@@ -641,6 +641,12 @@ public sealed class ManualIdentityVerificationController(
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "Complete administrator authenticator verification before claiming a review." });
 
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
         int affected;
@@ -687,6 +693,7 @@ public sealed class ManualIdentityVerificationController(
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { claimedByUserId = adminId.Value, expiresAt = expires }, Message = "Review case claimed for ten minutes." });
     }
 
@@ -738,6 +745,7 @@ public sealed class ManualIdentityVerificationController(
             UserAgent = Request.Headers.UserAgent.ToString()
         });
         await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { expiresAt = expires } });
     }
 
@@ -755,6 +763,9 @@ public sealed class ManualIdentityVerificationController(
                 Message = "Complete a fresh administrator authenticator verification before releasing a review claim."
             });
 
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         int affected;
         if (context.Database.IsRelational())
@@ -804,6 +815,7 @@ public sealed class ManualIdentityVerificationController(
             }
         }
 
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
