@@ -244,7 +244,7 @@ public class AdminControllerTests
             using var context = new AppDbContext(options);
             context.Database.EnsureCreated();
             var creator = CreateUser(901, "Creator");
-            var task = new TaskEntity
+            var task = new DoForYou.API.Models.Task
             {
                 Id = 901,
                 TaskId = "DFY-MANUAL-VERIFY-RETIRED",
