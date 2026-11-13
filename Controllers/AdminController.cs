@@ -1334,8 +1334,24 @@ public class AdminController : ControllerBase
     }
 
     [HttpPatch("tasks/{taskId}/force-release-escrow")]
+    [Authorize(Policy = "SuperAdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> ForceReleaseEscrow(string taskId, [FromBody] AdminActionReasonRequest request)
     {
+        var actorId = GetAdminId();
+        var actor = actorId.HasValue
+            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived)
+                .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+                .FirstOrDefaultAsync()
+            : null;
+        var isFreshSuperAdmin = actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+            actor.AuthenticatorTwoFactorEnabled &&
+            actor.LastTwoFactorVerifiedAt.HasValue &&
+            actor.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+        if (!isFreshSuperAdmin)
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<bool> { Success = false, Message = "A SuperAdmin with fresh authenticator verification is required for forced escrow release." });
+
         var task = await _context.Tasks
             .FirstOrDefaultAsync(t => t.TaskId == taskId);
 
