@@ -2344,7 +2344,10 @@ public class AdminController : ControllerBase
             if (task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld" || task.AcceptedByUserId == null)
                 return await ResetFinancialExecutionAsync(id, actorId.Value, "Task escrow state changed before execution.");
 
-            released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
+            released = await _escrowService.ReleaseEscrowAsync(
+                task.Id,
+                force: true,
+                expectedPaymentTransactionId: approval.PaymentTransactionId);
             if (released)
             {
                 task = await _context.Tasks.AsNoTracking().FirstOrDefaultAsync(item => item.Id == approval.TaskId);
