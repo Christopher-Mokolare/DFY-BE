@@ -997,6 +997,8 @@ public class AdminController : ControllerBase
             lastLoginAt = u.LastLoginAt,
             createdAt = u.CreatedAt,
             isArchived = u.IsArchived,
+            isSuspended = u.IsSuspended,
+            suspendedAt = u.SuspendedAt,
             archivedAt = u.ArchivedAt,
             archivedReason = u.ArchivedReason
         }).ToList();
@@ -1071,6 +1073,8 @@ public class AdminController : ControllerBase
                 emailVerified = user.EmailVerified,
                 authenticatorTwoFactorEnabled = user.AuthenticatorTwoFactorEnabled,
                 isArchived = user.IsArchived,
+                isSuspended = user.IsSuspended,
+                suspendedAt = user.SuspendedAt,
                 lastLoginAt = user.LastLoginAt,
                 createdAt = user.CreatedAt
             })
