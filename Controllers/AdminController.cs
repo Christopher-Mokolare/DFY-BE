@@ -850,6 +850,37 @@ public class AdminController : ControllerBase
     [HttpPatch("users/{userId}/role")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateUserRole(int userId, [FromBody] JsonElement request)
     {
+        // Legacy Admin accounts must not be able to grant or revoke administrative access.
+        // This endpoint is temporarily locked to an already-authorized SuperAdmin until
+        // the persisted permission-based role-management workflow is deployed.
+        var actorId = GetAdminId();
+        if (!actorId.HasValue)
+            return Unauthorized(new ApiResponse<bool> { Success = false, Message = "An authenticated administrator is required." });
+
+        var actor = await _context.Users.AsNoTracking()
+            .Where(candidate => candidate.Id == actorId.Value && !candidate.IsArchived)
+            .Select(candidate => new
+            {
+                candidate.Roles,
+                candidate.AuthenticatorTwoFactorEnabled,
+                candidate.LastTwoFactorVerifiedAt
+            })
+            .FirstOrDefaultAsync();
+
+        var actorIsSuperAdmin = actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(value => string.Equals(value.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true;
+        if (actor == null || !actorIsSuperAdmin)
+            return Forbid();
+
+        if (actorId.Value == userId)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "Administrators cannot change their own role." });
+
+        if (actor.AuthenticatorTwoFactorEnabled != true ||
+            !actor.LastTwoFactorVerifiedAt.HasValue ||
+            actor.LastTwoFactorVerifiedAt.Value < DateTime.UtcNow.AddMinutes(-15))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<bool> { Success = false, Message = "Fresh authenticator verification is required for role changes." });
+
         var user = await _context.Users.FindAsync(userId);
         if (user == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "User not found" });
@@ -869,6 +900,11 @@ public class AdminController : ControllerBase
             return BadRequest(new ApiResponse<bool> { Success = false, Message = "A reason between 5 and 500 characters is required." });
 
         var oldRole = user.Roles;
+        var targetIsSuperAdmin = oldRole?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(value => string.Equals(value.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true;
+        if (targetIsSuperAdmin)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "Super Admin changes require the separate two-person approval workflow." });
+
         if (string.Equals(oldRole, role, StringComparison.Ordinal))
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "User role unchanged." });
 
