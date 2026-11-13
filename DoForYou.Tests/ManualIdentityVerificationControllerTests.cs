@@ -82,6 +82,59 @@ public sealed class ManualIdentityVerificationControllerTests
 
 
     [Fact]
+    public async Task Identity_document_view_requires_reasoned_recent_superadmin_mfa_and_writes_audit()
+    {
+        await using var context = CreateContext();
+        var actor = NewRunner(190);
+        actor.Roles = "User,Admin,SuperAdmin";
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var subject = NewRunner(191);
+        var image = Jpeg("identity.jpg");
+        var encryption = new IdentityDocumentEncryptionService(Configuration());
+        var encrypted = encryption.Encrypt(await ReadFormFileAsync(image));
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = subject.Id,
+            DocumentType = "passport",
+            Status = "pending",
+            FrontCiphertext = encrypted.Ciphertext,
+            FrontNonce = encrypted.Nonce,
+            FrontTag = encrypted.Tag,
+            FrontContentType = "image/jpeg",
+            ConsentVersion = ConsentVersion,
+            ReviewClaimedByUserId = actor.Id,
+            ReviewClaimExpiresAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        context.Users.AddRange(actor, subject);
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        var missingReason = await controller.GetDocument(submission.Id, "front", "", CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(missingReason);
+
+        var result = await controller.GetDocument(
+            submission.Id, "front", "Reviewing assigned identity case", CancellationToken.None);
+
+        Assert.IsType<FileContentResult>(result);
+        var audit = await context.AuditLogs.SingleAsync();
+        Assert.Equal("AdminIdentityDocumentViewed", audit.Action);
+        Assert.Equal(actor.Id, audit.UserId);
+        Assert.Equal(submission.Id, audit.EntityId);
+        Assert.Contains("Reviewing assigned identity case", audit.NewValues);
+        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
+            item => item.EventType == "admin_document_accessed" && item.ActorUserId == actor.Id);
+    }
+
+    private static async Task<byte[]> ReadFormFileAsync(IFormFile file)
+    {
+        await using var stream = new MemoryStream();
+        await file.CopyToAsync(stream);
+        return stream.ToArray();
+    }
+
+    [Fact]
     public void Identity_document_normalization_strips_metadata_and_server_watermark_changes_the_view_copy()
     {
         var service = new IdentityDocumentImageService();
