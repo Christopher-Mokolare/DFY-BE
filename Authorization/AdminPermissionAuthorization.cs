@@ -20,6 +20,7 @@ public static class AdminPermissionPolicies
 
     public const string KycReviewPolicy = "AdminPermission:" + KycReview;
     public const string KycViewDocumentsPolicy = "AdminPermission:" + KycViewDocuments;
+    public const string ConfigurationManagePolicy = "AdminPermission:" + ConfigurationManage;
 
     public static readonly string[] All =
     [
