@@ -266,7 +266,7 @@ public class AdminControllerTests
             var controller = CreateController(context, creator.Id);
             var verify = await controller.VerifyTask(task.TaskId, new AdminActionReasonRequest { Reason = "Manual override" });
             var unverify = await controller.UnverifyTask(task.TaskId, new AdminActionReasonRequest { Reason = "Manual override" });
-            var bulk = await controller.BulkVerifyTasks(null!);
+            var bulk = controller.BulkVerifyTasks(null!);
 
             Assert.Equal(410, Assert.IsType<ObjectResult>(verify.Result).StatusCode);
             Assert.Equal(410, Assert.IsType<ObjectResult>(unverify.Result).StatusCode);
