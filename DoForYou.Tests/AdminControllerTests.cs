@@ -89,6 +89,59 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Admin_can_suspend_and_reinstate_a_regular_account_with_audit_and_session_revocation()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-user-suspension-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(46, "Admin");
+        var target = CreateUser(47, "User");
+        target.SecurityStamp = "old-session";
+        context.Users.AddRange(actor, target);
+        await context.SaveChangesAsync();
+        var controller = CreateController(context, actor.Id);
+
+        var suspend = await controller.UpdateUserSuspension(target.Id,
+            new UpdateUserSuspensionRequest { IsSuspended = true, Reason = "Confirmed platform abuse report" });
+
+        Assert.IsType<OkObjectResult>(suspend.Result);
+        Assert.True(target.IsSuspended);
+        Assert.NotEqual("old-session", target.SecurityStamp);
+        Assert.Equal("SuspendUser", Assert.Single(context.AuditLogs).Action);
+
+        var reinstate = await controller.UpdateUserSuspension(target.Id,
+            new UpdateUserSuspensionRequest { IsSuspended = false, Reason = "Appeal reviewed and accepted" });
+
+        Assert.IsType<OkObjectResult>(reinstate.Result);
+        Assert.False(target.IsSuspended);
+        Assert.Null(target.SuspendedAt);
+        Assert.Equal(2, context.AuditLogs.Count());
+        Assert.Contains(context.AuditLogs, log => log.Action == "ReinstateUser");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Admin_cannot_suspend_another_administrator()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"admin-suspend-admin-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var actor = CreateUser(48, "Admin");
+        var target = CreateUser(49, "Admin,SuperAdmin");
+        context.Users.AddRange(actor, target);
+        await context.SaveChangesAsync();
+        var controller = CreateController(context, actor.Id);
+
+        var result = await controller.UpdateUserSuspension(target.Id,
+            new UpdateUserSuspensionRequest { IsSuspended = true, Reason = "Security concern requires suspension" });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.False(target.IsSuspended);
+        Assert.Empty(context.AuditLogs);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task GetUsers_returns_marketplace_role_separately_from_system_roles()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
