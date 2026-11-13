@@ -43,7 +43,7 @@ public sealed class SuperAdminInvitationsControllerTests
         Assert.Equal("pending", invitation.Status);
         Assert.Equal(DateTime.UtcNow.Date, invitation.CreatedAt.Date);
         Assert.Contains("newadmin@example.com", sender.Body);
-        var rawToken = sender.Body.Split("#token=", StringSplitOptions.None)[1].Split('\\r', '\\n')[0].Trim();
+        var rawToken = sender.Body.Split("#token=", StringSplitOptions.None)[1].Split(new[] { (char)13, (char)10 }, StringSplitOptions.None)[0].Trim();
         Assert.Equal(HashToken(rawToken), invitation.TokenHash);
         Assert.Single(context.AuditLogs);
     }
