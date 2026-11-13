@@ -12,6 +12,7 @@ namespace DoForYou.API.Controllers;
 [Route("api/v1/rules")]
 [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
+[Authorize(Policy = AdminPermissionPolicies.ConfigurationManagePolicy)]
 public class RulesController : ControllerBase
 {
     private readonly AppDbContext _context;
