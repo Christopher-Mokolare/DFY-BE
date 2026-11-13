@@ -1108,6 +1108,7 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<object>
         {
             Success = true,
+            Message = "Operational task/payment summary only. These task totals are not an accounting ledger; use the double-entry financial journal for ledger balances.",
             Data = new
             {
                 totalRevenue,
