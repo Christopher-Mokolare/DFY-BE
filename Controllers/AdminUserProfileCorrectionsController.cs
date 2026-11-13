@@ -63,7 +63,7 @@ public sealed class AdminUserProfileCorrectionsController(
         var address = request.Address?.Trim() ?? string.Empty;
         if (firstName.Length is < 2 or > 80 || lastName.Length is < 2 or > 80)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "First and last names must each contain between 2 and 80 characters." });
-        if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email) || email.Length > 254)
+        if (string.IsNullOrWhiteSpace(email) || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email) || email.Length > 254)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter a valid email address." });
         if (phone == null)
             return BadRequest(new ApiResponse<object> { Success = false, Message = "Enter a valid South African mobile number. Changing it will clear its verified status." });
