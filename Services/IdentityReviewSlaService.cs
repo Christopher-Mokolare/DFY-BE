@@ -55,18 +55,20 @@ public sealed class IdentityReviewSlaService(
 
             if (now >= nearAt && !await HasEventAsync(db, submission.UserId, nearEvent, cancellationToken))
             {
-                await QueueAdminNotificationsAsync(db, $"identity-sla:{nearEvent}", "identity_review_near_deadline",
+                await QueueReviewerNotificationsAsync(db, $"identity-sla:{nearEvent}", "identity_review_near_deadline",
                     "DFY Document Review approaching deadline",
-                    $"Review case {submission.Id} has used 75% of its one-business-day review target.", cancellationToken);
+                    $"Review case {submission.Id} has used 75% of its one-business-day review target.",
+                    includeBackupReviewers: false, cancellationToken: cancellationToken);
                 db.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, nearEvent, "alerted"));
                 await db.SaveChangesAsync(cancellationToken);
             }
 
             if (now >= dueAt && !await HasEventAsync(db, submission.UserId, overdueEvent, cancellationToken))
             {
-                await QueueAdminNotificationsAsync(db, $"identity-sla:{overdueEvent}", "identity_review_overdue",
+                await QueueReviewerNotificationsAsync(db, $"identity-sla:{overdueEvent}", "identity_review_overdue",
                     "DFY Document Review overdue",
-                    $"Review case {submission.Id} has breached its one-business-day review target. Please assign a reviewer immediately.", cancellationToken);
+                    $"Review case {submission.Id} has breached its one-business-day review target. Please assign a reviewer immediately.",
+                    includeBackupReviewers: false, cancellationToken);
                 QueueUserNotification(db, $"identity-sla:{overdueEvent}:runner", submission.UserId,
                     "identity_review_delayed", "Your DFY Document Review is taking longer than expected",
                     "Your documents are still awaiting review. We are working on your application and will notify you as soon as there is an update.");
@@ -78,39 +80,65 @@ public sealed class IdentityReviewSlaService(
                 submission.SubmittedAt, 16, configuration["IdentityVerification:SouthAfricanPublicHolidays"]);
             if (now >= internalDueAt && !await HasEventAsync(db, submission.UserId, escalationEvent, cancellationToken))
             {
-                await QueueAdminNotificationsAsync(db, $"identity-sla:{escalationEvent}", "identity_review_escalated",
+                await QueueReviewerNotificationsAsync(db, $"identity-sla:{escalationEvent}", "identity_review_escalated",
                     "DFY Document Review requires escalation",
-                    $"Review case {submission.Id} has exceeded the internal two-business-day maximum. A backup administrator must take ownership.", cancellationToken);
+                    $"Review case {submission.Id} has exceeded the internal two-business-day maximum. A configured backup reviewer must take ownership.",
+                    includeBackupReviewers: true, cancellationToken: cancellationToken);
                 db.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, escalationEvent, "escalated"));
                 await db.SaveChangesAsync(cancellationToken);
             }
         }
     }
 
-    private static async System.Threading.Tasks.Task QueueAdminNotificationsAsync(
+    /// <summary>
+    /// Routes operational alerts only to explicitly configured reviewer accounts.
+    /// Configure IdentityVerification:PrimaryReviewerUserIds and
+    /// IdentityVerification:BackupReviewerUserIds as comma-separated internal user IDs.
+    /// An empty configuration deliberately sends no administrator-wide broadcast.
+    /// </summary>
+    private async System.Threading.Tasks.Task QueueReviewerNotificationsAsync(
         AppDbContext db,
         string keyPrefix,
         string type,
         string title,
         string message,
+        bool includeBackupReviewers,
         CancellationToken cancellationToken)
     {
-        var admins = await db.Users.AsNoTracking()
-            .Where(user => !user.IsArchived && user.Roles != null && user.Roles.Contains("Admin"))
-            .Select(user => new { user.Id, user.Email })
+        var reviewerIds = ReadConfiguredIds(configuration["IdentityVerification:PrimaryReviewerUserIds"]);
+        if (includeBackupReviewers)
+            reviewerIds.UnionWith(ReadConfiguredIds(configuration["IdentityVerification:BackupReviewerUserIds"]));
+
+        if (reviewerIds.Count == 0)
+        {
+            logger.LogWarning(
+                "Identity review SLA alert {AlertType} has no configured {ReviewerGroup} recipients. Configure reviewer user IDs.",
+                type,
+                includeBackupReviewers ? "primary or backup reviewer" : "primary reviewer");
+            return;
+        }
+
+        var configuredUsers = await db.Users.AsNoTracking()
+            .Where(user => reviewerIds.Contains(user.Id) && !user.IsArchived)
+            .Select(user => new { user.Id, user.Email, user.Roles })
             .ToListAsync(cancellationToken);
 
-        foreach (var admin in admins)
+        var reviewers = configuredUsers
+            .Where(user => user.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Any(role => string.Equals(role.Trim(), "Admin", StringComparison.OrdinalIgnoreCase)) == true)
+            .ToList();
+
+        foreach (var reviewer in reviewers)
         {
-            QueueUserNotification(db, $"{keyPrefix}:admin:{admin.Id}", admin.Id, type, title, message);
-            if (!string.IsNullOrWhiteSpace(admin.Email))
+            QueueUserNotification(db, $"{keyPrefix}:reviewer:{reviewer.Id}", reviewer.Id, type, title, message);
+            if (!string.IsNullOrWhiteSpace(reviewer.Email))
             {
                 db.IdentityNotificationOutbox.Add(new IdentityNotificationOutbox
                 {
-                    IdempotencyKey = $"{keyPrefix}:admin:{admin.Id}:email",
+                    IdempotencyKey = $"{keyPrefix}:reviewer:{reviewer.Id}:email",
                     Channel = "email",
-                    RecipientUserId = admin.Id,
-                    RecipientEmail = admin.Email.Trim(),
+                    RecipientUserId = reviewer.Id,
+                    RecipientEmail = reviewer.Email.Trim(),
                     Type = type,
                     Title = title,
                     Message = message,
@@ -119,6 +147,28 @@ public sealed class IdentityReviewSlaService(
                 });
             }
         }
+
+        if (reviewers.Count == 0)
+        {
+            logger.LogWarning(
+                "Identity review SLA alert {AlertType} had configured recipients, but none were active administrator accounts.",
+                type);
+        }
+    }
+
+    private static HashSet<int> ReadConfiguredIds(string? configuredIds)
+    {
+        var ids = new HashSet<int>();
+        if (string.IsNullOrWhiteSpace(configuredIds))
+            return ids;
+
+        foreach (var item in configuredIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (int.TryParse(item, out var id) && id > 0)
+                ids.Add(id);
+        }
+
+        return ids;
     }
 
     private static void QueueUserNotification(
