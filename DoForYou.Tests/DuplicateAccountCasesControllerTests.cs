@@ -81,6 +81,12 @@ public sealed class DuplicateAccountCasesControllerTests
         }, CancellationToken.None);
 
         Assert.IsType<BadRequestObjectResult>(result);
+        var rawInReason = await CreateController(db, 7).Create(new CreateDuplicateAccountCaseRequest
+        {
+            PrimaryUserId = 1, CandidateUserId = 2,
+            Reason = "Investigate identity number 8001015009087 for duplicates."
+        }, CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(rawInReason);
         Assert.Empty(await db.DuplicateAccountCases.ToListAsync());
     }
 
