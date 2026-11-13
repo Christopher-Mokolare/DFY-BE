@@ -1657,7 +1657,40 @@ public class AdminController : ControllerBase
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
         if (approval.Status == "Executed")
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "This approved action has already been executed." });
-        if (approval.Status is not ("Approved" or "Executing"))
+        if (approval.Status == "Executing")
+        {
+            var interruptedTask = await _context.Tasks.AsNoTracking().FirstOrDefaultAsync(item => item.Id == approval.TaskId);
+            var interruptedPayoutExists = interruptedTask?.EscrowStatus == "released" &&
+                interruptedTask.PaymentStatus == "EscrowReleased" &&
+                await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
+                    payout.Status != "Failed" && payout.Status != "Returned" && payout.Status != "Cancelled");
+            if (!interruptedPayoutExists)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "A prior execution is marked in progress but has no confirmed queued payout. Do not retry automatically; reconcile the task and payout before recovery." });
+
+            var reconciledAt = DateTime.UtcNow;
+            var reconciled = await _context.FinancialApprovalRequests
+                .Where(item => item.Id == id && item.Status == "Executing")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.Status, "Executed")
+                    .SetProperty(item => item.ExecutedAt, reconciledAt));
+            if (reconciled == 1)
+            {
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = actorId.Value,
+                    Action = "FinancialApprovalExecutionReconciled",
+                    EntityType = "FinancialApprovalRequest",
+                    EntityId = id,
+                    NewValues = $"Recovered existing payout state; taskId={approval.TaskId}",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+                await _context.SaveChangesAsync();
+                return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Existing payout state reconciled; no second payout was submitted." });
+            }
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Execution state changed during reconciliation. Refresh the approval record." });
+        }
+        if (approval.Status != "Approved")
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an approved financial action can be executed." });
 
         var now = DateTime.UtcNow;
@@ -1665,9 +1698,7 @@ public class AdminController : ControllerBase
         if (_context.Database.IsRelational())
         {
             claim = await _context.FinancialApprovalRequests
-                .Where(item => item.Id == id &&
-                    ((item.Status == "Approved" && item.ExpiresAt > now) ||
-                     (item.Status == "Executing" && item.ExecutionStartedAt < now.AddMinutes(-10))))
+                .Where(item => item.Id == id && item.Status == "Approved" && item.ExpiresAt > now)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(item => item.Status, "Executing")
                     .SetProperty(item => item.ExecutionStartedAt, now)
@@ -1678,8 +1709,7 @@ public class AdminController : ControllerBase
         {
             var trackedApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
             if (trackedApproval != null &&
-                ((trackedApproval.Status == "Approved" && trackedApproval.ExpiresAt > now) ||
-                 (trackedApproval.Status == "Executing" && trackedApproval.ExecutionStartedAt < now.AddMinutes(-10))))
+                trackedApproval.Status == "Approved" && trackedApproval.ExpiresAt > now)
             {
                 trackedApproval.Status = "Executing";
                 trackedApproval.ExecutionStartedAt = now;
