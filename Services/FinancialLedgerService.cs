@@ -76,7 +76,7 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
                 throw new InvalidOperationException("All journal lines must use the journal currency.");
         }
 
-        await using var transaction = _context.Database.IsRelational()
+        await using var transaction = _context.Database.IsRelational() && _context.Database.CurrentTransaction == null
             ? await _context.Database.BeginTransactionAsync(cancellationToken)
             : null;
 
@@ -125,6 +125,10 @@ public sealed class FinancialLedgerService : IFinancialLedgerService
         {
             if (transaction != null)
                 await transaction.RollbackAsync(cancellationToken);
+
+            foreach (var entry in _context.ChangeTracker.Entries<FinancialJournal>()
+                         .Where(entry => entry.Entity == journal).ToArray())
+                entry.State = EntityState.Detached;
 
             var concurrent = await _context.FinancialJournals
                 .Include(item => item.Lines)
