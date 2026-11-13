@@ -422,7 +422,7 @@ public class AdminControllerTests
         var admin = CreateUser(151, "Admin");
         var user = CreateUser(152, "User");
         context.Users.AddRange(admin, user);
-        context.AuditLogs.Add(new Models.AuditLog
+        context.AuditLogs.Add(new AuditLog
         {
             UserId = admin.Id,
             Action = "AdminUserProfileCorrected",
