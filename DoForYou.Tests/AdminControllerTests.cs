@@ -707,6 +707,86 @@ public class AdminControllerTests
         Assert.Empty(context.Payouts);
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Journal_reversal_requires_independent_approval_and_posts_an_exact_inverse()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-reversal-two-person-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+
+        var requester = CreateUser(701, "Admin,SuperAdmin");
+        requester.EmailVerified = true;
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(702, "Admin,SuperAdmin");
+        approver.EmailVerified = true;
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        context.Users.AddRange(requester, approver);
+        await context.SaveChangesAsync();
+
+        var ledger = new DoForYou.API.Services.FinancialLedgerService(context);
+        var original = await ledger.PostAsync(new DoForYou.API.Services.FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-SUPERADMIN-REVERSAL",
+            "paystack:charge:TX-SUPERADMIN-REVERSAL",
+            "ZAR",
+            "Verified Paystack collection for reversal approval test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new DoForYou.API.Services.FinancialJournalLineDraft("1000", 125m, 0m),
+                new DoForYou.API.Services.FinancialJournalLineDraft("2000", 0m, 125m)
+            },
+            "Paystack",
+            "REF-SUPERADMIN-REVERSAL"));
+
+        var create = await CreateController(context, requester.Id).RequestFinancialReversal(
+            new FinancialReversalCreateRequest
+            {
+                OriginalJournalId = original.Id,
+                Reason = "Reverse this incorrectly allocated original journal"
+            });
+        var createOk = Assert.IsType<OkObjectResult>(create.Result);
+        var requestId = (int)createOk.Value!.GetType().GetProperty("Data")!.GetValue(createOk.Value)!;
+
+        var selfApproval = await CreateController(context, requester.Id).DecideFinancialReversal(
+            requestId,
+            new FinancialReversalDecisionRequest
+            {
+                Decision = "approve",
+                Reason = "Requester attempts to approve own journal reversal"
+            });
+        Assert.IsType<ConflictObjectResult>(selfApproval.Result);
+        Assert.Equal("Pending", (await context.FinancialReversalRequests.SingleAsync()).Status);
+
+        var decision = await CreateController(context, approver.Id).DecideFinancialReversal(
+            requestId,
+            new FinancialReversalDecisionRequest
+            {
+                Decision = "approve",
+                Reason = "Independent review confirms original journal is incorrect"
+            });
+        Assert.IsType<OkObjectResult>(decision.Result);
+
+        var execution = await CreateController(context, requester.Id).ExecuteFinancialReversal(requestId);
+        Assert.IsType<OkObjectResult>(execution.Result);
+
+        var reversal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .SingleAsync(journal => journal.ReversalOfJournalId == original.Id);
+        Assert.Equal(2, reversal.Lines.Count);
+        Assert.Contains(reversal.Lines, line => line.Account.Code == "1000" && line.Debit == 0m && line.Credit == 125m);
+        Assert.Contains(reversal.Lines, line => line.Account.Code == "2000" && line.Debit == 125m && line.Credit == 0m);
+        Assert.Equal("Executed", (await context.FinancialReversalRequests.SingleAsync()).Status);
+        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("1000"));
+        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2000"));
+    }
+
     private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
         AppDbContext context,
         DoForYou.API.Models.Task task,
