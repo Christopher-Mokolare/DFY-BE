@@ -1155,7 +1155,8 @@ public class AdminController : ControllerBase
         if (target.IsArchived)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Restore the account before changing its suspension state." });
         if (target.Id == actorId || target.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(role => role is "Admin" or "SuperAdmin") == true)
+            .Any(role => string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(role, "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true)
             return Conflict(new ApiResponse<bool> { Success = false, Message = "Administrators cannot suspend themselves or another administrative account through user management." });
         if (target.IsSuspended == request.IsSuspended)
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Account suspension state is unchanged." });
