@@ -76,10 +76,10 @@ namespace DoForYou.API.Migrations
                     table.PrimaryKey("PK_FinancialJournalLines", x => x.Id);
                     table.CheckConstraint(
                         "CK_FinancialJournalLines_OneSidedPositiveAmount",
-                        "((\\"Debit\\" > 0 AND \\"Credit\\" = 0) OR (\\"Credit\\" > 0 AND \\"Debit\\" = 0))");
+                        "((\"Debit\" > 0 AND \"Credit\" = 0) OR (\"Credit\" > 0 AND \"Debit\" = 0))");
                     table.CheckConstraint(
                         "CK_FinancialJournalLines_NonNegativeAmounts",
-                        "\\"Debit\\" >= 0 AND \\"Credit\\" >= 0");
+                        "\"Debit\" >= 0 AND \"Credit\" >= 0");
                     table.ForeignKey(
                         name: "FK_FinancialJournalLines_FinancialAccounts_AccountId",
                         column: x => x.AccountId,
@@ -98,7 +98,7 @@ namespace DoForYou.API.Migrations
             migrationBuilder.CreateIndex(name: "IX_FinancialJournals_JournalNumber", table: "FinancialJournals", column: "JournalNumber", unique: true);
             migrationBuilder.CreateIndex(name: "IX_FinancialJournals_IdempotencyKey", table: "FinancialJournals", column: "IdempotencyKey", unique: true);
             migrationBuilder.CreateIndex(name: "IX_FinancialJournals_SourceType_SourceId_EventType", table: "FinancialJournals", columns: new[] { "SourceType", "SourceId", "EventType" }, unique: true);
-            migrationBuilder.CreateIndex(name: "IX_FinancialJournals_ReversalOfJournalId", table: "FinancialJournals", column: "ReversalOfJournalId", unique: true, filter: "\\"ReversalOfJournalId\\" IS NOT NULL");
+            migrationBuilder.CreateIndex(name: "IX_FinancialJournals_ReversalOfJournalId", table: "FinancialJournals", column: "ReversalOfJournalId", unique: true, filter: "\"ReversalOfJournalId\" IS NOT NULL");
             migrationBuilder.CreateIndex(name: "IX_FinancialJournalLines_JournalId_LineNumber", table: "FinancialJournalLines", columns: new[] { "JournalId", "LineNumber" }, unique: true);
             migrationBuilder.CreateIndex(name: "IX_FinancialJournalLines_AccountId", table: "FinancialJournalLines", column: "AccountId");
 
