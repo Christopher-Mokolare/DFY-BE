@@ -434,6 +434,73 @@ public class DisputeLifecycleTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Refund_dispute_resolution_rejects_legacy_audit_only_payment_references()
+    {
+        using var context = CreateContext(nameof(Refund_dispute_resolution_rejects_legacy_audit_only_payment_references));
+        var requester = CreateUser(30, "admin", "legacy-requester@test.com");
+        requester.Roles = "Admin,SuperAdmin";
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(31, "admin", "legacy-approver@test.com");
+        approver.Roles = "Admin,SuperAdmin";
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(32, "creator", "legacy-creator@test.com");
+        var runner = CreateUser(33, "runner", "legacy-runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Completed", "DisputePending", "disputed");
+        task.Id = 34;
+        context.Users.AddRange(requester, approver, creator, runner);
+        context.Tasks.Add(task);
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The task was not completed",
+            Category = "quality",
+            Status = "Open"
+        };
+        context.Disputes.Add(dispute);
+
+        // This deliberately reproduces the retired audit-log-only payment reference.
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = requester.Id,
+            Action = "PaystackPaymentVerified",
+            EntityType = "Task",
+            EntityId = task.Id,
+            NewValues = "transactionId=TX-LEGACY-ONLY"
+        });
+        var approval = new FinancialApprovalRequest
+        {
+            TaskId = task.Id,
+            Action = "refund_creator",
+            Reason = "Refund after review of incomplete task evidence",
+            Status = "Approved",
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RequestedByUserId = requester.Id,
+            RequestedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(20),
+            DecidedByUserId = approver.Id,
+            DecidedAt = DateTime.UtcNow,
+            DecisionReason = "Independent review supports a full creator refund"
+        };
+        context.FinancialApprovalRequests.Add(approval);
+        await context.SaveChangesAsync();
+
+        using var request = JsonDocument.Parse("""{"action":"refund_creator","resolution":"Work was incomplete after review","reason":"Independent approval authorizes refund after evidence review"}""");
+        var result = await CreateController(context, requester.Id).ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Failed", approval.Status);
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("Open", dispute.Status);
+        Assert.DoesNotContain(context.AuditLogs, log => log.Action == "PaystackRefundSubmitted");
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Refund_dispute_resolution_without_independent_approval_does_not_submit_refund()
     {
         using var context = CreateContext(nameof(Refund_dispute_resolution_without_independent_approval_does_not_submit_refund));
