@@ -825,7 +825,6 @@ public sealed class ManualIdentityVerificationController(
     }
 
     // Document viewing is a separate permission from ordinary KYC review and requires fresh MFA and a reason.
-    [Authorize(Roles = "Admin")]
     [Authorize(Policy = "AdminMfa")]
     [Authorize(Policy = AdminPermissionPolicies.KycViewDocumentsPolicy)]
     [HttpGet("admin/{id:int}/document/{side}")]
