@@ -2014,10 +2014,11 @@ public class AdminController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
 
-        var openDispute = await _context.Disputes
+        var openDisputes = await _context.Disputes
             .Where(item => item.TaskId == task.Id && item.Status == "Open")
             .OrderByDescending(item => item.CreatedAt)
-            .FirstOrDefaultAsync();
+            .ToListAsync();
+        var openDispute = openDisputes.Count == 1 ? openDisputes[0] : null;
         var successfulPayments = await _context.PaymentAttempts
             .Where(item => item.TaskId == task.Id && item.Provider == "Paystack" &&
                 item.Status == "Completed" && item.TransactionId != null && item.Amount == task.Budget)
@@ -2106,7 +2107,11 @@ public class AdminController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
 
-        var openDispute = await _context.Disputes.AnyAsync(item => item.TaskId == task.Id && item.Status == "Open");
+        var openDisputes = await _context.Disputes
+            .Where(item => item.TaskId == task.Id && item.Status == "Open")
+            .OrderByDescending(item => item.CreatedAt)
+            .ToListAsync();
+        var openDispute = openDisputes.Count == 1 ? openDisputes[0] : null;
         var successfulPaymentTransactionIds = await _context.PaymentAttempts
             .Where(item => item.TaskId == task.Id && item.Provider == "Paystack" && item.Status == "Completed" &&
                 item.TransactionId != null && item.Amount == task.Budget)
