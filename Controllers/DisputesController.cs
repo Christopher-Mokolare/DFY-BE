@@ -442,6 +442,23 @@ public class DisputesController : ControllerBase
             var existingRefund = await _context.Refunds
                 .FirstOrDefaultAsync(r => r.TaskId == task.Id);
 
+            if (existingRefund != null &&
+                (existingRefund.Provider != "Paystack" ||
+                 existingRefund.TransactionId != transactionId ||
+                 existingRefund.Amount != task.Budget))
+            {
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "Existing refund record does not match the approved Paystack transaction and full task amount.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "An existing refund record is bound to a different charge or amount. No provider action was taken; manual reconciliation is required."
+                });
+            }
+
             if (existingRefund != null && existingRefund.Status == "Complete")
             {
                 await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", "Existing refund record is already complete.");
