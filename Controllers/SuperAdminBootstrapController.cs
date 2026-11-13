@@ -27,7 +27,7 @@ public sealed class SuperAdminBootstrapController(
     IWebHostEnvironment environment,
     IAuthenticatorService authenticator) : ControllerBase
 {
-    private const string BootstrapEmail = "info@doforyou.co.za";
+    private const string BootstrapEmail = "admindfy@gmail.com";
     private const string BootstrapAuditAction = "BootstrapSuperAdmin";
 
     [HttpPost("super-admin")]
