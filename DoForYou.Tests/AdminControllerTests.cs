@@ -461,6 +461,63 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task Disputed_escrow_release_requires_independent_two_person_approval()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-dispute-release-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(141, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(142, "Admin,SuperAdmin");
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(143, "User");
+        var runner = CreateUser(144, "User");
+        context.Users.AddRange(requester, approver, creator, runner);
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 145, TaskId = "DFY-DISPUTE-RELEASE", TaskDescription = "Dispute release test",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "Completed", PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed", Budget = 200m, PayoutAmount = 170m
+        };
+        context.Tasks.Add(task);
+        context.Disputes.Add(new Dispute
+        {
+            TaskId = task.Id, ReportedByUserId = creator.Id,
+            Issue = "Work completed", Category = "quality", Status = "Open"
+        });
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_release",
+            TransactionId = "987656", Amount = 200m, Status = "Completed"
+        });
+        await context.SaveChangesAsync();
+
+        var requested = await CreateController(context, requester.Id).RequestDisputeReleaseApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Release after independent review of task evidence" });
+        var requestOk = Assert.IsType<OkObjectResult>(requested.Result);
+        var requestId = (int)requestOk.Value!.GetType().GetProperty("Data")!.GetValue(requestOk.Value)!;
+
+        var approved = await CreateController(context, approver.Id).ApproveFinancialRequest(
+            requestId,
+            new AdminActionReasonRequest { Reason = "Evidence supports payment to the assigned runner" });
+
+        Assert.IsType<OkObjectResult>(approved.Result);
+        var approval = await context.FinancialApprovalRequests.SingleAsync();
+        Assert.Equal("release_to_runner", approval.Action);
+        Assert.Equal("Approved", approval.Status);
+        Assert.Equal(requester.Id, approval.RequestedByUserId);
+        Assert.Equal(approver.Id, approval.DecidedByUserId);
+        Assert.Empty(context.Payouts);
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialDisputeReleaseApprovalRequested");
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialApprovalGranted");
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Refund_approval_rejects_charge_amount_mismatch()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
