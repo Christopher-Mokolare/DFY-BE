@@ -185,7 +185,8 @@ public sealed class PayoutProcessorService(
             return;
         }
 
-        if (!payout.BankAccount.IsVerified ||
+        if (payout.BankAccount == null ||
+            !payout.BankAccount.IsVerified ||
             !payout.BankAccount.IsActive)
         {
             payout.Status = "AwaitingBankDetails";
