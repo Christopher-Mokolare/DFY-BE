@@ -8427,8 +8427,7 @@ export interface components {
             reason: string;
         };
         FinancialReversalDecisionRequest: {
-            /** @enum {string} */
-            decision: "approve" | "reject";
+            decision: string;
             reason: string;
         };
     };
