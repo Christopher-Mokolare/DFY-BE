@@ -76,8 +76,6 @@ public sealed class AdminPermissionsController(AppDbContext context) : Controlle
         var reason = request.Reason?.Trim() ?? string.Empty;
         if (!AdminPermissionPolicies.IsKnown(permissionKey))
             return BadRequest(new { message = "Choose a permission from the supported permission catalogue." });
-        if (string.Equals(permissionKey, AdminPermissionPolicies.KycOverride, StringComparison.Ordinal))
-            return Conflict(new { message = "KYC override grants remain disabled until the separately controlled override workflow and approval tests are delivered." });
         if (request.UserId <= 0 || request.UserId == actorId.Value)
             return BadRequest(new { message = "Choose a different administrator account." });
         if (reason.Length < 10 || reason.Length > 500)
