@@ -60,6 +60,8 @@ public class User
     public long? LastAuthenticatorTimeStep { get; set; }
     public DateTime? DateOfBirth { get; set; }
     public string? Username { get; set; }
+    // Retired wallet balance retained for historical schema compatibility only.
+    // No current payout, escrow or SuperAdmin financial workflow may read or mutate it.
     public decimal WalletBalance { get; set; }
     public bool IsAvailable { get; set; } = true;
     public bool IsArchived { get; set; }
