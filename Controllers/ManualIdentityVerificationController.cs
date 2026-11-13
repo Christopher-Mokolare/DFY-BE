@@ -1075,6 +1075,17 @@ public sealed class ManualIdentityVerificationController(
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
             context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
+            context.AuditLogs.Add(new AuditLog
+            {
+                UserId = adminId.Value,
+                Action = "AdminIdentityReviewDecision",
+                EntityType = "IdentityVerificationSubmission",
+                EntityId = submission.Id,
+                OldValues = "pending",
+                NewValues = $"decision={decision};status={submissionStatus};reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
             var runnerTitle = decision switch
             {
                 "approve" => "DFY Document Review approved",
@@ -1126,6 +1137,17 @@ public sealed class ManualIdentityVerificationController(
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
             context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
+            context.AuditLogs.Add(new AuditLog
+            {
+                UserId = adminId.Value,
+                Action = "AdminIdentityReviewDecision",
+                EntityType = "IdentityVerificationSubmission",
+                EntityId = submission.Id,
+                OldValues = "pending",
+                NewValues = $"decision={decision};status={submissionStatus};reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
             await context.SaveChangesAsync(cancellationToken);
         }
 
