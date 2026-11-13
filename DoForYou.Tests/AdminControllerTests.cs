@@ -413,6 +413,86 @@ public class AdminControllerTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task SuperAdmins_can_request_two_person_refund_approval_only_for_open_unpaid_disputes()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-refund-request-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(111, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(112, "User");
+        var runner = CreateUser(113, "User");
+        context.Users.AddRange(requester, creator, runner);
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 114, TaskId = "DFY-REFUND-APPROVAL", TaskDescription = "Refund approval test",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "Completed", PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed", Budget = 200m, PayoutAmount = 170m
+        };
+        context.Tasks.Add(task);
+        context.Disputes.Add(new Dispute
+        {
+            TaskId = task.Id, ReportedByUserId = creator.Id,
+            Issue = "Task incomplete", Category = "quality", Status = "Open"
+        });
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_114",
+            TransactionId = "987654", Amount = 200m, Status = "Completed"
+        });
+        await context.SaveChangesAsync();
+
+        var requested = await CreateController(context, requester.Id).RequestFinancialRefundApproval(
+            task.TaskId,
+            new AdminActionReasonRequest { Reason = "Refund after evidence review confirms incomplete work" });
+
+        var response = Assert.IsType<OkObjectResult>(requested.Result);
+        var approvalId = (int)response.Value!.GetType().GetProperty("Data")!.GetValue(response.Value)!;
+        var approval = await context.FinancialApprovalRequests.SingleAsync();
+        Assert.Equal(approvalId, approval.Id);
+        Assert.Equal("refund_creator", approval.Action);
+        Assert.Equal("Pending", approval.Status);
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialRefundApprovalRequested");
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Refund_approval_is_denied_when_no_open_dispute_or_verified_charge_exists()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase($"financial-refund-ineligible-{Guid.NewGuid():N}")
+            .Options;
+        await using var context = new AppDbContext(options);
+        var requester = CreateUser(121, "Admin,SuperAdmin");
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(122, "User");
+        var runner = CreateUser(123, "User");
+        context.Users.AddRange(requester, creator, runner);
+        context.Tasks.Add(new DoForYou.API.Models.Task
+        {
+            Id = 124, TaskId = "DFY-REFUND-INELIGIBLE", TaskDescription = "No dispute",
+            CreatedByUserId = creator.Id, AcceptedByUserId = runner.Id,
+            TaskStatus = "Completed", PaymentStatus = "DisputePending",
+            EscrowStatus = "disputed", Budget = 200m, PayoutAmount = 170m
+        });
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, requester.Id).RequestFinancialRefundApproval(
+            "DFY-REFUND-INELIGIBLE",
+            new AdminActionReasonRequest { Reason = "Refund requested after operational review" });
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(context.FinancialApprovalRequests);
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+    }
+
+    [Fact]
     public async System.Threading.Tasks.Task Financial_approval_request_rejects_stale_MFA_and_non_SuperAdmins()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
