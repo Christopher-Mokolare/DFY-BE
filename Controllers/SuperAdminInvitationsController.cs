@@ -64,6 +64,20 @@ public sealed class SuperAdminInvitationsController(
             return Conflict(new { message = "This email already belongs to an archived or administrative account. Resolve that account explicitly instead of issuing a new invitation." });
 
         var now = DateTime.UtcNow;
+        var sameEmailRecentlyInvited = await context.AdminInvitations.AnyAsync(invitation =>
+            invitation.NormalizedEmail == normalizedEmail && invitation.CreatedAt >= now.AddMinutes(-5),
+            cancellationToken);
+        if (sameEmailRecentlyInvited)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = "An invitation for this email was already sent within the last five minutes. Wait before resending." });
+
+        var inviterHourlyCount = await context.AdminInvitations.CountAsync(invitation =>
+            invitation.CreatedByUserId == actorId.Value && invitation.CreatedAt >= now.AddHours(-1),
+            cancellationToken);
+        if (inviterHourlyCount >= 10)
+            return StatusCode(StatusCodes.Status429TooManyRequests,
+                new { message = "The administrator invitation limit is 10 per hour. Try again later." });
+
         var pending = await context.AdminInvitations
             .Where(invitation => invitation.NormalizedEmail == normalizedEmail && invitation.Status == "pending")
             .ToListAsync(cancellationToken);
