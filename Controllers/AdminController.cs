@@ -2127,7 +2127,7 @@ public class AdminController : ControllerBase
              item.Status == "AwaitingEligibility" || item.Status == "AwaitingBankDetails" ||
              item.Status == "Queued" || item.Status == "Initiated" || item.Status == "Completed"));
 
-        if (!openDispute || task.AcceptedByUserId == null ||
+        if (openDispute == null || task.AcceptedByUserId == null ||
             (task.TaskStatus != "AwaitingConfirmation" && task.TaskStatus != "Completed") ||
             task.PaymentStatus != "DisputePending" || task.EscrowStatus != "disputed" ||
             task.PayoutAmount <= 0 || !hasSuccessfulPayment || activePayout)
