@@ -972,6 +972,7 @@ public class AdminController : ControllerBase
             contact = u.PhoneNumber == null ? null : "***",
             role = u.Roles,
             isVerified = u.IsVerified,
+            emailVerified = u.EmailVerified,
             profileCompleted = _userPolicyService.IsProfileComplete(u),
             profileCompletion = _userPolicyService.GetProfileCompletion(u),
             missingProfileFields = _userPolicyService.GetMissingProfileFields(u),
