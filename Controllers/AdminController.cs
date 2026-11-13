@@ -43,6 +43,19 @@ public class AdminController : ControllerBase
             _ => "Not selected"
         };
 
+    private async Task<bool> IsFreshActiveSuperAdminAsync(int userId)
+    {
+        var actor = await _context.Users.AsNoTracking()
+            .Where(user => user.Id == userId && !user.IsArchived && !user.IsSuspended)
+            .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+            .FirstOrDefaultAsync();
+        return actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+            actor.AuthenticatorTwoFactorEnabled &&
+            actor.LastTwoFactorVerifiedAt.HasValue &&
+            actor.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+    }
+
     private int? GetAdminId() =>
         int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var id) ? id : null;
 
@@ -1407,6 +1420,222 @@ public class AdminController : ControllerBase
                 ? "Creator confirmation expired and the runner payout was queued."
                 : "Creator confirmation was expired, but the escrow could not be released."
         });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/tasks/{taskId}")]
+    public async Task<ActionResult<ApiResponse<int>>> RequestFinancialApproval(string taskId, [FromBody] AdminActionReasonRequest request)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var reason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<int> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(item => item.TaskId == taskId);
+        if (task == null)
+            return NotFound(new ApiResponse<int> { Success = false, Message = "Task not found." });
+        if (task.AcceptedByUserId == null || task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld")
+            return Conflict(new ApiResponse<int> { Success = false, Message = "Only an assigned task with held escrow can enter exceptional release approval." });
+
+        var hasOpenRequest = await _context.FinancialApprovalRequests.AnyAsync(item =>
+            item.TaskId == task.Id &&
+            item.Action == "force_escrow_release" &&
+            (item.Status == "Pending" || item.Status == "Approved" || item.Status == "Executing"));
+        if (hasOpenRequest)
+            return Conflict(new ApiResponse<int> { Success = false, Message = "An active financial approval request already exists for this task." });
+
+        var now = DateTime.UtcNow;
+        var approval = new Models.FinancialApprovalRequest
+        {
+            TaskId = task.Id,
+            Action = "force_escrow_release",
+            Reason = reason,
+            Status = "Pending",
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RequestedByUserId = actorId.Value,
+            RequestedAt = now,
+            ExpiresAt = now.AddMinutes(30)
+        };
+        _context.FinancialApprovalRequests.Add(approval);
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialApprovalRequested",
+            EntityType = "FinancialApprovalRequest",
+            NewValues = $"action={approval.Action}; taskId={task.Id}; expiresAt={approval.ExpiresAt:O}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<int> { Success = true, Data = approval.Id, Message = "Financial approval request created. No money has moved." });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/{id:int}/approve")]
+    public async Task<ActionResult<ApiResponse<bool>>> ApproveFinancialRequest(int id, [FromBody] AdminActionReasonRequest request)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var decisionReason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(decisionReason) || decisionReason.Length < 10 || decisionReason.Length > 500)
+            return BadRequest(new ApiResponse<bool> { Success = false, Message = "An approval reason between 10 and 500 characters is required." });
+
+        var approval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item => item.Id == id);
+        if (approval == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
+        if (approval.RequestedByUserId == actorId.Value)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The requester cannot approve their own financial action." });
+        if (approval.Status != "Pending" || approval.ExpiresAt <= DateTime.UtcNow)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an unexpired pending request can be approved." });
+
+        var taskIsStillEligible = await _context.Tasks.AnyAsync(task =>
+            task.Id == approval.TaskId &&
+            task.AcceptedByUserId != null &&
+            task.EscrowStatus == "held" &&
+            task.PaymentStatus == "EscrowHeld");
+        if (!taskIsStillEligible)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer eligible for exceptional escrow release." });
+
+        var now = DateTime.UtcNow;
+        var changed = await _context.FinancialApprovalRequests
+            .Where(item => item.Id == id && item.Status == "Pending" && item.ExpiresAt > now && item.RequestedByUserId != actorId.Value)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Status, "Approved")
+                .SetProperty(item => item.DecidedByUserId, actorId.Value)
+                .SetProperty(item => item.DecidedAt, now)
+                .SetProperty(item => item.DecisionReason, decisionReason));
+        if (changed != 1)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "The request changed while approval was being recorded. Refresh and review it again." });
+
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialApprovalGranted",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = id,
+            OldValues = "Pending",
+            NewValues = $"Approved; requestedBy={approval.RequestedByUserId}; reason={decisionReason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Independent approval recorded. Execution remains a separate action." });
+    }
+
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [HttpPost("financial-approvals/{id:int}/execute")]
+    public async Task<ActionResult<ApiResponse<bool>>> ExecuteFinancialApproval(int id)
+    {
+        var actorId = GetAdminId();
+        if (!actorId.HasValue || !await IsFreshActiveSuperAdminAsync(actorId.Value))
+            return Forbid();
+
+        var approval = await _context.FinancialApprovalRequests.AsNoTracking().FirstOrDefaultAsync(item => item.Id == id);
+        if (approval == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Financial approval request not found." });
+        if (approval.Status == "Executed")
+            return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "This approved action has already been executed." });
+        if (approval.Status is not ("Approved" or "Executing"))
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Only an approved financial action can be executed." });
+
+        var now = DateTime.UtcNow;
+        var claim = await _context.FinancialApprovalRequests
+            .Where(item => item.Id == id &&
+                ((item.Status == "Approved" && item.ExpiresAt > now) ||
+                 (item.Status == "Executing" && item.ExecutionStartedAt < now.AddMinutes(-10))))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Status, "Executing")
+                .SetProperty(item => item.ExecutionStartedAt, now)
+                .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1)
+                .SetProperty(item => item.LastExecutionError, (string?)null));
+        if (claim != 1)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "This action is already being executed, has expired, or is no longer eligible." });
+
+        var task = await _context.Tasks.FirstOrDefaultAsync(item => item.Id == approval.TaskId);
+        if (task == null)
+            return NotFound(new ApiResponse<bool> { Success = false, Message = "Approved task no longer exists." });
+
+        // Recover safely if the payout was created but the approval status update was interrupted.
+        var payoutAlreadyQueued = task.EscrowStatus == "released" &&
+            task.PaymentStatus == "EscrowReleased" &&
+            await _context.Payouts.AnyAsync(payout => payout.TaskId == task.Id &&
+                payout.Status != "Failed" && payout.Status != "Returned" && payout.Status != "Cancelled");
+
+        var released = payoutAlreadyQueued;
+        if (!released)
+        {
+            if (task.EscrowStatus != "held" || task.PaymentStatus != "EscrowHeld" || task.AcceptedByUserId == null)
+                return await ResetFinancialExecutionAsync(id, actorId.Value, "Task escrow state changed before execution.");
+
+            released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
+            if (released)
+            {
+                task = await _context.Tasks.AsNoTracking().FirstOrDefaultAsync(item => item.Id == approval.TaskId);
+                released = task?.EscrowStatus == "released" &&
+                    task.PaymentStatus == "EscrowReleased" &&
+                    await _context.Payouts.AnyAsync(payout => payout.TaskId == approval.TaskId &&
+                        payout.Status != "Failed" && payout.Status != "Returned" && payout.Status != "Cancelled");
+            }
+        }
+
+        if (!released)
+            return await ResetFinancialExecutionAsync(id, actorId.Value, "Escrow release did not produce a persisted payout record. No successful execution was recorded.");
+
+        var completedAt = DateTime.UtcNow;
+        var updated = await _context.FinancialApprovalRequests
+            .Where(item => item.Id == id && item.Status == "Executing")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Status, "Executed")
+                .SetProperty(item => item.ExecutedAt, completedAt)
+                .SetProperty(item => item.LastExecutionError, (string?)null));
+        if (updated != 1)
+            return Conflict(new ApiResponse<bool> { Success = false, Message = "Payout was queued, but approval status could not be finalized. Retry this same idempotent execution after reviewing task payout state." });
+
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId.Value,
+            Action = "FinancialApprovalExecuted",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = id,
+            OldValues = "Approved",
+            NewValues = $"Executed; taskId={approval.TaskId}; requester={approval.RequestedByUserId}; approver={approval.DecidedByUserId}; payoutQueued=true",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+
+        return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Two-person-approved escrow release was executed and a payout was queued for the normal payout processor." });
+    }
+
+    private async Task<ActionResult<ApiResponse<bool>>> ResetFinancialExecutionAsync(int id, int actorId, string error)
+    {
+        await _context.FinancialApprovalRequests
+            .Where(item => item.Id == id && item.Status == "Executing")
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(item => item.Status, "Approved")
+                .SetProperty(item => item.LastExecutionError, error));
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId,
+            Action = "FinancialApprovalExecutionFailed",
+            EntityType = "FinancialApprovalRequest",
+            EntityId = id,
+            NewValues = error,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
+        return Conflict(new ApiResponse<bool> { Success = false, Message = error });
     }
 
     [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
