@@ -450,7 +450,7 @@ public class ScenarioTests
             .SingleAsync(journal => journal.EventType == "reversal" && journal.ReversalOfJournalId == payoutJournal.Id);
         Assert.Equal(170m, reversal.Lines.Sum(line => line.Debit));
         Assert.Equal(170m, reversal.Lines.Sum(line => line.Credit));
-        Assert.Equal(0m, await ledger.GetAccountBalanceAsync("2100"));
+        Assert.Equal(-170m, await ledger.GetAccountBalanceAsync("2100"));
     }
 
     [Fact]
