@@ -46,6 +46,14 @@ public sealed class SuperAdminInvitationsControllerTests
         var rawToken = sender.Body.Split("#token=", StringSplitOptions.None)[1].Split(new[] { (char)13, (char)10 }, StringSplitOptions.None)[0].Trim();
         Assert.Equal(HashToken(rawToken), invitation.TokenHash);
         Assert.Single(context.AuditLogs);
+
+        var repeated = await controller.Create(new CreateAdminInvitationRequest
+        {
+            Email = "newadmin@example.com",
+            Reason = "Operations administrator onboarding"
+        }, CancellationToken.None);
+        Assert.Equal(StatusCodes.Status429TooManyRequests, Assert.IsType<ObjectResult>(repeated).StatusCode);
+        Assert.Single(context.AdminInvitations);
     }
 
     [Fact]
