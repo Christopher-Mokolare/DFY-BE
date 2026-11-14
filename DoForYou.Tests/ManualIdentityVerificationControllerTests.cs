@@ -82,6 +82,142 @@ public sealed class ManualIdentityVerificationControllerTests
 
 
     [Fact]
+    public async Task Kyc_override_reopens_only_rejected_cases_and_requires_normal_review_again()
+    {
+        await using var context = CreateContext();
+        var admin = NewRunner(290);
+        admin.Roles = "Admin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var runner = NewRunner(291);
+        runner.IdentityVerificationStatus = "rejected";
+        context.Users.AddRange(admin, runner);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id,
+            DocumentType = "south_african_id_card",
+            Status = "rejected",
+            FrontCiphertext = [1, 2, 3],
+            FrontNonce = new byte[12],
+            FrontTag = new byte[16],
+            FrontContentType = "image/jpeg",
+            ConsentVersion = "kyc-v1",
+            ReviewedAt = DateTime.UtcNow,
+            ReviewedByUserId = admin.Id,
+            ReviewReason = "Original reviewer decision",
+            DocumentsDeleteAfter = DateTime.UtcNow.AddDays(90)
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id).ReopenRejectedSubmission(
+            submission.Id,
+            new KycOverrideReopenRequest { Reason = "New evidence warrants a second independent review" },
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("pending", submission.Status);
+        Assert.Null(submission.ReviewedAt);
+        Assert.Null(submission.ReviewedByUserId);
+        Assert.Null(submission.ReviewClaimedByUserId);
+        Assert.Equal("pending", runner.IdentityVerificationStatus);
+        Assert.Contains(context.IdentityVerificationEvents, item => item.EventType == "kyc_override_reopened");
+        Assert.Contains(context.AuditLogs, item => item.Action == "AdminKycOverrideReopened");
+    }
+
+    [Fact]
+    public async Task Kyc_override_cannot_reopen_an_approved_submission()
+    {
+        await using var context = CreateContext();
+        var admin = NewRunner(292);
+        admin.Roles = "Admin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var runner = NewRunner(293);
+        runner.IdentityVerificationStatus = "passed";
+        context.Users.AddRange(admin, runner);
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id,
+            DocumentType = "south_african_id_card",
+            Status = "approved",
+            FrontCiphertext = [1, 2, 3],
+            FrontNonce = new byte[12],
+            FrontTag = new byte[16],
+            FrontContentType = "image/jpeg",
+            ConsentVersion = "kyc-v1",
+            ReviewedAt = DateTime.UtcNow,
+            ReviewedByUserId = admin.Id
+        };
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id).ReopenRejectedSubmission(
+            submission.Id,
+            new KycOverrideReopenRequest { Reason = "Attempted override of an approved case" },
+            CancellationToken.None);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("approved", submission.Status);
+        Assert.Equal("passed", runner.IdentityVerificationStatus);
+        Assert.Empty(context.IdentityVerificationEvents);
+        Assert.Empty(context.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Identity_document_view_requires_reasoned_recent_superadmin_mfa_and_writes_audit()
+    {
+        await using var context = CreateContext();
+        var actor = NewRunner(190);
+        actor.Roles = "User,Admin,SuperAdmin";
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var subject = NewRunner(191);
+        var image = Jpeg("identity.jpg");
+        var encryption = new IdentityDocumentEncryptionService(Configuration());
+        var encrypted = encryption.Encrypt(await ReadFormFileAsync(image));
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = subject.Id,
+            DocumentType = "passport",
+            Status = "pending",
+            FrontCiphertext = encrypted.Ciphertext,
+            FrontNonce = encrypted.Nonce,
+            FrontTag = encrypted.Tag,
+            FrontContentType = "image/jpeg",
+            ConsentVersion = ConsentVersion,
+            ReviewClaimedByUserId = actor.Id,
+            ReviewClaimExpiresAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        context.Users.AddRange(actor, subject);
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, actor.Id);
+        var missingReason = await controller.GetDocument(submission.Id, "front", "", CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(missingReason);
+
+        var result = await controller.GetDocument(
+            submission.Id, "front", "Reviewing assigned identity case", CancellationToken.None);
+
+        Assert.IsType<FileContentResult>(result);
+        var audit = await context.AuditLogs.SingleAsync();
+        Assert.Equal("AdminIdentityDocumentViewed", audit.Action);
+        Assert.Equal(actor.Id, audit.UserId);
+        Assert.Equal(submission.Id, audit.EntityId);
+        Assert.Contains("Reviewing assigned identity case", audit.NewValues);
+        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
+            item => item.EventType == "admin_document_accessed" && item.ActorUserId == actor.Id);
+    }
+
+    private static async Task<byte[]> ReadFormFileAsync(IFormFile file)
+    {
+        await using var stream = new MemoryStream();
+        await file.CopyToAsync(stream);
+        return stream.ToArray();
+    }
+
+    [Fact]
     public void Identity_document_normalization_strips_metadata_and_server_watermark_changes_the_view_copy()
     {
         var service = new IdentityDocumentImageService();
@@ -283,6 +419,11 @@ public sealed class ManualIdentityVerificationControllerTests
         var audit = await context.IdentityVerificationEvents.ToListAsync();
         Assert.Contains(audit, e => e.EventType == "admin_approve" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
         Assert.Contains(audit, e => e.EventType == "review_claimed" && e.ActorUserId == admin.Id && e.SubmissionId == submission.Id);
+        var decisionAudit = await context.AuditLogs.SingleAsync(item => item.Action == "AdminIdentityReviewDecision");
+        Assert.Equal("AdminIdentityReviewDecision", decisionAudit.Action);
+        Assert.Equal(admin.Id, decisionAudit.UserId);
+        Assert.Equal(submission.Id, decisionAudit.EntityId);
+        Assert.Contains("decision=approve", decisionAudit.NewValues);
     }
 
 
@@ -324,9 +465,59 @@ public sealed class ManualIdentityVerificationControllerTests
 
         var release = await first.ReleaseReview(submission.Id, CancellationToken.None);
         Assert.IsType<OkObjectResult>(release.Result);
+        Assert.Null(submission.ReviewClaimedByUserId);
+        Assert.Contains(await context.IdentityVerificationEvents.ToListAsync(),
+            item => item.EventType == "review_claim_released" && item.ActorUserId == admin1.Id && item.SubmissionId == submission.Id);
+        var auditLogs = await context.AuditLogs
+            .OrderBy(item => item.Id)
+            .ToListAsync();
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimed" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimHeartbeat" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
+        Assert.Contains(auditLogs, item =>
+            item.Action == "AdminIdentityReviewClaimReleased" &&
+            item.UserId == admin1.Id &&
+            item.EntityId == submission.Id);
         Assert.IsType<OkObjectResult>((await second.ClaimReview(submission.Id, CancellationToken.None)).Result);
     }
 
+
+    [Fact]
+    public async Task Releasing_KYC_review_claim_requires_recent_authenticator_verification()
+    {
+        await using var context = CreateContext();
+        var runner = NewRunner(115);
+        var admin = new User
+        {
+            Id = 915, FirstName = "Admin", LastName = "Reviewer", Email = "admin-reviewer@example.test",
+            NormalizedEmail = "admin-reviewer@example.test", PasswordHash = "test-hash", UserType = "creator",
+            EmailVerified = true, Roles = "Admin", AuthenticatorTwoFactorEnabled = true,
+            LastTwoFactorVerifiedAt = DateTime.UtcNow.AddHours(-1)
+        };
+        var submission = new IdentityVerificationSubmission
+        {
+            UserId = runner.Id, DocumentType = "passport", Status = "pending",
+            FrontCiphertext = [1, 2, 3], FrontNonce = new byte[12], FrontTag = new byte[16],
+            FrontContentType = "image/jpeg", ConsentVersion = ConsentVersion,
+            ReviewClaimedByUserId = admin.Id, ReviewClaimExpiresAt = DateTime.UtcNow.AddMinutes(5)
+        };
+        context.Users.AddRange(runner, admin);
+        context.IdentityVerificationSubmissions.Add(submission);
+        await context.SaveChangesAsync();
+
+        var result = await CreateController(context, admin.Id)
+            .ReleaseReview(submission.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsType<ObjectResult>(result.Result).StatusCode);
+        Assert.Equal(admin.Id, submission.ReviewClaimedByUserId);
+        Assert.Empty(await context.AuditLogs.ToListAsync());
+        Assert.Empty(await context.IdentityVerificationEvents.ToListAsync());
+    }
 
     [Fact]
     public async Task Duplicate_South_African_ID_is_flagged_for_investigation_not_auto_rejected()

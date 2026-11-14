@@ -52,10 +52,10 @@ public class CreatorConfirmation24HourTests
             UpdatedAt = DateTime.UtcNow.AddHours(-24)
         };
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-DFY-TEST-24H-001");
 
         // Deliberately do not invoke IPaymentProvider. The test starts after
-        // payment is already secured in escrow and verifies the 24-hour release path.
+        // the verified charge and its double-entry journal are already persisted.
         var escrow = new EscrowService(context, NullLogger<EscrowService>.Instance);
 
         var released = await escrow.ReleaseEscrowAsync(task.Id);
@@ -75,6 +75,67 @@ public class CreatorConfirmation24HourTests
         Assert.Equal(680m, payout.Amount);
         Assert.Equal("Pending", payout.Status);
         Assert.Equal("Paystack", payout.Provider);
+
+        var journals = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .OrderBy(journal => journal.Id)
+            .ToListAsync();
+        Assert.Equal(2, journals.Count);
+        var releaseJournal = Assert.Single(journals.Where(journal => journal.EventType == "escrow_released"));
+        Assert.Equal(800m, releaseJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(800m, releaseJournal.Lines.Sum(line => line.Credit));
+        Assert.Equal(680m, releaseJournal.Lines.Single(line => line.Account.Code == "2100").Credit);
+        Assert.Equal(120m, releaseJournal.Lines.Single(line => line.Account.Code == "4000").Credit);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Escrow_release_fails_closed_when_only_legacy_task_totals_exist()
+    {
+        using var context = CreateContext(nameof(Escrow_release_fails_closed_when_only_legacy_task_totals_exist));
+        var creator = CreateUser(3, "creator", "legacy-escrow-creator@test.com");
+        var runner = CreateUser(4, "runner", "legacy-escrow-runner@test.com");
+        context.Users.AddRange(creator, runner);
+        var task = new DoForYou.API.Models.Task
+        {
+            Id = 102,
+            TaskId = "DFY-LEGACY-ESCROW-NO-LEDGER",
+            TaskName = "Legacy escrow task",
+            TaskDescription = "This task has historical task totals but no new ledger source.",
+            Category = "Home",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 500m,
+            CommissionAmount = 75m,
+            PayoutAmount = 425m,
+            PaymentStatus = "EscrowHeld",
+            TaskStatus = "AwaitingConfirmation",
+            EscrowStatus = "held",
+            EscrowHoldUntil = DateTime.UtcNow.AddMinutes(-1),
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+            UpdatedAt = DateTime.UtcNow
+        };
+        context.Tasks.Add(task);
+        context.AuditLogs.Add(new AuditLog
+        {
+            Action = "PaystackPaymentVerified",
+            EntityType = "Task",
+            EntityId = task.Id,
+            NewValues = "transactionId=TX-LEGACY-AUDIT-ONLY"
+        });
+        await context.SaveChangesAsync();
+
+        var escrow = new EscrowService(context, NullLogger<EscrowService>.Instance);
+        var released = await escrow.ReleaseEscrowAsync(task.Id, force: true);
+
+        Assert.False(released);
+        Assert.Empty(await context.Payouts.ToListAsync());
+        Assert.Empty(await context.FinancialJournals.ToListAsync());
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("EscrowHeld", task.PaymentStatus);
+        Assert.Equal("held", task.EscrowStatus);
     }
 
     [Fact]
@@ -132,13 +193,52 @@ public class CreatorConfirmation24HourTests
         Assert.Empty(await context.Payouts.Where(p => p.TaskId == task.Id).ToListAsync());
     }
 
+    private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
+        AppDbContext context,
+        DoForYou.API.Models.Task task,
+        string transactionId)
+    {
+        context.Database.EnsureCreated();
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = task.PaymentReference ?? $"REF-{task.TaskId}",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = transactionId,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            transactionId,
+            $"paystack:charge:{transactionId}",
+            "ZAR",
+            "Verified Paystack charge for escrow release test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            task.PaymentReference ?? $"REF-{task.TaskId}"));
+    }
+
     private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
             .Options;
 
-        return new AppDbContext(options);
+        var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+        return context;
     }
 
     private static User CreateUser(int id, string type, string email)

@@ -1034,6 +1034,7 @@ public class TasksController : ControllerBase
 
     [HttpPost("cleanup")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> CleanupExpiredTasks()
     {
         var expiry = DateTime.UtcNow.AddHours(-24);

@@ -7,8 +7,7 @@ namespace DoForYou.API.Services;
 
 public interface IEscrowService
 {
-    Task<bool> ReleaseEscrowAsync(int taskId, bool force = false);
-    Task<int> AutoReleaseExpiredEscrowsAsync();
+    Task<bool> ReleaseEscrowAsync(int taskId, bool force = false, string? expectedPaymentTransactionId = null);
     decimal CalculateCommission(decimal amount);
 }
 
@@ -16,14 +15,19 @@ public class EscrowService : IEscrowService
 {
     private readonly AppDbContext _context;
     private readonly ILogger<EscrowService> _logger;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
-    public EscrowService(AppDbContext context, ILogger<EscrowService> logger)
+    public EscrowService(
+        AppDbContext context,
+        ILogger<EscrowService> logger,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _logger = logger;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
-    public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false)
+    public async Task<bool> ReleaseEscrowAsync(int taskId, bool force = false, string? expectedPaymentTransactionId = null)
     {
         IDbContextTransaction? transaction = null;
         if (_context.Database.IsRelational())
@@ -45,6 +49,36 @@ public class EscrowService : IEscrowService
                 return false;
 
             if (!force && (!task.EscrowHoldUntil.HasValue || task.EscrowHoldUntil > DateTime.UtcNow))
+                return false;
+
+            // Never create a new journal against an old task total or a retired
+            // wallet/audit-log reference. The exact verified charge must already
+            // exist in the new journal before any escrow liability can be released.
+            var isE2ETestMode = string.Equals(
+                Environment.GetEnvironmentVariable("DFY_E2E_TEST_MODE"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+            var successfulCharges = await _context.PaymentAttempts
+                .Where(attempt => attempt.TaskId == task.Id &&
+                    (attempt.Provider == "Paystack" || (isE2ETestMode && attempt.Provider == "E2E")) &&
+                    attempt.Status == "Completed" &&
+                    attempt.TransactionId != null &&
+                    attempt.Amount == task.Budget)
+                .ToListAsync();
+            if (successfulCharges.Count != 1 ||
+                string.IsNullOrWhiteSpace(successfulCharges[0].TransactionId) ||
+                (expectedPaymentTransactionId != null &&
+                 successfulCharges[0].TransactionId != expectedPaymentTransactionId))
+                return false;
+
+            var expectedSourceType = successfulCharges[0].Provider == "Paystack"
+                ? "paystack_transaction"
+                : "e2e_transaction";
+            var chargeIsJournalled = await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == expectedSourceType &&
+                journal.SourceId == successfulCharges[0].TransactionId &&
+                journal.EventType == "payment_collected");
+            if (!chargeIsJournalled)
                 return false;
 
             var eligibleTask = _context.Tasks
@@ -130,6 +164,12 @@ public class EscrowService : IEscrowService
                 UpdatedAt = DateTime.UtcNow
             };
 
+            if (task.Budget <= 0m ||
+                task.CommissionAmount < 0m ||
+                task.PayoutAmount <= 0m ||
+                task.CommissionAmount + task.PayoutAmount != task.Budget)
+                throw new InvalidOperationException("Task budget must equal the persisted commission plus runner payable before escrow can be released.");
+
             _context.Payouts.Add(payout);
             task.EscrowStatus = "released";
             task.PaymentStatus = "EscrowReleased";
@@ -139,6 +179,24 @@ public class EscrowService : IEscrowService
             task.PayoutInitiatedAt = null;
             task.PaidToRunnerAt = null;
             task.UpdatedAt = DateTime.UtcNow;
+
+            var releaseLines = new List<FinancialJournalLineDraft>
+            {
+                new("2000", task.Budget, 0m, "Release task escrow liability"),
+                new("2100", 0m, task.PayoutAmount, "Runner amount payable through normal payout processor")
+            };
+            if (task.CommissionAmount > 0m)
+                releaseLines.Add(new FinancialJournalLineDraft("4000", 0m, task.CommissionAmount, "Platform commission earned"));
+
+            await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                EventType: "escrow_released",
+                SourceType: "task",
+                SourceId: task.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IdempotencyKey: $"escrow:release:task:{task.Id}",
+                Currency: "ZAR",
+                Description: "Task escrow released to runner payable and platform commission; provider transfer remains subject to the payout processor and manual payout gate.",
+                OccurredAt: DateTime.UtcNow,
+                Lines: releaseLines));
 
             await _context.SaveChangesAsync();
             if (transaction != null) await transaction.CommitAsync();
@@ -152,8 +210,6 @@ public class EscrowService : IEscrowService
             return false;
         }
     }
-
-    public System.Threading.Tasks.Task<int> AutoReleaseExpiredEscrowsAsync() => System.Threading.Tasks.Task.FromResult(0);
 
     public decimal CalculateCommission(decimal amount) => Math.Max(decimal.Round(amount * 0.15m, 2, MidpointRounding.AwayFromZero), 5.00m);
 }

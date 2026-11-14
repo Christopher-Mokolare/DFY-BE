@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -26,8 +27,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = items });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpGet("admin")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> GetAll()
     {
         var items = await _context.Testimonials.AsNoTracking().OrderBy(t => t.SortOrder)
@@ -35,8 +38,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = items });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpPost]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> Create([FromBody] TestimonialRequest request)
     {
         var validation = Validate(request);
@@ -50,8 +55,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = item, Message = "Testimonial created" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpPut("{id:int}")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> Update(int id, [FromBody] TestimonialRequest request)
     {
         var validation = Validate(request);
@@ -67,8 +74,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = item, Message = "Testimonial updated" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpPatch("{id:int}/publish")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> SetPublished(int id, [FromBody] PublishTestimonialRequest request)
     {
         var item = await _context.Testimonials.FindAsync(id);
@@ -80,8 +89,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = item, Message = request.IsPublished ? "Testimonial published" : "Testimonial unpublished" });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpPatch("{id:int}/reorder")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> Reorder(int id, [FromBody] ReorderTestimonialRequest request)
     {
         var item = await _context.Testimonials.FindAsync(id);
@@ -92,8 +103,10 @@ public class TestimonialsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = item });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.ContentManagePolicy)]
     [HttpDelete("{id:int}")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(int id)
     {
         var item = await _context.Testimonials.FindAsync(id);

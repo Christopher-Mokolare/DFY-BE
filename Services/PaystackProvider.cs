@@ -204,7 +204,7 @@ public sealed class PaystackProvider(
         catch (Exception ex)
         {
             logger.LogError(ex, "Paystack refund failed for transaction {TransactionId}", transactionId);
-            return new(false, null, transactionId, null, null, "Unable to submit the Paystack refund.");
+            return new(false, null, transactionId, null, null, "Paystack submission outcome is unknown; reconcile provider state before any retry.", OutcomeUnknown: true);
         }
     }
 
@@ -212,8 +212,10 @@ public sealed class PaystackProvider(
         string transactionId,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(transactionId) || string.IsNullOrWhiteSpace(SecretKey))
-            return Array.Empty<RefundStatusResult>();
+        if (string.IsNullOrWhiteSpace(transactionId))
+            throw new ArgumentException("A Paystack transaction ID is required for refund reconciliation.", nameof(transactionId));
+        if (string.IsNullOrWhiteSpace(SecretKey))
+            throw new InvalidOperationException("Paystack secret key is not configured; refund reconciliation cannot safely continue.");
 
         try
         {
@@ -223,14 +225,16 @@ public sealed class PaystackProvider(
 
             using var response = await Client.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
-                return Array.Empty<RefundStatusResult>();
+                throw new HttpRequestException($"Paystack refund reconciliation returned HTTP {(int)response.StatusCode}. A new refund must not be submitted until the provider state can be verified.");
 
             using var document = JsonDocument.Parse(
                 await response.Content.ReadAsStringAsync(cancellationToken));
 
-            if (!document.RootElement.TryGetProperty("data", out var data) ||
+            if (!document.RootElement.TryGetProperty("status", out var statusElement) ||
+                statusElement.ValueKind != JsonValueKind.True ||
+                !document.RootElement.TryGetProperty("data", out var data) ||
                 data.ValueKind != JsonValueKind.Array)
-                return Array.Empty<RefundStatusResult>();
+                throw new InvalidOperationException("Paystack returned an incomplete refund reconciliation response; a new refund must not be submitted.");
 
             return data.EnumerateArray()
                 .Select(item => new RefundStatusResult(
@@ -244,7 +248,7 @@ public sealed class PaystackProvider(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Paystack refund reconciliation failed for transaction {TransactionId}", transactionId);
-            return Array.Empty<RefundStatusResult>();
+            throw new InvalidOperationException("Paystack refund state could not be reconciled. No new refund was submitted.", ex);
         }
     }
 

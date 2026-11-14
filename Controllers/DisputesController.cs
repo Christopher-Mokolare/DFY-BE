@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using DoForYou.API.Services;
@@ -19,13 +20,20 @@ public class DisputesController : ControllerBase
     private readonly IEscrowService _escrowService;
     private readonly INotificationService _notificationService;
     private readonly IPaymentProvider _paymentProvider;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
-    public DisputesController(AppDbContext context, IEscrowService escrowService, INotificationService notificationService, IPaymentProvider paymentProvider)
+    public DisputesController(
+        AppDbContext context,
+        IEscrowService escrowService,
+        INotificationService notificationService,
+        IPaymentProvider paymentProvider,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _escrowService = escrowService;
         _notificationService = notificationService;
         _paymentProvider = paymentProvider;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     [HttpPost]
@@ -215,6 +223,8 @@ public class DisputesController : ControllerBase
 
     [HttpGet]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.DisputesManagePolicy)]
     public async Task<ActionResult<ApiResponse<object>>> GetAllDisputes(
         [FromQuery] string? status = null,
         [FromQuery] int page = 1,
@@ -254,8 +264,26 @@ public class DisputesController : ControllerBase
 
     [HttpPatch("{id}/resolve")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = "SuperAdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.DisputesManagePolicy)]
     public async Task<ActionResult<ApiResponse<bool>>> ResolveDispute(int id, [FromBody] JsonElement request)
     {
+        var actorId = GetCurrentUserId();
+        var actor = actorId.HasValue
+            ? await _context.Users.AsNoTracking().Where(user => user.Id == actorId.Value && !user.IsArchived && !user.IsSuspended)
+                .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+                .FirstOrDefaultAsync()
+            : null;
+        var isFreshSuperAdmin = actor?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+            actor.AuthenticatorTwoFactorEnabled &&
+            actor.LastTwoFactorVerifiedAt.HasValue &&
+            actor.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+        if (!isFreshSuperAdmin)
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<bool> { Success = false, Message = "A SuperAdmin with fresh authenticator verification is required to resolve financial disputes." });
+
         var action = request.TryGetProperty("action", out var actionElement) ? actionElement.GetString()?.Trim() : null;
         var resolution = request.TryGetProperty("resolution", out var resolutionElement) ? resolutionElement.GetString()?.Trim() : null;
         var reason = request.TryGetProperty("reason", out var reasonElement) ? reasonElement.GetString()?.Trim() : null;
@@ -279,6 +307,71 @@ public class DisputesController : ControllerBase
         if (task == null)
             return NotFound(new ApiResponse<bool> { Success = false, Message = "Dispute task not found" });
 
+        Models.FinancialApprovalRequest? financialApproval = null;
+        if (action is "refund_creator" or "release_to_runner")
+        {
+            financialApproval = await _context.FinancialApprovalRequests.FirstOrDefaultAsync(item =>
+                item.TaskId == task.Id && item.DisputeId == dispute.Id && item.Action == action &&
+                item.Status == "Approved" && item.ExpiresAt > DateTime.UtcNow);
+            if (financialApproval == null || !financialApproval.DecidedByUserId.HasValue ||
+                financialApproval.RequestedByUserId == financialApproval.DecidedByUserId.Value)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "A current, independently approved two-person refund request is required. No refund was submitted." });
+
+            var approver = await _context.Users.AsNoTracking()
+                .Where(user => user.Id == financialApproval.DecidedByUserId.Value && !user.IsArchived && !user.IsSuspended)
+                .Select(user => new { user.Roles, user.AuthenticatorTwoFactorEnabled, user.LastTwoFactorVerifiedAt })
+                .FirstOrDefaultAsync();
+            var approverIsFreshSuperAdmin = approver?.Roles?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Any(role => string.Equals(role.Trim(), "SuperAdmin", StringComparison.OrdinalIgnoreCase)) == true &&
+                approver.AuthenticatorTwoFactorEnabled &&
+                approver.LastTwoFactorVerifiedAt.HasValue &&
+                approver.LastTwoFactorVerifiedAt.Value >= DateTime.UtcNow.AddMinutes(-15);
+            if (!approverIsFreshSuperAdmin)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The approving SuperAdmin is no longer active or their authenticator verification is stale. Obtain a new independent approval." });
+
+            await using var financialApprovalTransaction = _context.Database.IsRelational()
+                ? await _context.Database.BeginTransactionAsync()
+                : null;
+            var claimTime = DateTime.UtcNow;
+            var claimedApproval = 0;
+            if (_context.Database.IsRelational())
+            {
+                claimedApproval = await _context.FinancialApprovalRequests
+                    .Where(item => item.Id == financialApproval.Id && item.Status == "Approved" &&
+                        item.DisputeId == dispute.Id && item.ExpiresAt > claimTime &&
+                        item.RequestedByUserId != item.DecidedByUserId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(item => item.Status, "Executing")
+                        .SetProperty(item => item.ExecutionStartedAt, claimTime)
+                        .SetProperty(item => item.ExecutionAttempts, item => item.ExecutionAttempts + 1));
+            }
+            else
+            {
+                financialApproval.Status = "Executing";
+                financialApproval.ExecutionStartedAt = claimTime;
+                financialApproval.ExecutionAttempts++;
+                claimedApproval = 1;
+            }
+            if (claimedApproval != 1)
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "The refund approval was already consumed or expired. Refresh before retrying." });
+
+            financialApproval.Status = "Executing";
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = action == "refund_creator" ? "FinancialRefundExecutionStarted" : "FinancialDisputeReleaseExecutionStarted",
+                EntityType = "FinancialApprovalRequest",
+                EntityId = financialApproval.Id,
+                OldValues = "Approved",
+                NewValues = $"Executing; taskId={task.Id}; disputeId={dispute.Id}; requester={financialApproval.RequestedByUserId}; approver={financialApproval.DecidedByUserId}; reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            await _context.SaveChangesAsync();
+            if (financialApprovalTransaction != null)
+                await financialApprovalTransaction.CommitAsync();
+        }
+
         if (action == "release_to_runner")
         {
             // Re-open the escrow hold for the release service, then create the normal
@@ -291,55 +384,111 @@ public class DisputesController : ControllerBase
             task.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-            var released = await _escrowService.ReleaseEscrowAsync(task.Id, force: true);
+            var released = await _escrowService.ReleaseEscrowAsync(
+                task.Id,
+                force: true,
+                expectedPaymentTransactionId: financialApproval!.PaymentTransactionId);
             if (!released)
+            {
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Approved dispute release did not produce a queued payout.");
                 return Ok(new ApiResponse<bool> { Success = false, Message = "Unable to release escrow into the Paystack payout flow" });
+            }
+            await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", "Two-person-approved dispute release queued the normal payout flow; no provider transfer was submitted by this action.");
         }
         else if (action == "refund_creator")
         {
             if (task.TaskStatus == "RunnerPaid" ||
                 task.EscrowStatus == "released" ||
                 task.EscrowStatus == "refunded")
-                return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
-
-            // Use the immutable payment-attempt record as the source of truth for
-            // refunds. Audit logs remain a backward-compatible fallback for older tasks.
-            var successfulAttempt = await _context.PaymentAttempts
-                .Where(p => p.TaskId == task.Id && p.Provider == "Paystack" && p.Status == "Completed" && p.TransactionId != null)
-                .OrderByDescending(p => p.CompletedAt ?? p.CreatedAt)
-                .FirstOrDefaultAsync();
-
-            var transactionId = successfulAttempt?.TransactionId;
-
-            if (string.IsNullOrWhiteSpace(transactionId))
             {
-                var paymentVerification = await _context.AuditLogs
-                    .Where(a =>
-                        a.EntityType == "Task" &&
-                        a.EntityId == task.Id &&
-                        a.Action == "PaystackPaymentVerified" &&
-                        a.NewValues != null)
-                    .OrderByDescending(a => a.CreatedAt)
-                    .FirstOrDefaultAsync();
-
-                transactionId = ExtractAuditValue(paymentVerification?.NewValues, "transactionId");
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Task is no longer eligible for refund.");
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "This task can no longer be refunded." });
             }
-            if (string.IsNullOrWhiteSpace(transactionId))
-                return Conflict(new ApiResponse<bool> { Success = false, Message = "Original Paystack transaction ID is not available; refund cannot be safely submitted." });
+
+            // A refund must be tied to a current, persisted successful Paystack charge.
+            // Audit text and task-level payment references are not payment evidence.
+            var successfulAttempts = await _context.PaymentAttempts
+                .Where(p => p.TaskId == task.Id &&
+                    p.Provider == "Paystack" &&
+                    p.Status == "Completed" &&
+                    p.TransactionId == financialApproval!.PaymentTransactionId &&
+                    p.Amount == financialApproval.Amount)
+                .OrderByDescending(p => p.CompletedAt ?? p.CreatedAt)
+                .ToListAsync();
+
+            if (successfulAttempts.Count != 1 ||
+                string.IsNullOrWhiteSpace(successfulAttempts[0].TransactionId))
+            {
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "Exactly one persisted successful Paystack charge matching the task budget is required.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "A refund cannot be submitted without exactly one persisted successful Paystack charge matching the task budget. Legacy audit-log references are not accepted."
+                });
+            }
+
+            var transactionId = successfulAttempts[0].TransactionId;
+            var chargeJournalExists = await _context.FinancialJournals.AnyAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == transactionId &&
+                journal.EventType == "payment_collected");
+            if (!chargeJournalExists)
+            {
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "The verified charge is not represented in the new double-entry journal; historical records are not automatically imported.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "This charge predates or is absent from the new financial journal. No refund was submitted; reconcile the historical charge through a separately approved accounting process."
+                });
+            }
 
             var existingRefund = await _context.Refunds
                 .FirstOrDefaultAsync(r => r.TaskId == task.Id);
 
+            if (existingRefund != null &&
+                (existingRefund.Provider != "Paystack" ||
+                 existingRefund.TransactionId != transactionId ||
+                 existingRefund.Amount != task.Budget))
+            {
+                await CompleteRefundApprovalAsync(
+                    financialApproval,
+                    actorId,
+                    "Failed",
+                    "Existing refund record does not match the approved Paystack transaction and full task amount.");
+                return Conflict(new ApiResponse<bool>
+                {
+                    Success = false,
+                    Message = "An existing refund record is bound to a different charge or amount. No provider action was taken; manual reconciliation is required."
+                });
+            }
+
             if (existingRefund != null && existingRefund.Status == "Complete")
+            {
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", "Existing refund record is already complete.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund has already completed." });
+            }
 
             if (existingRefund != null &&
                 existingRefund.Status == "PendingInvestigation")
+            {
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Existing refund requires customer bank details and manual provider operations.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
+            }
 
             if (existingRefund != null && !string.IsNullOrWhiteSpace(existingRefund.RefundId) &&
                 existingRefund.Status is "Pending" or "Submitted")
+            {
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", $"Existing refund {existingRefund.RefundId} is already submitted.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already submitted and awaiting Paystack confirmation." });
+            }
 
             // Atomically reserve the disputed task for refund before calling Paystack.
             // The payout worker only submits rows whose task remains EscrowReleased /
@@ -398,7 +547,10 @@ public class DisputesController : ControllerBase
             }
 
             if (reservedPayout != 1)
+            {
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Task reservation failed or a payout is active; no refund submission was attempted.");
                 return Conflict(new ApiResponse<bool> { Success = false, Message = "The task is no longer held for dispute resolution or a runner payout is already queued/processing." });
+            }
 
             task.PaymentStatus = "RefundPending";
             task.TaskStatus = "RefundPending";
@@ -434,13 +586,50 @@ public class DisputesController : ControllerBase
             }
 
             // If a previous attempt has a provider record, reconcile it before resubmitting.
-            var providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(
-                refundRecord.TransactionId,
-                HttpContext.RequestAborted);
-            var matchingProviderRefund = providerRefunds
-                .Where(r => r.Amount == refundRecord.Amount)
-                .OrderByDescending(r => string.Equals(r.Status, "processed", StringComparison.OrdinalIgnoreCase))
-                .FirstOrDefault();
+            IReadOnlyList<RefundStatusResult> providerRefunds;
+            try
+            {
+                providerRefunds = await _paymentProvider.GetRefundsByTransactionIdAsync(
+                    refundRecord.TransactionId,
+                    HttpContext.RequestAborted);
+            }
+            catch (Exception ex)
+            {
+                refundRecord.Status = "ReconciliationRequired";
+                refundRecord.FailureReason = "Paystack refund state could not be verified. No new refund was submitted; manual provider reconciliation is required.";
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                task.PaymentStatus = "RefundPending";
+                task.TaskStatus = "RefundPending";
+                task.EscrowStatus = "refund_pending";
+                dispute.Status = "RefundPending";
+                dispute.Resolution = resolution;
+                dispute.ResolvedAt = null;
+                await _context.SaveChangesAsync();
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed",
+                    $"Provider reconciliation unavailable; submission was not attempted. {ex.GetType().Name}");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new ApiResponse<bool> { Success = false, Message = "Paystack refund state could not be verified. No new refund was submitted; the case is held for manual reconciliation." });
+            }
+            var matchingProviderRefunds = providerRefunds
+                .Where(item => item.Amount == refundRecord.Amount &&
+                    string.Equals(item.TransactionId, refundRecord.TransactionId, StringComparison.Ordinal))
+                .ToList();
+            if (providerRefunds.Count > 0 && matchingProviderRefunds.Count != 1)
+            {
+                refundRecord.Status = "ReconciliationRequired";
+                refundRecord.FailureReason = "Paystack returned partial or ambiguous refund records for this charge. Manual reconciliation is required; no additional refund was submitted.";
+                refundRecord.LastReconciledAt = DateTime.UtcNow;
+                task.PaymentStatus = "RefundPending";
+                task.TaskStatus = "RefundPending";
+                task.EscrowStatus = "refund_pending";
+                dispute.Status = "RefundPending";
+                dispute.Resolution = resolution;
+                dispute.ResolvedAt = null;
+                await _context.SaveChangesAsync();
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Provider returned ambiguous existing refund records; no new refund submitted.");
+                return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack has existing refund records that do not match one exact full refund. The task remains frozen for manual reconciliation." });
+            }
+            var matchingProviderRefund = matchingProviderRefunds.SingleOrDefault();
 
             if (matchingProviderRefund != null)
             {
@@ -464,6 +653,7 @@ public class DisputesController : ControllerBase
                     refundRecord.CompletedAt = DateTime.UtcNow;
                 if (refundRecord.Status == "Complete")
                 {
+                    await JournalConfirmedRefundAsync(refundRecord, actorId, HttpContext.RequestAborted);
                     task.PaymentStatus = "Refunded";
                     task.TaskStatus = "Cancelled";
                     task.EscrowStatus = "refunded";
@@ -496,14 +686,24 @@ public class DisputesController : ControllerBase
                 await _context.SaveChangesAsync();
 
                 if (refundRecord.Status == "Complete")
+                {
+                    await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", $"Existing provider refund {refundRecord.RefundId} reconciled as complete.");
                     return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "The refund was confirmed with Paystack." });
+                }
 
                 if (refundRecord.Status == "Failed")
+                {
+                    await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", $"Existing provider refund {refundRecord.RefundId} is failed.");
                     return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack reports the existing refund as failed; the dispute is reopened for review." });
+                }
 
                 if (refundRecord.Status == "PendingInvestigation")
+                {
+                    await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed", "Paystack requires additional customer bank details; the refund remains on hold.");
                     return Conflict(new ApiResponse<bool> { Success = false, Message = "Paystack requires customer bank details to complete this refund. Keep the task on refund hold and resolve the request through the approved Paystack operations process." });
+                }
 
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", $"Existing provider refund {refundRecord.RefundId} reconciled as pending.");
                 return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "A refund is already with Paystack and awaiting completion." });
             }
 
@@ -515,16 +715,32 @@ public class DisputesController : ControllerBase
 
             if (!refund.Success || string.IsNullOrWhiteSpace(refund.RefundId))
             {
-                refundRecord.Status = "Failed";
+                refundRecord.Status = refund.OutcomeUnknown ? "ReconciliationRequired" : "Failed";
                 refundRecord.FailureReason = refund.Error;
                 refundRecord.LastReconciledAt = DateTime.UtcNow;
-                task.PaymentStatus = "DisputePending";
-                task.TaskStatus = priorTaskStatus;
-                task.EscrowStatus = "disputed";
-                dispute.Status = "Open";
-                dispute.ResolvedAt = null;
+                if (refund.OutcomeUnknown)
+                {
+                    task.PaymentStatus = "RefundPending";
+                    task.TaskStatus = "RefundPending";
+                    task.EscrowStatus = "refund_pending";
+                    dispute.Status = "RefundPending";
+                    dispute.Resolution = resolution;
+                    dispute.ResolvedAt = null;
+                }
+                else
+                {
+                    task.PaymentStatus = "DisputePending";
+                    task.TaskStatus = priorTaskStatus;
+                    task.EscrowStatus = "disputed";
+                    dispute.Status = "Open";
+                    dispute.ResolvedAt = null;
+                }
                 await _context.SaveChangesAsync();
-                return StatusCode(StatusCodes.Status502BadGateway,
+                await CompleteRefundApprovalAsync(financialApproval, actorId, "Failed",
+                    refund.OutcomeUnknown
+                        ? "Paystack submission outcome is unknown; task remains frozen and no automatic retry is allowed."
+                        : refund.Error ?? "Paystack refund submission failed.");
+                return StatusCode(refund.OutcomeUnknown ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status502BadGateway,
                     new ApiResponse<bool> { Success = false, Message = refund.Error ?? "Unable to submit Paystack refund." });
             }
 
@@ -563,6 +779,7 @@ public class DisputesController : ControllerBase
                 "Refund Submitted",
                 $"Your refund for task {task.TaskId} has been submitted to Paystack and is awaiting confirmation.",
                 task.Id);
+            await CompleteRefundApprovalAsync(financialApproval, actorId, "Executed", $"Paystack refund {refund.RefundId} submitted; awaiting provider confirmation.");
 
             return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Refund submitted to Paystack and is awaiting provider confirmation." });
         }
@@ -613,6 +830,48 @@ public class DisputesController : ControllerBase
         return Ok(new ApiResponse<bool> { Success = true, Data = true, Message = "Dispute resolved" });
     }
 
+    private async System.Threading.Tasks.Task JournalConfirmedRefundAsync(
+        Models.Refund refund,
+        int? actorId,
+        CancellationToken cancellationToken)
+    {
+        var originalChargeJournal = await _context.FinancialJournals
+            .Include(journal => journal.Lines)
+                .ThenInclude(line => line.Account)
+            .FirstOrDefaultAsync(journal =>
+                journal.SourceType == "paystack_transaction" &&
+                journal.SourceId == refund.TransactionId &&
+                journal.EventType == "payment_collected",
+                cancellationToken);
+
+        if (originalChargeJournal == null)
+        {
+            _context.AuditLogs.Add(new Models.AuditLog
+            {
+                UserId = actorId,
+                Action = "PaystackRefundCompletedWithoutLedgerSource",
+                EntityType = "Refund",
+                EntityId = refund.Id,
+                NewValues = "Paystack confirmed the refund, but the original charge predates or is absent from the new financial journal. No historical journal entry was fabricated.",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
+            return;
+        }
+
+        await _financialLedgerService.ReverseAsync(
+            originalChargeJournal.Id,
+            sourceType: "refund",
+            sourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            idempotencyKey: $"paystack:refund:{refund.Id}:completed",
+            description: "Reverse the original verified Paystack collection after provider reconciliation confirmed the full refund.",
+            provider: "Paystack",
+            providerReference: refund.RefundId,
+            createdByUserId: actorId,
+            occurredAt: DateTime.UtcNow,
+            cancellationToken: cancellationToken);
+    }
+
     private static string? ExtractAuditValue(string? values, string key)
     {
         if (string.IsNullOrWhiteSpace(values)) return null;
@@ -622,6 +881,36 @@ public class DisputesController : ControllerBase
         start += prefix.Length;
         var end = values.IndexOf(';', start);
         return (end >= 0 ? values[start..end] : values[start..]).Trim();
+    }
+
+    private async System.Threading.Tasks.Task CompleteRefundApprovalAsync(
+        Models.FinancialApprovalRequest? approval,
+        int? actorId,
+        string status,
+        string details)
+    {
+        if (approval == null)
+            return;
+
+        approval.Status = status;
+        if (status == "Executed")
+            approval.ExecutedAt = DateTime.UtcNow;
+        approval.LastExecutionError = status == "Failed" ? details : null;
+        var auditAction = approval.Action == "refund_creator"
+            ? status == "Executed" ? "FinancialRefundExecuted" : "FinancialRefundExecutionFailed"
+            : status == "Executed" ? "FinancialDisputeReleaseExecuted" : "FinancialDisputeReleaseExecutionFailed";
+        _context.AuditLogs.Add(new Models.AuditLog
+        {
+            UserId = actorId,
+            Action = auditAction,
+            EntityType = "FinancialApprovalRequest",
+            EntityId = approval.Id,
+            OldValues = "Executing",
+            NewValues = $"{status}; taskId={approval.TaskId}; {details}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await _context.SaveChangesAsync();
     }
 
     private int? GetCurrentUserId()

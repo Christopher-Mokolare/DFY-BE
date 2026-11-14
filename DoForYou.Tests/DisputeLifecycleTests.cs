@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using DoForYou.API.Controllers;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
@@ -332,12 +333,233 @@ public class DisputeLifecycleTests
         Assert.Equal("EscrowHeld", task.PaymentStatus);
     }
 
+    [Theory]
+    [InlineData("release_to_runner")]
+    [InlineData("refund_creator")]
+    public async System.Threading.Tasks.Task Single_SuperAdmin_cannot_execute_financial_dispute_resolution(string action)
+    {
+        using var context = CreateContext($"dispute-dual-approval-{action}-{Guid.NewGuid():N}");
+        var superAdmin = CreateUser(91, "admin", "superadmin@test.com");
+        superAdmin.Roles = "Admin,SuperAdmin";
+        superAdmin.AuthenticatorTwoFactorEnabled = true;
+        superAdmin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(92, "creator", "creator@test.com");
+        var runner = CreateUser(93, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "AwaitingConfirmation", "DisputePending", "disputed");
+        var dispute = new Dispute
+        {
+            Task = task,
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The completed task is disputed.",
+            Category = "Quality",
+            Status = "Open"
+        };
+        context.Users.AddRange(superAdmin, creator, runner);
+        context.Tasks.Add(task);
+        context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, superAdmin.Id);
+        using var request = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action,
+                resolution = "Financial decision requested after case review",
+                reason = "Independent approval is required before funds can move"
+            }));
+
+        var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Open", dispute.Status);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Empty(await context.Refunds.ToListAsync());
+        Assert.Empty(await context.Payouts.ToListAsync());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Refund_dispute_resolution_requires_a_distinct_fresh_MFA_approval_and_queues_provider_refund_once()
+    {
+        using var context = CreateContext(nameof(Refund_dispute_resolution_requires_a_distinct_fresh_MFA_approval_and_queues_provider_refund_once));
+        context.Database.EnsureCreated();
+        var requester = CreateUser(10, "admin", "requester@test.com");
+        requester.Roles = "Admin,SuperAdmin";
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(11, "admin", "approver@test.com");
+        approver.Roles = "Admin,SuperAdmin";
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(12, "creator", "creator@test.com");
+        var runner = CreateUser(13, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Completed", "DisputePending", "disputed");
+        task.Id = 14;
+        context.Users.AddRange(requester, approver, creator, runner);
+        context.Tasks.Add(task);
+        var dispute = new Dispute
+        {
+            TaskId = task.Id, ReportedByUserId = creator.Id,
+            Issue = "The task was not completed", Category = "quality", Status = "Open"
+        };
+        context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id, Provider = "Paystack", Reference = "pay_ref_dispute",
+            TransactionId = "TX-DISPUTE-14", Amount = task.Budget, Status = "Completed"
+        });
+        var approval = new FinancialApprovalRequest
+        {
+            TaskId = task.Id, DisputeId = dispute.Id, PaymentTransactionId = "TX-DISPUTE-14", Amount = task.Budget,
+            Action = "refund_creator", Reason = "Refund after review of incomplete task evidence",
+            Status = "Approved", IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RequestedByUserId = requester.Id, RequestedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(20), DecidedByUserId = approver.Id,
+            DecidedAt = DateTime.UtcNow, DecisionReason = "Independent review supports a full creator refund"
+        };
+        context.FinancialApprovalRequests.Add(approval);
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-DISPUTE-14",
+            "paystack:charge:TX-DISPUTE-14",
+            "ZAR",
+            "Verified Paystack charge for dispute refund test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            "pay_ref_dispute"));
+
+        using var request = JsonDocument.Parse("""{"action":"refund_creator","resolution":"Work was incomplete after review","reason":"Independent approval authorizes refund after evidence review"}""");
+        var result = await CreateController(context, requester.Id).ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal("Executed", approval.Status);
+        Assert.Equal("Submitted", Assert.Single(context.Refunds).Status);
+        Assert.Equal("RefundPending", task.PaymentStatus);
+        Assert.Equal("refund_pending", task.EscrowStatus);
+        Assert.Equal("RefundPending", dispute.Status);
+        Assert.Empty(context.Payouts);
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialRefundExecutionStarted");
+        Assert.Contains(context.AuditLogs, log => log.Action == "FinancialRefundExecuted");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Refund_dispute_resolution_rejects_legacy_audit_only_payment_references()
+    {
+        using var context = CreateContext(nameof(Refund_dispute_resolution_rejects_legacy_audit_only_payment_references));
+        var requester = CreateUser(30, "admin", "legacy-requester@test.com");
+        requester.Roles = "Admin,SuperAdmin";
+        requester.AuthenticatorTwoFactorEnabled = true;
+        requester.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var approver = CreateUser(31, "admin", "legacy-approver@test.com");
+        approver.Roles = "Admin,SuperAdmin";
+        approver.AuthenticatorTwoFactorEnabled = true;
+        approver.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(32, "creator", "legacy-creator@test.com");
+        var runner = CreateUser(33, "runner", "legacy-runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Completed", "DisputePending", "disputed");
+        task.Id = 34;
+        context.Users.AddRange(requester, approver, creator, runner);
+        context.Tasks.Add(task);
+        var dispute = new Dispute
+        {
+            TaskId = task.Id,
+            ReportedByUserId = creator.Id,
+            Issue = "The task was not completed",
+            Category = "quality",
+            Status = "Open"
+        };
+        context.Disputes.Add(dispute);
+
+        // This deliberately reproduces the retired audit-log-only payment reference.
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = requester.Id,
+            Action = "PaystackPaymentVerified",
+            EntityType = "Task",
+            EntityId = task.Id,
+            NewValues = "transactionId=TX-LEGACY-ONLY"
+        });
+        var approval = new FinancialApprovalRequest
+        {
+            TaskId = task.Id,
+            Action = "refund_creator",
+            Reason = "Refund after review of incomplete task evidence",
+            Status = "Approved",
+            IdempotencyKey = Guid.NewGuid().ToString("N"),
+            RequestedByUserId = requester.Id,
+            RequestedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(20),
+            DecidedByUserId = approver.Id,
+            DecidedAt = DateTime.UtcNow,
+            DecisionReason = "Independent review supports a full creator refund"
+        };
+        context.FinancialApprovalRequests.Add(approval);
+        await context.SaveChangesAsync();
+
+        using var request = JsonDocument.Parse("""{"action":"refund_creator","resolution":"Work was incomplete after review","reason":"Independent approval authorizes refund after evidence review"}""");
+        var result = await CreateController(context, requester.Id).ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Failed", approval.Status);
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("Open", dispute.Status);
+        Assert.DoesNotContain(context.AuditLogs, log => log.Action == "PaystackRefundSubmitted");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Refund_dispute_resolution_without_independent_approval_does_not_submit_refund()
+    {
+        using var context = CreateContext(nameof(Refund_dispute_resolution_without_independent_approval_does_not_submit_refund));
+        var actor = CreateUser(20, "admin", "single-admin@test.com");
+        actor.Roles = "Admin,SuperAdmin";
+        actor.AuthenticatorTwoFactorEnabled = true;
+        actor.LastTwoFactorVerifiedAt = DateTime.UtcNow;
+        var creator = CreateUser(21, "creator", "creator@test.com");
+        var runner = CreateUser(22, "runner", "runner@test.com");
+        var task = CreateTask(creator.Id, runner.Id, "Completed", "DisputePending", "disputed");
+        task.Id = 23;
+        context.Users.AddRange(actor, creator, runner);
+        context.Tasks.Add(task);
+        var dispute = new Dispute
+        {
+            TaskId = task.Id, ReportedByUserId = creator.Id,
+            Issue = "The task was not completed", Category = "quality", Status = "Open"
+        };
+        context.Disputes.Add(dispute);
+        await context.SaveChangesAsync();
+
+        using var request = JsonDocument.Parse("""{"action":"refund_creator","resolution":"Work was incomplete after review","reason":"A single admin must not be able to issue this refund"}""");
+        var result = await CreateController(context, actor.Id).ResolveDispute(dispute.Id, request.RootElement);
+
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Empty(context.Refunds);
+        Assert.Empty(context.Payouts);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+    }
+
     private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
             .Options;
-        return new AppDbContext(options);
+        var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+        return context;
     }
 
     private static User CreateUser(int id, string type, string email) => new()

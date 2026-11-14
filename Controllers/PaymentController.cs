@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using DoForYou.API.Data;
 using DoForYou.API.DTOs;
+using DoForYou.API.Models;
 using DoForYou.API.Services;
 
 namespace DoForYou.API.Controllers;
@@ -17,19 +18,22 @@ public class PaymentController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<PaymentController> _logger;
     private readonly INotificationService _notificationService;
+    private readonly IFinancialLedgerService _financialLedgerService;
 
     public PaymentController(
         AppDbContext context,
         IPaymentProvider paymentProvider,
         IConfiguration configuration,
         ILogger<PaymentController> logger,
-        INotificationService notificationService)
+        INotificationService notificationService,
+        IFinancialLedgerService? financialLedgerService = null)
     {
         _context = context;
         _paymentProvider = paymentProvider;
         _configuration = configuration;
         _logger = logger;
         _notificationService = notificationService;
+        _financialLedgerService = financialLedgerService ?? new FinancialLedgerService(context);
     }
 
     [HttpPost("initiate")]
@@ -180,6 +184,13 @@ public class PaymentController : ControllerBase
         // Persist the transaction ID returned by Paystack's independent lookup,
         // never an unverified ID copied from the webhook body.
         var tx = verified.TransactionId;
+        var paymentWasAlreadyPersisted =
+            (paymentAttempt?.Status == "Completed" && paymentAttempt.TransactionId == tx) ||
+            await _context.Payments.AnyAsync(payment =>
+                payment.TaskId == task.Id &&
+                payment.Provider == "Paystack" &&
+                payment.Status == "Completed" &&
+                payment.TransactionId == tx);
 
         if (paymentAttempt != null)
         {
@@ -206,7 +217,30 @@ public class PaymentController : ControllerBase
                     IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                     UserAgent = Request.Headers.UserAgent.ToString()
                 });
-                await _context.SaveChangesAsync();
+                var duplicateJournalExists = await _context.FinancialJournals.AnyAsync(journal =>
+                    journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
+                if (!duplicateJournalExists)
+                {
+                    await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                        EventType: "duplicate_payment_received",
+                        SourceType: "paystack_transaction",
+                        SourceId: tx,
+                        IdempotencyKey: $"paystack:unallocated:{tx}",
+                        Currency: "ZAR",
+                        Description: "Verified Paystack charge could not be allocated to a new task escrow; held as unallocated receipt.",
+                        OccurredAt: DateTime.UtcNow,
+                        Lines: new[]
+                        {
+                            new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                            new FinancialJournalLineDraft("2200", 0m, expectedAmount, "Unallocated Paystack receipt pending investigation")
+                        },
+                        Provider: "Paystack",
+                        ProviderReference: reference));
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
                 return Ok();
             }
 
@@ -263,19 +297,65 @@ public class PaymentController : ControllerBase
             }
         }
 
-        // Idempotent task activation.
-        // A verified charge may only advance a task that is still awaiting its
-        // first payment. Replayed success events must not resurrect cancelled
-        // or refunded tasks.
-        if (task.TaskStatus == "PendingPayment")
+        // A new verified charge is allocated to escrow only while the task is
+        // genuinely awaiting its first payment. Late/cancelled/otherwise unmatched
+        // receipts are held in an unallocated control account for investigation.
+        var existingChargeJournal = await _context.FinancialJournals.AnyAsync(journal =>
+            journal.SourceType == "paystack_transaction" && journal.SourceId == tx);
+        if (!existingChargeJournal && !paymentWasAlreadyPersisted)
         {
-            task.PaymentStatus = "EscrowHeld";
-            task.TaskStatus = "Posted";
-            task.EscrowStatus = "held";
-            task.UpdatedAt = DateTime.UtcNow;
+            var canAllocateToEscrow = paymentAttempt != null &&
+                task.TaskStatus == "PendingPayment" &&
+                task.EscrowStatus is "pending" or "none" &&
+                task.PaymentStatus is "Pending" or "PendingPayment";
+
+            if (canAllocateToEscrow)
+            {
+                task.PaymentStatus = "EscrowHeld";
+                task.TaskStatus = "Posted";
+                task.EscrowStatus = "held";
+                task.UpdatedAt = DateTime.UtcNow;
+
+                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                    EventType: "payment_collected",
+                    SourceType: "paystack_transaction",
+                    SourceId: tx,
+                    IdempotencyKey: $"paystack:charge:{tx}",
+                    Currency: "ZAR",
+                    Description: "Paystack charge independently verified and allocated to task escrow.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: new[]
+                    {
+                        new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                        new FinancialJournalLineDraft("2000", 0m, expectedAmount, "Task escrow liability")
+                    },
+                    Provider: "Paystack",
+                    ProviderReference: reference));
+            }
+            else
+            {
+                await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                    EventType: "unallocated_payment_received",
+                    SourceType: "paystack_transaction",
+                    SourceId: tx,
+                    IdempotencyKey: $"paystack:unallocated:{tx}",
+                    Currency: "ZAR",
+                    Description: "Verified Paystack charge does not match a task awaiting first payment; held as an unallocated receipt.",
+                    OccurredAt: DateTime.UtcNow,
+                    Lines: new[]
+                    {
+                        new FinancialJournalLineDraft("1000", expectedAmount, 0m, "Paystack clearing receipt"),
+                        new FinancialJournalLineDraft("2200", 0m, expectedAmount, "Unallocated Paystack receipt pending investigation")
+                    },
+                    Provider: "Paystack",
+                    ProviderReference: reference));
+            }
+        }
+        else
+        {
+            await _context.SaveChangesAsync();
         }
 
-        await _context.SaveChangesAsync();
         return Ok();
     }
 
@@ -336,13 +416,18 @@ public class PaymentController : ControllerBase
         if (task == null)
             return Ok();
 
-        var matchingAttempt = await _context.PaymentAttempts
-            .Where(a => a.TaskId == refund.TaskId &&
-                        a.Status == "Completed" &&
-                        a.TransactionId == refund.TransactionId)
-            .OrderByDescending(a => a.CompletedAt)
-            .FirstOrDefaultAsync();
-        var expectedTransactionReference = matchingAttempt?.Reference ?? task.PaymentReference;
+        var matchingAttempts = await _context.PaymentAttempts
+            .Where(attempt => attempt.TaskId == refund.TaskId &&
+                attempt.Provider == "Paystack" &&
+                attempt.Status == "Completed" &&
+                attempt.TransactionId == refund.TransactionId)
+            .ToListAsync();
+        if (matchingAttempts.Count != 1)
+        {
+            _logger.LogWarning("Paystack refund event {RefundId} has no unique persisted successful charge attempt; no legacy task reference will be used.", refundId ?? transactionReference ?? transactionId);
+            return Ok();
+        }
+        var expectedTransactionReference = matchingAttempts[0].Reference;
 
         if ((!string.IsNullOrWhiteSpace(transactionId) &&
              !string.Equals(transactionId, refund.TransactionId, StringComparison.Ordinal) &&
@@ -402,6 +487,44 @@ public class PaymentController : ControllerBase
                 IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
                 UserAgent = Request.Headers.UserAgent.ToString()
             });
+
+            var originalChargeJournal = await _context.FinancialJournals
+                .Include(journal => journal.Lines)
+                    .ThenInclude(line => line.Account)
+                .FirstOrDefaultAsync(journal =>
+                    journal.SourceType == "paystack_transaction" &&
+                    journal.SourceId == refund.TransactionId &&
+                    journal.EventType == "payment_collected");
+            if (originalChargeJournal != null)
+            {
+                var existingReversal = await _context.FinancialJournals.AnyAsync(
+                    journal => journal.ReversalOfJournalId == originalChargeJournal.Id);
+                if (!existingReversal)
+                {
+                    await _financialLedgerService.ReverseAsync(
+                        originalChargeJournal.Id,
+                        sourceType: "refund",
+                        sourceId: refund.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        idempotencyKey: $"paystack:refund:{refund.Id}:completed",
+                        description: "Reverse the original verified Paystack collection after provider-confirmed full refund.",
+                        provider: "Paystack",
+                        providerReference: refund.RefundId,
+                        occurredAt: DateTime.UtcNow);
+                }
+            }
+            else
+            {
+                _context.AuditLogs.Add(new Models.AuditLog
+                {
+                    UserId = null,
+                    Action = "PaystackRefundCompletedWithoutLedgerSource",
+                    EntityType = "Refund",
+                    EntityId = refund.Id,
+                    NewValues = "Provider confirmed refund, but original charge predates or is absent from the new financial journal. No historical journal entry was fabricated.",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+            }
         }
         else if (eventName == "refund.failed" ||
                  string.Equals(providerStatus, "failed", StringComparison.OrdinalIgnoreCase))
@@ -506,6 +629,22 @@ public class PaymentController : ControllerBase
             payout.ProcessingError = null;
             payout.NextAttemptAt = null;
 
+            await _financialLedgerService.PostAsync(new FinancialJournalDraft(
+                EventType: "runner_payout_completed",
+                SourceType: "payout",
+                SourceId: payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IdempotencyKey: $"paystack:payout:{payout.Id}:completed",
+                Currency: "ZAR",
+                Description: "Paystack confirmed the runner transfer; settle the runner payable against Paystack clearing.",
+                OccurredAt: DateTime.UtcNow,
+                Lines: new[]
+                {
+                    new FinancialJournalLineDraft("2100", payout.Amount, 0m, "Settle runner payable"),
+                    new FinancialJournalLineDraft("1000", 0m, payout.Amount, "Paystack clearing transfer")
+                },
+                Provider: "Paystack",
+                ProviderReference: payout.ProviderReference ?? reference));
+
             if (payout.Task.TaskStatus != "RunnerPaid")
             {
                 payout.Task.PayoutStatus = "Completed";
@@ -530,6 +669,26 @@ public class PaymentController : ControllerBase
             payout.Task.PayoutStatus = "Returned";
             payout.Task.TaskStatus = "PayoutFailed";
             payout.Task.UpdatedAt = DateTime.UtcNow;
+
+            var originalPayoutJournal = await _context.FinancialJournals
+                .Include(journal => journal.Lines)
+                    .ThenInclude(line => line.Account)
+                .FirstOrDefaultAsync(journal =>
+                    journal.SourceType == "payout" &&
+                    journal.SourceId == payout.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+                    journal.EventType == "runner_payout_completed");
+            if (originalPayoutJournal != null)
+            {
+                await _financialLedgerService.ReverseAsync(
+                    originalPayoutJournal.Id,
+                    sourceType: "payout",
+                    sourceId: $"{payout.Id}:reversal",
+                    idempotencyKey: $"paystack:payout:{payout.Id}:reversal",
+                    description: "Reverse the previously completed runner payout after Paystack reported a transfer reversal.",
+                    provider: "Paystack",
+                    providerReference: payout.ProviderReference ?? reference,
+                    occurredAt: DateTime.UtcNow);
+            }
         }
         else
         {

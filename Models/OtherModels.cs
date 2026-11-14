@@ -100,6 +100,10 @@ public class Dispute
     public User ReportedByUser { get; set; } = null!;
 }
 
+/// <summary>
+/// Retired wallet-history row retained for historical database compatibility only.
+/// New finance code must use FinancialJournal and FinancialJournalLine.
+/// </summary>
 public class WalletTransaction
 {
     public int Id { get; set; }

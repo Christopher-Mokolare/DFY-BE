@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using DoForYou.API.Services;
@@ -100,8 +101,10 @@ public class TaskIncidentsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = incidents });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpGet("admin/incidents")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> AdminList([FromQuery] string? status = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 25)
     {
         page = Math.Max(1, page);
@@ -121,8 +124,10 @@ public class TaskIncidentsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = new { incidents = rows, total, page, pageSize } });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpGet("admin/incidents/{id:int}/evidence")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> GetIncidentEvidence(int id)
     {
         var adminId = CurrentUserId();
@@ -172,8 +177,10 @@ public class TaskIncidentsController : ControllerBase
         return Ok(new ApiResponse<object> { Success = true, Data = messages });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPost("admin/incidents/{id:int}/hold-escrow")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> PlaceEscrowHold(int id, [FromBody] IncidentEscrowHoldRequest request)
     {
         var adminId = CurrentUserId();
@@ -258,8 +265,10 @@ public class TaskIncidentsController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.FinanceManagePolicy)]
     [HttpPost("admin/incidents/{id:int}/release-escrow-hold")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> ReleaseEscrowHold(int id, [FromBody] IncidentEscrowHoldRequest request)
     {
         var adminId = CurrentUserId();
@@ -344,8 +353,10 @@ public class TaskIncidentsController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AdminPermissionPolicies.TasksManagePolicy)]
     [HttpPatch("admin/incidents/{id:int}")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> Review(int id, [FromBody] ReviewTaskIncidentRequest request)
     {
         var adminId = CurrentUserId();

@@ -107,6 +107,7 @@ public class SupportController : ControllerBase
     // Admin endpoints
     [HttpGet("admin/tickets")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<object>>> GetAllTickets(
         [FromQuery] string? status = null,
         [FromQuery] string? priority = null,
@@ -143,6 +144,7 @@ public class SupportController : ControllerBase
 
     [HttpPatch("admin/tickets/{id}")]
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
     public async Task<ActionResult<ApiResponse<bool>>> UpdateTicket(int id, [FromBody] UpdateSupportTicketRequest request)
     {
         var ticket = await _context.SupportTickets.FindAsync(id);

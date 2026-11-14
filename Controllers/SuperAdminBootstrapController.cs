@@ -80,7 +80,7 @@ public sealed class SuperAdminBootstrapController(
             return Conflict(new { message = "A Super Admin already exists. Use the audited role-management workflow." });
 
         var account = await context.Users.FirstOrDefaultAsync(
-            user => user.Id == actorId && !user.IsArchived,
+            user => user.Id == actorId && !user.IsArchived && !user.IsSuspended,
             cancellationToken);
         if (account == null ||
             !string.Equals(account.NormalizedEmail, BootstrapEmail, StringComparison.OrdinalIgnoreCase) ||

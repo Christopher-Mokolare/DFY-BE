@@ -25,7 +25,8 @@ public record RefundResult(
     string? TransactionId,
     decimal? Amount,
     string? Status,
-    string? Error);
+    string? Error,
+    bool OutcomeUnknown = false);
 
 public record RefundStatusResult(
     string RefundId,

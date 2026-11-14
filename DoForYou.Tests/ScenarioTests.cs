@@ -341,6 +341,14 @@ public class ScenarioTests
         Assert.Equal("Completed", attempt.Status);
         Assert.Single(await context.Payments.ToListAsync());
         Assert.Single(await context.AuditLogs.Where(a => a.Action == "PaystackPaymentVerified").ToListAsync());
+        var chargeJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync();
+        Assert.Equal("payment_collected", chargeJournal.EventType);
+        Assert.Equal("paystack_transaction", chargeJournal.SourceType);
+        Assert.Equal("TX-WEBHOOK-1", chargeJournal.SourceId);
+        Assert.Equal(500m, chargeJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(500m, chargeJournal.Lines.Sum(line => line.Credit));
 
         Assert.IsType<OkResult>(await InvokeWebhook(controller, validEvent));
         Assert.Equal("Posted", task.TaskStatus);
@@ -356,6 +364,93 @@ public class ScenarioTests
         Assert.Equal("EscrowHeld", task.PaymentStatus);
         Assert.Single(await context.PaymentAttempts.ToListAsync());
         Assert.Single(await context.Payments.ToListAsync());
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Paystack_payout_success_and_reversal_post_balanced_ledger_entries()
+    {
+        using var context = CreateContext(nameof(Paystack_payout_success_and_reversal_post_balanced_ledger_entries));
+        var creator = CreateUser(41, "creator", true, "payout-ledger-creator@test.com");
+        var runner = CreateUser(42, "runner", true, "payout-ledger-runner@test.com");
+        context.Users.AddRange(creator, runner);
+        var task = new TaskEntity
+        {
+            Id = 8842,
+            TaskId = "DFY-PAYOUT-LEDGER-1",
+            TaskDescription = "Payout journal integration test",
+            Category = "Other",
+            Area = "Pretoria",
+            DateNeeded = DateTime.UtcNow.AddDays(1),
+            Budget = 200m,
+            CommissionAmount = 30m,
+            PayoutAmount = 170m,
+            PaymentStatus = "EscrowReleased",
+            EscrowStatus = "released",
+            TaskStatus = "PayoutPending",
+            PayoutStatus = "Pending",
+            CreatedByUserId = creator.Id,
+            AcceptedByUserId = runner.Id,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        var payout = new Payout
+        {
+            TaskId = task.Id,
+            RunnerId = runner.Id,
+            Amount = task.PayoutAmount,
+            Status = "Pending",
+            Provider = "Paystack",
+            MerchantReference = "DFY-PAYOUT-DFY-PAYOUT-LEDGER-1",
+            CreatedAt = DateTime.UtcNow,
+            Task = task,
+            Runner = runner
+        };
+        context.Tasks.Add(task);
+        context.Payouts.Add(payout);
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected", "paystack_transaction", "TX-PAYOUT-LEDGER-1",
+            "paystack:charge:TX-PAYOUT-LEDGER-1", "ZAR", "Verified task charge",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", 200m, 0m),
+                new FinancialJournalLineDraft("2000", 0m, 200m)
+            }, "Paystack", "PAY-REF-LEDGER-1"));
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "escrow_released", "task", task.Id.ToString(),
+            $"escrow:release:task:{task.Id}", "ZAR", "Task escrow release",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("2000", 200m, 0m),
+                new FinancialJournalLineDraft("2100", 0m, 170m),
+                new FinancialJournalLineDraft("4000", 0m, 30m)
+            }));
+
+        var controller = CreatePaymentController(context);
+        var success = await InvokeWebhook(controller,
+            """{"event":"transfer.success","data":{"reference":"DFY-PAYOUT-DFY-PAYOUT-LEDGER-1","transfer_code":"TRF-LEDGER-1","amount":17000,"currency":"ZAR"}}""");
+        Assert.IsType<OkResult>(success);
+        Assert.Equal("Completed", payout.Status);
+        var payoutJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync(journal => journal.EventType == "runner_payout_completed");
+        Assert.Equal(170m, payoutJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(170m, payoutJournal.Lines.Sum(line => line.Credit));
+
+        var reversed = await InvokeWebhook(controller,
+            """{"event":"transfer.reversed","data":{"reference":"DFY-PAYOUT-DFY-PAYOUT-LEDGER-1","transfer_code":"TRF-LEDGER-1","amount":17000,"currency":"ZAR"}}""");
+        Assert.IsType<OkResult>(reversed);
+        Assert.Equal("Returned", payout.Status);
+        var reversal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync(journal => journal.EventType == "reversal" && journal.ReversalOfJournalId == payoutJournal.Id);
+        Assert.Equal(170m, reversal.Lines.Sum(line => line.Debit));
+        Assert.Equal(170m, reversal.Lines.Sum(line => line.Credit));
+        Assert.Equal(-170m, await ledger.GetAccountBalanceAsync("2100"));
     }
 
     [Fact]
@@ -825,7 +920,35 @@ public class ScenarioTests
         };
         context.Tasks.Add(task);
         context.Refunds.Add(refund);
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = "DFY-WEBHOOK-REFUND-1",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = "TX-WEBHOOK-1",
+            CreatedAt = DateTime.UtcNow,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
         await context.SaveChangesAsync();
+        var ledger = new FinancialLedgerService(context);
+        var chargeJournal = await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            "TX-WEBHOOK-1",
+            "paystack:charge:TX-WEBHOOK-1",
+            "ZAR",
+            "Verified Paystack charge for refund webhook test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            "DFY-WEBHOOK-REFUND-1"));
         var controller = CreatePaymentController(context);
 
         var processed = await InvokeWebhook(controller,
@@ -834,6 +957,12 @@ public class ScenarioTests
         Assert.Equal("Complete", refund.Status);
         Assert.Equal("Refunded", task.PaymentStatus);
         Assert.Equal("Cancelled", task.TaskStatus);
+        var reversalJournal = await context.FinancialJournals
+            .Include(journal => journal.Lines)
+            .SingleAsync(journal => journal.EventType == "reversal");
+        Assert.Equal(chargeJournal.Id, reversalJournal.ReversalOfJournalId);
+        Assert.Equal(200m, reversalJournal.Lines.Sum(line => line.Debit));
+        Assert.Equal(200m, reversalJournal.Lines.Sum(line => line.Credit));
 
         var delayedFailure = await InvokeWebhook(controller,
             """{"event":"refund.failed","data":{"id":"REF-WEBHOOK-1","transaction":"TX-WEBHOOK-1","amount":20000,"currency":"ZAR","status":"failed"}}""");
@@ -850,7 +979,9 @@ public class ScenarioTests
         var creator = CreateUser(1, "creator", true, "refund-guard-creator@test.com");
         var runner = CreateUser(2, "runner", true, "refund-guard-runner@test.com");
         var admin = CreateUser(3, "admin", true, "refund-guard-admin@test.com");
-        admin.Roles = "Admin";
+        admin.Roles = "Admin,SuperAdmin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
         context.Users.AddRange(creator, runner, admin);
 
         var bank = CreateVerifiedBankAccount(runner.Id);
@@ -945,13 +1076,15 @@ public class ScenarioTests
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund()
+    public async System.Threading.Tasks.Task SuperAdmin_dispute_refund_is_blocked_until_dual_approval()
     {
-        using var context = CreateContext(nameof(DisputeRefund_ReservesHeldTaskBeforeSubmittingRefund));
+        using var context = CreateContext(nameof(SuperAdmin_dispute_refund_is_blocked_until_dual_approval));
         var creator = CreateUser(1, "creator", true, "refund-reserve-creator@test.com");
         var runner = CreateUser(2, "runner", true, "refund-reserve-runner@test.com");
         var admin = CreateUser(3, "admin", true, "refund-reserve-admin@test.com");
-        admin.Roles = "Admin";
+        admin.Roles = "Admin,SuperAdmin";
+        admin.AuthenticatorTwoFactorEnabled = true;
+        admin.LastTwoFactorVerifiedAt = DateTime.UtcNow;
         context.Users.AddRange(creator, runner, admin);
 
         var task = new TaskEntity
@@ -1018,14 +1151,12 @@ public class ScenarioTests
             """{"action":"refund_creator","resolution":"Refund approved","reason":"Refund approved after dispute review"}""");
         var result = await controller.ResolveDispute(dispute.Id, request.RootElement);
 
-        Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Equal("RefundPending", task.PaymentStatus);
-        Assert.Equal("refund_pending", task.EscrowStatus);
-        Assert.Equal("RefundPending", task.TaskStatus);
-        Assert.Equal("RefundPending", dispute.Status);
-        var refund = Assert.Single(await context.Refunds.ToListAsync());
-        Assert.Equal("Submitted", refund.Status);
-        Assert.Equal("TX-REFUND-RESERVE-1", refund.TransactionId);
+        Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("DisputePending", task.PaymentStatus);
+        Assert.Equal("disputed", task.EscrowStatus);
+        Assert.Equal("AwaitingConfirmation", task.TaskStatus);
+        Assert.Equal("Open", dispute.Status);
+        Assert.Empty(await context.Refunds.ToListAsync());
     }
 
     [Fact]
@@ -1058,7 +1189,7 @@ public class ScenarioTests
             UpdatedAt = DateTime.UtcNow
         };
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-DFY-ESCROW-NO-BANK");
 
         var escrowService = new EscrowService(context, NullLogger<EscrowService>.Instance);
         var released = await escrowService.ReleaseEscrowAsync(task.Id, force: true);
@@ -1258,7 +1389,7 @@ public class ScenarioTests
             UpdatedAt = DateTime.UtcNow,
         };
         context.Tasks.Add(task);
-        await context.SaveChangesAsync();
+        await SeedChargeLedgerAsync(context, task, "TX-DFY-SCENARIO-3");
 
         var escrow = new EscrowService(context, NullLogger<EscrowService>.Instance);
         var released = await escrow.ReleaseEscrowAsync(task.Id);
@@ -1286,13 +1417,52 @@ public class ScenarioTests
             .ToListAsync());
     }
 
-private static AppDbContext CreateContext(string name)
+private static async System.Threading.Tasks.Task SeedChargeLedgerAsync(
+        AppDbContext context,
+        TaskEntity task,
+        string transactionId)
+    {
+        context.Database.EnsureCreated();
+        context.PaymentAttempts.Add(new PaymentAttempt
+        {
+            TaskId = task.Id,
+            Provider = "Paystack",
+            Reference = task.PaymentReference ?? $"REF-{task.TaskId}",
+            Amount = task.Budget,
+            Status = "Completed",
+            TransactionId = transactionId,
+            CompletedAt = DateTime.UtcNow,
+            Task = task
+        });
+        await context.SaveChangesAsync();
+
+        var ledger = new FinancialLedgerService(context);
+        await ledger.PostAsync(new FinancialJournalDraft(
+            "payment_collected",
+            "paystack_transaction",
+            transactionId,
+            $"paystack:charge:{transactionId}",
+            "ZAR",
+            "Verified Paystack charge for escrow release test",
+            DateTime.UtcNow,
+            new[]
+            {
+                new FinancialJournalLineDraft("1000", task.Budget, 0m),
+                new FinancialJournalLineDraft("2000", 0m, task.Budget)
+            },
+            "Paystack",
+            task.PaymentReference ?? $"REF-{task.TaskId}"));
+    }
+
+    private static AppDbContext CreateContext(string name)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
             .UseInMemoryDatabase(name)
             .Options;
 
-        return new AppDbContext(options);
+        var context = new AppDbContext(options);
+        context.Database.EnsureCreated();
+        return context;
     }
 
     private sealed class FakePaystackPaymentProvider : IPaymentProvider

@@ -578,7 +578,7 @@ public class AuthController : ControllerBase
                 Message = "This Google identity is not linked to the selected DoForYou account."
             });
         }
-        if (user.IsArchived)
+        if (user.IsArchived || user.IsSuspended)
             return Unauthorized(new AuthResponse { Success = false, Message = "Google sign-in could not be completed for this account." });
         if (user.LoginLockoutUntil.HasValue && user.LoginLockoutUntil.Value > DateTime.UtcNow)
             return Unauthorized(new AuthResponse { Success = false, Message = "Google sign-in could not be completed for this account." });
@@ -1230,7 +1230,7 @@ public class AuthController : ControllerBase
         var hashToVerify = user is { PasswordLoginEnabled: true } ? user.PasswordHash : DummyPasswordHash;
         var passwordValid = BCrypt.Net.BCrypt.Verify(request.Password ?? string.Empty, hashToVerify);
 
-        if (user == null || user.IsArchived || !user.PasswordLoginEnabled)
+        if (user == null || user.IsArchived || user.IsSuspended || !user.PasswordLoginEnabled)
         {
             return Unauthorized(new AuthResponse { Success = false, Message = "Invalid email or password" });
         }

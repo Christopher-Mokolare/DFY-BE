@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -13,6 +14,7 @@ using DoForYou.API.Services;
 using DoForYou.API.Services.Background;
 using DoForYou.API.Middleware;
 using DoForYou.API.Hubs;
+using DoForYou.API.Authorization;
 
 // Render free instances have a strict inotify/file-descriptor limit. Disable config reload watchers
 // so the app does not crash during startup while loading appsettings.json.
@@ -133,6 +135,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Services
 builder.Services.AddScoped<IRulesEngine, RulesEngine>();
 builder.Services.AddScoped<IEscrowService, EscrowService>();
+builder.Services.AddScoped<IFinancialLedgerService, FinancialLedgerService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IBankingService, BankingService>();
 builder.Services.AddScoped<IUserPolicyService, UserPolicyService>();
@@ -199,9 +202,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
                 var account = await db.Users.AsNoTracking()
                     .Where(u => u.Id == userId)
-                    .Select(u => new { u.IsArchived, u.EmailVerified, u.Roles, u.SecurityStamp })
+                    .Select(u => new { u.IsArchived, u.IsSuspended, u.EmailVerified, u.Roles, u.SecurityStamp })
                     .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
-                if (account == null || account.IsArchived)
+                if (account == null || account.IsArchived || account.IsSuspended)
                 {
                     context.Fail("The account is archived or no longer active.");
                     return;
@@ -222,10 +225,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
+builder.Services.AddScoped<IAuthorizationHandler, AdminMfaAuthorizationHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, SuperAdminMfaAuthorizationHandler>();
+builder.Services.AddScoped<IAuthorizationHandler, AdminPermissionAuthorizationHandler>();
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DevelopmentOnly", policy =>
         policy.RequireAssertion(_ => builder.Environment.IsDevelopment()));
+    options.AddPolicy("AdminMfa", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new AdminMfaRequirement());
+    });
+    options.AddPolicy("SuperAdminMfa", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new SuperAdminMfaRequirement());
+    });
+    foreach (var permissionKey in AdminPermissionPolicies.All)
+    {
+        var capturedPermissionKey = permissionKey;
+        options.AddPolicy($"AdminPermission:{capturedPermissionKey}", policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.AddRequirements(new AdminPermissionRequirement(capturedPermissionKey));
+        });
+    }
 });
 
 // CORS

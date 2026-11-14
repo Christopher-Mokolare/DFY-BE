@@ -1,0 +1,122 @@
+# DFY SuperAdmin Functional Requirements and Delivery Status
+
+**Scope:** DFY-BE is the authorization and business-rule source of truth; DFY-FE is the administrative interface. All implementation work targets `staging`. Production must not be changed as part of this work.
+
+## Role model
+
+- `UserType` is marketplace participation: Creator, Runner, or Both.
+- `Roles` is system authorization: User, Admin, SuperAdmin.
+- A marketplace role must never grant administrative access.
+- Backend policies and persisted account state are authoritative. Frontend route guards are presentation only.
+
+## Delivery status at the start of this work
+
+| Domain | Existing capability | Required SuperAdmin objective | Status |
+|---|---|---|---|
+| Admin accounts | SuperAdmin-only role changes with a reason, fresh authenticator verification, session-stamp rotation; first SuperAdmin staging bootstrap; 48-hour single-use email invitations with hashed tokens, verified-email matching, recipient MFA, revoke/list, and audit events; two-person SuperAdmin grant/revoke requests with distinct requestor, target and approver, reasoned decisions, expiry and last-admin protection; persisted MFA enrollment policy on Admin endpoints | Dedicated admin directory; secure invitations; controlled promotion/revocation; MFA; session revocation; two-person SuperAdmin changes | Partial; invitation and two-person approval APIs/UI and backend Admin MFA policy implemented on feature branch, pending full CI and staging verification |
+| User lifecycle | Search/list, marketplace/system role visibility, verification, reasoned suspend/reinstate, archive/restore, task history; suspension/archive/restore rotate the security stamp and suspended accounts are blocked at login and token validation | Full lifecycle controls, duplicate-account resolution, account corrections, session revocation, security history | Partial; contact/profile corrections and duplicate-account merge remain unimplemented |
+| KYC | Manual review queue, reviewer claims, document retrieval, decisions, review SLA and retention services | Permission-separated document access, access logging, override/reopen, SLA reporting and controlled retention | Partial; identity document access is now SuperAdmin-only, reasoned, and written to both identity events and the append-only audit log |
+| Tasks | List, verify/unverify, bulk verify, reasoned soft-delete/cancel (blocked for financial activity), force-release escrow API | Full task lifecycle history, safe edits, stuck-task interventions and incident linkage | Partial |
+| Disputes | List and resolve | Full case lifecycle, evidence review, reopen and resolution history | Partial |
+| Payments | Payment overview, read-only reconciliation, Paystack settlement/transfer inspection, bank-account verification and refund reconciliation | Audited financial operations, controlled refunds/adjustments, dual approval and payout controls | Partial; one-person forced release and dispute money-movement paths are fail-closed pending independent two-person approval. Normal scheduled escrow processing remains separate |
+| Categories | Admin UI and backend CRUD/reorder; required reason; duplicate-name validation; category rename updates task references; deletion blocked while tasks reference the category; audit events committed atomically | Complete CRUD with audit and validation | Implemented on feature branches; pending CI and staging verification |
+| Content | Testimonial CRUD/publish/reorder | Governed public-content management including FAQ/legal content | Partial |
+| Platform configuration | Task limits endpoint and environment-based integration configuration | Audited feature flags, service areas, fee policy, notification templates, maintenance controls and safe configuration UI | Partial |
+| Monitoring | Dashboard and notification dead-letter replay | Service health, errors, queue/job visibility, safe retry/cancel and operational reporting | Partial |
+| Audit/compliance | Audit-log records and viewer; identity retention service; EF Core rejects audit-row updates/deletes; PostgreSQL triggers block audit UPDATE, DELETE and TRUNCATE | Centralized immutable audit trail, before/after values, sensitive-document access events, POPIA workflows | Partial; migration and DB privilege boundary still need staging verification |
+| Impersonation | No complete workflow established | Disabled by default; read-only, visible, reasoned and fully logged if introduced | Not implemented |
+| Tenant/subscription controls | DFY is currently a marketplace, not a multi-tenant subscription SaaS | Not a launch requirement | Out of scope |
+
+## Work delivered in this branch
+
+1. Added a persisted-role-checked SuperAdmin account directory API. It returns paginated account metadata and does not expose password hashes, authenticator secrets, recovery codes, identity numbers, or document contents.
+2. Added a SuperAdmin-only Admin Management route and page in DFY-FE.
+3. The page supports promoting an existing email-verified account to Admin and revoking Admin access. A separate invitation workflow now lets a SuperAdmin invite someone who must register/sign in with the invited email, verify it, enroll authenticator MFA and accept the invitation.
+4. Existing backend role mutation protections remain authoritative: actor must be a persisted SuperAdmin, must not be changing their own role, must have authenticator MFA enabled and recently verified, must supply a reason, and cannot modify a SuperAdmin through the one-person path.
+5. Strengthened Admin provisioning so archived or email-unverified accounts cannot receive Admin access.
+6. Added backend regression tests for directory authorization, account filtering, and verified-email enforcement.\n15. Added explicit user suspension/reinstatement with mandatory reasons, audit entries, security-stamp rotation and login/token-validation denial; archive/restore also rotate the security stamp and require reasoned actions.\n16. Task archival now requires an explicit reason and remains blocked when the task has financial activity; user-facing controls capture that reason.
+7. Added an EF Core append-only guard that rejects updates/deletes to existing audit records, with regression tests.
+8. Added a PostgreSQL migration with triggers rejecting UPDATE, DELETE and TRUNCATE against AuditLogs. This requires staging migration verification and database-owner controls.
+9. Added an Admin invitation workflow: SuperAdmin-only create/list/revoke, 48-hour expiry, SHA-256 token storage, email delivery through the configured sender, recipient email matching, mandatory recent authenticator MFA, one-time acceptance, security-stamp rotation and audit events. The recipient must first register/verify using the invited address.
+10. Added two-person SuperAdmin grant/revoke requests with fresh MFA for both actors, a distinct approver who is neither requester nor target, recorded reasons, 24-hour expiry, security-stamp rotation and final-SuperAdmin protection.
+11. Added an API authorization policy that checks persisted account state, email verification, Admin role and authenticator MFA enrollment on Admin-only endpoints. Existing sensitive workflows continue to require a fresh 15-minute MFA step-up.
+12. Added the task category management page and navigation. Category create/edit/reorder/delete actions require reasons, are audited, and cannot delete a category still referenced by tasks.
+13. Restricted exceptional forced escrow release and financial dispute resolution to persisted SuperAdmins with fresh authenticator verification. This is a stronger role boundary, not a substitute for the still-required two-person financial approval workflow.\n14. Restricted identity-document decryption to SuperAdmins with recent MFA and a mandatory case-specific reason; every view now records an identity event and a detailed append-only audit entry. The UI prompts for the reason and disables document review for non-SuperAdmins.
+
+## Required remaining work before the SuperAdmin objectives can be called complete
+
+### P0 — privileged access and recovery
+- Admin invitation workflow is implemented on the feature branch: hashed single-use token, 48-hour expiry, verified-email matching, recipient MFA, invite/revoke/list, audit events and email delivery. Resend throttling is implemented (five-minute same-address cooldown and ten invitations per inviter per hour); live staging email delivery still needs verification.
+- Two-person SuperAdmin grant/revoke workflow is implemented on the feature branch: two distinct SuperAdmins, fresh MFA for both, recorded request/decision reasons, 24-hour expiry and final-SuperAdmin protection. It still needs full test/CI and staging verification.
+- Verify session revocation end-to-end for role removal, invitation acceptance and account archival. Extend it to suspension and any future admin reset workflows. Access-token validation already checks the persisted security stamp.
+- Mandatory MFA enrollment is enforced on Admin-only API endpoints by a persisted backend policy; sensitive role, invitation, KYC, forced escrow release, dispute resolution and SuperAdmin changes additionally require fresh authenticator verification. Verify staging account enrollment and all E2E flows.
+- Replace broad Admin access with granular permission policies (user management, KYC queue, document viewing, dispute resolution, task operations, finance, content and configuration). The current AdminMfa policy enforces MFA enrollment but does not yet provide granular permission separation.
+
+### P1 — marketplace operations
+- Add verified contact/profile correction workflows and duplicate-account merge/resolve tooling; keep all changes reasoned and audited.
+- Complete task and dispute lifecycle management, including reasoned overrides and full history.
+- Document viewing is now restricted to a SuperAdmin with recent MFA and a per-view reason; every view writes an identity event and an append-only audit record with actor, case, side, reason, IP and user agent. A dedicated KYC Reviewer permission set and separate override permission remain required to delegate document review safely.
+- Keep financial records immutable. Implement refund/adjustment operations only as compensating ledger entries; use dual approval above a configurable threshold. Preserve the manual payout default and existing automatic-payout opt-in. The one-person forced escrow release endpoint and one-person financial dispute resolution actions now return a conflict without moving funds until the two-person approval workflow is implemented.
+
+### P1 — platform and content administration
+- Task category CRUD and ordering are implemented with reasoned audit events. Still build audited configuration management for task limits, commission policy, service areas, feature flags and notification templates.
+- Add controlled FAQ, terms, privacy and public-content management.
+- Store secrets write-only: allow replacement/rotation, never return secret values.
+
+### P2 — operations, compliance and resilience
+- Add health, error, background-job and notification diagnostics with safe retry/cancel semantics.
+- Centralize audit capture for privileged changes, including actor, target, timestamp, source IP, user agent, reason and before/after state.
+- Make audit data append-only at the database permission/schema level; no admin endpoint may update or delete audit entries.
+- Add POPIA request, retention, export and deletion workflows with legal-hold and financial-record exceptions.
+- Keep impersonation disabled unless a separate reviewed design is approved.
+
+## Explicit safety boundaries
+
+- No production branch, Render production service, production database, production secret or live payment configuration is changed by this project.
+- No SuperAdmin may view plaintext passwords or retrieve stored API/payment secrets.
+- No direct edits or deletes of historical ledger entries or audit records.
+- No silent impersonation or unlogged access to identity documents.
+- No automatic payout enablement as part of admin-console work.
+- High-impact financial actions and destructive bulk operations require separate approval controls.
+
+## Acceptance criteria
+
+The SuperAdmin objectives are complete only when each applicable requirement has:
+1. Backend authorization and business-rule enforcement.
+2. Frontend workflow with appropriate visibility and confirmation.
+3. Automated positive and negative tests, including role-boundary tests.
+4. Audit evidence for privileged changes.
+5. CI passing on the staging feature branches.
+6. Staging deployment and end-to-end verification.
+7. No production impact.
+## Current branch status — 2026-11-13
+
+This section supersedes the historical baseline and earlier remaining-work notes below. It reflects the implementation currently present on `feat/superadmin-platform-control`; it does not imply staging migration or production readiness.
+
+### Implemented on the feature branches
+
+- Admin directory, invitations, recipient acceptance, two-person SuperAdmin role changes, MFA enforcement and persisted granular permissions.
+- Separate KYC review, document-view and override permissions. Document access is fresh-MFA, reasoned, claim-bound, watermarked and audited. KYC override only reopens rejected cases with intact evidence for a normal review; it never directly approves a runner.
+- User suspension/reinstatement, archive/restore, session invalidation, verified contact/profile correction and audit history.
+- Duplicate-account investigation with independent outcomes and evidence references; account merge and financial/KYC record movement remain disabled.
+- Task incident reporting, evidence review, escrow incident holds, hold release with deadline extension, and formal dispute workflows.
+- Two-person exceptional escrow release, disputed runner release and creator refund approval/execution. Refund execution reconciles provider history before submission, reserves the task/refund record, rejects ambiguous provider results and does not blindly retry an unknown outcome. Escrow release queues the normal payout path and does not bypass the manual payout gate.
+- Audited categories, business rules and testimonial publishing; identity notification dead-letter visibility and reasoned replay; read-only Paystack settlement/financial diagnostics.
+
+### Still outstanding
+
+- Compensating financial adjustments: first establish a balanced double-entry ledger and reconciliation model. Existing task totals and wallet transaction history are not accepted as a ledger; do not synthesize balances or adjust wallet totals.
+- Full configuration control plane for task limits, commission, service areas, feature flags, maintenance mode and notification templates, with write-only secret rotation.
+- Versioned FAQ, Terms, Privacy and public legal-content publishing with review/approval and rollback.
+- Full service-health, application-error and background-job diagnostics with safe retry/cancel semantics.
+- POPIA data-subject request workflows, including identity verification, export/correction, retention/deletion, legal holds and financial-record exceptions. These require approved retention/legal rules before destructive actions are enabled.
+- Complete before/after audit coverage for every privileged mutation; database-role separation and owner-level recovery testing.
+- Time-limited privilege elevation, managed IP restrictions and hardware-backed MFA policy where supported.
+- Full negative authorization route matrix and staging migration/E2E verification.
+
+### Current validation and release boundary
+
+- Backend latest observed CI run `43406455910` was still in progress; do not treat it as green until terminal success.
+- Frontend latest observed CI run `43406396317` was pending. A small follow-up UI fix removes a duplicate profile-correction action and adds the same action to mobile user cards; that commit still needs CI validation.
+- Earlier frontend run #918 passed build, staging E2E and mobile E2E. Earlier backend run #962 passed build, EF model snapshot validation, tests and OpenAPI/contract checks.
+- EF migrations have not been applied or verified on staging. No production changes, merges, deployments, live payout tests or automatic payout enablement have been performed.

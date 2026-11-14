@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<TaskProgressUpdate> TaskProgressUpdates { get; set; }
     public DbSet<Dispute> Disputes { get; set; }
     public DbSet<TaskIncident> TaskIncidents { get; set; } = null!;
+    // Historical compatibility only. New accounting uses FinancialJournals/FinancialJournalLines.
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
     public DbSet<BusinessRule> BusinessRules { get; set; }
     public DbSet<Notification> Notifications { get; set; }
@@ -25,6 +26,15 @@ public class AppDbContext : DbContext
     public DbSet<Payout> Payouts { get; set; } = null!;
     public DbSet<Refund> Refunds { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<AdminInvitation> AdminInvitations { get; set; } = null!;
+    public DbSet<SuperAdminChangeRequest> SuperAdminChangeRequests { get; set; } = null!;
+    public DbSet<FinancialApprovalRequest> FinancialApprovalRequests { get; set; } = null!;
+    public DbSet<FinancialAccount> FinancialAccounts { get; set; } = null!;
+    public DbSet<FinancialJournal> FinancialJournals { get; set; } = null!;
+    public DbSet<FinancialJournalLine> FinancialJournalLines { get; set; } = null!;
+    public DbSet<FinancialReversalRequest> FinancialReversalRequests { get; set; } = null!;
+    public DbSet<AdminPermissionGrant> AdminPermissionGrants { get; set; } = null!;
+    public DbSet<DuplicateAccountCase> DuplicateAccountCases { get; set; } = null!;
     public DbSet<SupportTicket> SupportTickets { get; set; }
     public DbSet<Testimonial> Testimonials { get; set; }
     public DbSet<UserConsentEvent> UserConsentEvents { get; set; } = null!;
@@ -32,18 +42,55 @@ public class AppDbContext : DbContext
     public DbSet<IdentityVerificationSubmission> IdentityVerificationSubmissions { get; set; } = null!;
     public DbSet<IdentityNotificationOutbox> IdentityNotificationOutbox { get; set; } = null!;
 
-    public override int SaveChanges()
+    public override int SaveChanges() => SaveChanges(acceptAllChangesOnSuccess: true);
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        EnsureAppendOnlyRecords();
         NormalizeUserEmails();
         NormalizeUtcDates();
-        return base.SaveChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
+        SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
     {
+        EnsureAppendOnlyRecords();
         NormalizeUserEmails();
         NormalizeUtcDates();
-        return base.SaveChangesAsync(cancellationToken);
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void EnsureAppendOnlyRecords()
+    {
+        EnsureAuditLogsAppendOnly();
+        EnsureFinancialLedgerAppendOnly();
+    }
+
+    // Audit history is append-only through the application data layer.
+    // Database-level permissions/retention controls are still required against privileged DB access.
+    private void EnsureAuditLogsAppendOnly()
+    {
+        var changedAudit = ChangeTracker.Entries<AuditLog>()
+            .FirstOrDefault(entry => entry.State is EntityState.Modified or EntityState.Deleted);
+        if (changedAudit != null)
+            throw new InvalidOperationException("Audit log entries are append-only and cannot be modified or deleted.");
+    }
+
+    // Financial journal headers and lines are append-only through the application data layer.
+    // PostgreSQL triggers enforce the same invariant independently of EF Core.
+    private void EnsureFinancialLedgerAppendOnly()
+    {
+        var changedLedgerEntry = ChangeTracker.Entries()
+            .FirstOrDefault(entry =>
+                (entry.Entity is FinancialJournal or FinancialJournalLine) &&
+                entry.State is EntityState.Modified or EntityState.Deleted);
+        if (changedLedgerEntry != null)
+            throw new InvalidOperationException("Financial journals and journal lines are append-only and cannot be modified or deleted.");
     }
 
     private void NormalizeUserEmails()
@@ -71,6 +118,149 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .Property(request => request.Amount)
+            .HasPrecision(18, 2);
+
+        modelBuilder.Entity<FinancialAccount>(entity =>
+        {
+            entity.HasIndex(account => account.Code).IsUnique();
+            entity.Property(account => account.Code).IsRequired();
+            entity.Property(account => account.Name).IsRequired();
+            entity.Property(account => account.AccountType).IsRequired();
+            entity.Property(account => account.Currency).HasDefaultValue("ZAR");
+            entity.HasData(
+                new FinancialAccount { Id = 1, Code = "1000", Name = "Payment Provider Clearing", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 2, Code = "1100", Name = "Merchant Bank Settlement", AccountType = "Asset", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 3, Code = "2000", Name = "Escrow Liability", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 4, Code = "2100", Name = "Runner Payable", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 5, Code = "2200", Name = "Unallocated Paystack Receipts", AccountType = "Liability", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 6, Code = "4000", Name = "Platform Commission Revenue", AccountType = "Revenue", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) },
+                new FinancialAccount { Id = 7, Code = "5000", Name = "Payment Processing Fees", AccountType = "Expense", Currency = "ZAR", IsSystem = true, IsActive = true, CreatedAt = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc) });
+        });
+
+        modelBuilder.Entity<FinancialJournal>(entity =>
+        {
+            entity.HasIndex(journal => journal.JournalNumber).IsUnique();
+            entity.HasIndex(journal => journal.IdempotencyKey).IsUnique();
+            entity.HasIndex(journal => new { journal.SourceType, journal.SourceId, journal.EventType }).IsUnique();
+            entity.HasIndex(journal => journal.ReversalOfJournalId).IsUnique()
+                .HasFilter("\"ReversalOfJournalId\" IS NOT NULL");
+            entity.Property(journal => journal.JournalNumber).IsRequired();
+            entity.Property(journal => journal.EventType).IsRequired();
+            entity.Property(journal => journal.SourceType).IsRequired();
+            entity.Property(journal => journal.SourceId).IsRequired();
+            entity.Property(journal => journal.IdempotencyKey).IsRequired();
+            entity.Property(journal => journal.Currency).HasDefaultValue("ZAR");
+            entity.HasOne(journal => journal.ReversalOfJournal)
+                .WithOne()
+                .HasForeignKey<FinancialJournal>(journal => journal.ReversalOfJournalId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<FinancialJournalLine>(entity =>
+        {
+            entity.HasIndex(line => new { line.JournalId, line.LineNumber }).IsUnique();
+            entity.HasIndex(line => line.AccountId);
+            entity.Property(line => line.Debit).HasPrecision(18, 2);
+            entity.Property(line => line.Credit).HasPrecision(18, 2);
+            entity.Property(line => line.Currency).HasDefaultValue("ZAR");
+            entity.ToTable(table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_FinancialJournalLines_OneSidedPositiveAmount",
+                    "((\"Debit\" > 0 AND \"Credit\" = 0) OR (\"Credit\" > 0 AND \"Debit\" = 0))");
+                table.HasCheckConstraint(
+                    "CK_FinancialJournalLines_NonNegativeAmounts",
+                    "\"Debit\" >= 0 AND \"Credit\" >= 0");
+            });
+            entity.HasOne(line => line.Journal)
+                .WithMany(journal => journal.Lines)
+                .HasForeignKey(line => line.JournalId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(line => line.Account)
+                .WithMany(account => account.JournalLines)
+                .HasForeignKey(line => line.AccountId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<FinancialReversalRequest>(entity =>
+        {
+            entity.Property(request => request.Reason).IsRequired();
+            entity.Property(request => request.Status).IsRequired();
+            entity.Property(request => request.IdempotencyKey).IsRequired();
+            entity.HasIndex(request => request.IdempotencyKey).IsUnique();
+            entity.HasIndex(request => new { request.OriginalJournalId, request.Status })
+                .IsUnique()
+                .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
+                .HasDatabaseName("IX_FinancialReversalRequests_OpenJournal");
+            entity.HasIndex(request => new { request.Status, request.ExpiresAt })
+                .HasDatabaseName("IX_FinancialReversalRequests_Status_ExpiresAt");
+            entity.HasOne(request => request.OriginalJournal)
+                .WithMany()
+                .HasForeignKey(request => request.OriginalJournalId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => new { grant.UserId, grant.PermissionKey })
+            .IsUnique()
+            .HasFilter("\"RevokedAt\" IS NULL")
+            .HasDatabaseName("IX_AdminPermissionGrants_Active_UserId_PermissionKey");
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => new { grant.UserId, grant.ExpiresAt })
+            .HasDatabaseName("IX_AdminPermissionGrants_UserId_ExpiresAt");
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => grant.GrantedByUserId)
+            .HasDatabaseName("IX_AdminPermissionGrants_GrantedByUserId");
+
+        modelBuilder.Entity<AdminPermissionGrant>()
+            .HasIndex(grant => grant.RevokedByUserId)
+            .HasDatabaseName("IX_AdminPermissionGrants_RevokedByUserId");
+
+        modelBuilder.Entity<DuplicateAccountCase>()
+            .HasIndex(item => new { item.Status, item.CreatedAt })
+            .HasDatabaseName("IX_DuplicateAccountCases_Status_CreatedAt");
+
+        modelBuilder.Entity<DuplicateAccountCase>()
+            .HasIndex(item => new { item.PrimaryUserId, item.CandidateUserId })
+            .IsUnique()
+            .HasFilter("\"Status\" = 'Open'")
+            .HasDatabaseName("IX_DuplicateAccountCases_OpenPair");
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => request.IdempotencyKey)
+            .IsUnique();
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => request.TaskId)
+            .IsUnique()
+            .HasFilter("\"Status\" IN ('Pending', 'Approved', 'Executing')")
+            .HasDatabaseName("IX_FinancialApprovalRequests_OpenTask");
+
+        modelBuilder.Entity<FinancialApprovalRequest>()
+            .HasIndex(request => new { request.Status, request.ExpiresAt });
+
+        modelBuilder.Entity<SuperAdminChangeRequest>()
+            .HasIndex(request => new { request.Status, request.ExpiresAt })
+            .HasDatabaseName("IX_SuperAdminChangeRequests_Status_ExpiresAt");
+
+        modelBuilder.Entity<SuperAdminChangeRequest>()
+            .HasIndex(request => new { request.TargetUserId, request.Status })
+            .HasDatabaseName("IX_SuperAdminChangeRequests_TargetUserId_Status");
+
+        modelBuilder.Entity<AdminInvitation>()
+            .HasIndex(invitation => invitation.TokenHash)
+            .IsUnique()
+            .HasDatabaseName("IX_AdminInvitations_TokenHash");
+
+        modelBuilder.Entity<AdminInvitation>()
+            .HasIndex(invitation => new { invitation.NormalizedEmail, invitation.Status })
+            .HasDatabaseName("IX_AdminInvitations_NormalizedEmail_Status");
+
         modelBuilder.Entity<IdentityNotificationOutbox>()
             .HasIndex(item => item.IdempotencyKey)
             .IsUnique()

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using DoForYou.API.DTOs;
 using DoForYou.API.Models;
 using DoForYou.API.Services;
@@ -519,6 +520,8 @@ public sealed class ManualIdentityVerificationController(
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpGet("admin/pending")]
     public async Task<ActionResult<ApiResponse<object>>> GetPending(
         [FromQuery] int page = 1,
@@ -630,7 +633,48 @@ public sealed class ManualIdentityVerificationController(
     }
 
 
+    [Authorize(Policy = AdminPermissionPolicies.KycOverridePolicy)]
+    [HttpGet("admin/overrides/rejected")]
+    public async Task<ActionResult<ApiResponse<object>>> GetRejectedCasesForOverride(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 25,
+        CancellationToken cancellationToken = default)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<object> { Success = false, Message = "Fresh authenticator verification is required to inspect KYC override cases." });
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var query = context.IdentityVerificationSubmissions.AsNoTracking()
+            .Where(item => item.Status == "rejected" && item.DocumentsPurgedAt == null &&
+                item.FrontCiphertext.Length > 0 && item.FrontNonce.Length == 12 && item.FrontTag.Length == 16);
+        var total = await query.CountAsync(cancellationToken);
+        var cases = await query.OrderByDescending(item => item.ReviewedAt ?? item.SubmittedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(item => new
+            {
+                item.Id,
+                item.UserId,
+                item.DocumentType,
+                item.SubmittedAt,
+                item.ReviewedAt,
+                item.ReviewedByUserId,
+                item.ReviewReason,
+                userName = item.User.FirstName + " " + item.User.LastName,
+                item.User.Email
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object> { Success = true, Data = new { cases, total, page, pageSize } });
+    }
+
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ClaimReview(int id, CancellationToken cancellationToken)
     {
@@ -639,6 +683,9 @@ public sealed class ManualIdentityVerificationController(
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "Complete administrator authenticator verification before claiming a review." });
 
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
         int affected;
@@ -673,11 +720,25 @@ public sealed class ManualIdentityVerificationController(
             .FirstOrDefaultAsync(cancellationToken);
         if (runnerUserId == 0) return NotFound();
         context.IdentityVerificationEvents.Add(CreateEvent(runnerUserId, "review_claimed", "claimed", adminId.Value, id));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityReviewClaimed",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = id,
+            OldValues = "unclaimed_or_expired",
+            NewValues = $"claimed;expiresAt={expires:O}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
         await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { claimedByUserId = adminId.Value, expiresAt = expires }, Message = "Review case claimed for ten minutes." });
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/heartbeat")]
     public async Task<ActionResult<ApiResponse<object>>> HeartbeatReview(int id, CancellationToken cancellationToken)
     {
@@ -685,6 +746,9 @@ public sealed class ManualIdentityVerificationController(
         if (adminId == null) return Unauthorized();
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
             return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object> { Success = false, Message = "Complete administrator authenticator verification to keep this review claim active." });
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         var expires = now.AddMinutes(10);
         int affected;
@@ -711,15 +775,41 @@ public sealed class ManualIdentityVerificationController(
         }
         if (affected != 1)
             return Conflict(new ApiResponse<object> { Success = false, Message = "Your review claim has expired or belongs to another reviewer. Claim the case again." });
+
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityReviewClaimHeartbeat",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = id,
+            OldValues = "claimed",
+            NewValues = $"claim_extended;expiresAt={expires:O}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { expiresAt = expires } });
     }
 
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpDelete("admin/{id:int}/claim")]
     public async Task<ActionResult<ApiResponse<object>>> ReleaseReview(int id, CancellationToken cancellationToken)
     {
         var adminId = CurrentUserId();
         if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiResponse<object>
+            {
+                Success = false,
+                Message = "Complete a fresh administrator authenticator verification before releasing a review claim."
+            });
+
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var now = DateTime.UtcNow;
         int affected;
         if (context.Database.IsRelational())
@@ -743,17 +833,53 @@ public sealed class ManualIdentityVerificationController(
             }
             else affected = 0;
         }
+
+        if (affected > 0)
+        {
+            var runnerUserId = await context.IdentityVerificationSubmissions.AsNoTracking()
+                .Where(s => s.Id == id)
+                .Select(s => s.UserId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (runnerUserId != 0)
+            {
+                context.IdentityVerificationEvents.Add(CreateEvent(
+                    runnerUserId, "review_claim_released", "released", adminId.Value, id));
+                context.AuditLogs.Add(new AuditLog
+                {
+                    UserId = adminId.Value,
+                    Action = "AdminIdentityReviewClaimReleased",
+                    EntityType = "IdentityVerificationSubmission",
+                    EntityId = id,
+                    OldValues = "claimed",
+                    NewValues = "released",
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    UserAgent = Request.Headers.UserAgent.ToString()
+                });
+                await context.SaveChangesAsync(cancellationToken);
+            }
+        }
+
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return Ok(new ApiResponse<object> { Success = true, Data = new { released = affected > 0, releasedAt = now } });
     }
 
-    [Authorize(Roles = "Admin")]
+    // Document viewing is a separate permission from ordinary KYC review and requires fresh MFA and a reason.
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycViewDocumentsPolicy)]
     [HttpGet("admin/{id:int}/document/{side}")]
-    public async Task<IActionResult> GetDocument(int id, string side, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetDocument(
+        int id,
+        string side,
+        [FromQuery] string reason,
+        CancellationToken cancellationToken)
     {
         var adminId = CurrentUserId();
         if (adminId == null) return Unauthorized();
         if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
-            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Complete administrator authenticator verification before viewing identity documents." });
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "Complete a fresh SuperAdmin authenticator verification before viewing identity documents." });
+        reason = reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new { message = "A specific access reason between 10 and 500 characters is required for every identity-document view." });
 
         var submission = await context.IdentityVerificationSubmissions
             .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
@@ -804,13 +930,102 @@ public sealed class ManualIdentityVerificationController(
         if (!ReferenceEquals(watermarked, plaintext)) CryptographicOperations.ZeroMemory(plaintext);
 
         context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_document_accessed", "viewed", adminId.Value, submission.Id, side.ToLowerInvariant()));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminIdentityDocumentViewed",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = submission.Id,
+            OldValues = null,
+            NewValues = $"side={side.ToLowerInvariant()}; reason={reason}",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
         await context.SaveChangesAsync(cancellationToken);
         Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
         Response.Headers.Pragma = "no-cache";
         return File(watermarked, contentType);
     }
 
+    // A KYC override can only reopen a rejected case for a fresh ordinary review.
+    // It cannot approve a runner, bypass document checks, or activate an account.
     [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+    [Authorize(Policy = AdminPermissionPolicies.KycOverridePolicy)]
+    [HttpPost("admin/{id:int}/override/reopen")]
+    public async Task<ActionResult<ApiResponse<object>>> ReopenRejectedSubmission(
+        int id,
+        [FromBody] KycOverrideReopenRequest request,
+        CancellationToken cancellationToken)
+    {
+        var adminId = CurrentUserId();
+        if (adminId == null) return Unauthorized();
+        if (!await HasRecentAdminTwoFactorAsync(adminId.Value, cancellationToken))
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new ApiResponse<object> { Success = false, Message = "Fresh authenticator verification is required for a KYC override." });
+
+        var reason = request?.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10 || reason.Length > 500)
+            return BadRequest(new ApiResponse<object> { Success = false, Message = "A reason between 10 and 500 characters is required." });
+
+        var submission = await context.IdentityVerificationSubmissions
+            .Include(item => item.User)
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (submission == null) return NotFound();
+        if (!string.Equals(submission.Status, "rejected", StringComparison.OrdinalIgnoreCase))
+            return Conflict(new ApiResponse<object> { Success = false, Message = "Only a rejected identity submission can be reopened through this override. Approved submissions cannot be downgraded by this endpoint." });
+        if (submission.DocumentsPurgedAt.HasValue ||
+            submission.FrontCiphertext.Length == 0 ||
+            submission.FrontNonce.Length == 0 ||
+            submission.FrontTag.Length == 0)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "The original evidence has been purged or is incomplete. The runner must submit fresh documents; an override cannot restore deleted evidence." });
+
+        var anotherPending = await context.IdentityVerificationSubmissions.AnyAsync(item =>
+            item.UserId == submission.UserId && item.Id != submission.Id && item.Status == "pending", cancellationToken);
+        if (anotherPending)
+            return Conflict(new ApiResponse<object> { Success = false, Message = "This runner already has another pending identity review." });
+
+        await using var transaction = context.Database.IsRelational()
+            ? await context.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var oldStatus = submission.Status;
+        var oldReviewer = submission.ReviewedByUserId;
+        var now = DateTime.UtcNow;
+        submission.Status = "pending";
+        submission.ReviewedAt = null;
+        submission.ReviewedByUserId = null;
+        submission.ReviewClaimedByUserId = null;
+        submission.ReviewClaimHeartbeatAt = null;
+        submission.ReviewClaimExpiresAt = null;
+        submission.User.IdentityVerificationStatus = "pending";
+        submission.User.IdentityVerificationUpdatedAt = now;
+        context.IdentityVerificationEvents.Add(CreateEvent(
+            submission.UserId, "kyc_override_reopened", "pending", adminId.Value, submission.Id));
+        context.AuditLogs.Add(new AuditLog
+        {
+            UserId = adminId.Value,
+            Action = "AdminKycOverrideReopened",
+            EntityType = "IdentityVerificationSubmission",
+            EntityId = submission.Id,
+            OldValues = $"status={oldStatus};reviewedBy={oldReviewer}",
+            NewValues = $"status=pending;reason={reason};normalReviewRequired=true",
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            UserAgent = Request.Headers.UserAgent.ToString()
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
+
+        return Ok(new ApiResponse<object>
+        {
+            Success = true,
+            Data = new { submission.Id, submission.Status, reopenedAt = now },
+            Message = "Rejected KYC case reopened. A separate authorised reviewer must complete the normal document review; no runner approval was granted."
+        });
+    }
+
+    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+        [Authorize(Policy = AdminPermissionPolicies.KycReviewPolicy)]
     [HttpPost("admin/{id:int}/decision")]
     public async Task<ActionResult<ApiResponse<object>>> Decide(
         int id,
@@ -993,6 +1208,17 @@ public sealed class ManualIdentityVerificationController(
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
             context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
+            context.AuditLogs.Add(new AuditLog
+            {
+                UserId = adminId.Value,
+                Action = "AdminIdentityReviewDecision",
+                EntityType = "IdentityVerificationSubmission",
+                EntityId = submission.Id,
+                OldValues = "pending",
+                NewValues = $"decision={decision};status={submissionStatus};reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
             var runnerTitle = decision switch
             {
                 "approve" => "DFY Document Review approved",
@@ -1044,6 +1270,17 @@ public sealed class ManualIdentityVerificationController(
             submission.User.IdentityVerificationUpdatedAt = now;
             submission.User.IdentityVerificationLastEventAt = now;
             context.IdentityVerificationEvents.Add(CreateEvent(submission.UserId, "admin_" + decision, nextStatus, adminId.Value, submission.Id));
+            context.AuditLogs.Add(new AuditLog
+            {
+                UserId = adminId.Value,
+                Action = "AdminIdentityReviewDecision",
+                EntityType = "IdentityVerificationSubmission",
+                EntityId = submission.Id,
+                OldValues = "pending",
+                NewValues = $"decision={decision};status={submissionStatus};reason={reason}",
+                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                UserAgent = Request.Headers.UserAgent.ToString()
+            });
             await context.SaveChangesAsync(cancellationToken);
         }
 
@@ -1217,6 +1454,12 @@ public sealed class SubmitManualIdentityVerificationRequest
     public IFormFile? FrontDocument { get; set; }
 
     public IFormFile? BackDocument { get; set; }
+}
+
+public sealed class KycOverrideReopenRequest
+{
+    [Required, StringLength(500, MinimumLength = 10)]
+    public string Reason { get; set; } = string.Empty;
 }
 
 public sealed class ManualIdentityVerificationDecisionRequest

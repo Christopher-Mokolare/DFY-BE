@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using DoForYou.API.Data;
+using DoForYou.API.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,8 @@ namespace DoForYou.API.Controllers;
 /// </summary>
 [ApiController]
 [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "AdminMfa")]
+[Authorize(Policy = AdminPermissionPolicies.ConfigurationManagePolicy)]
 [Route("api/v1/admin/identity-notifications")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class IdentityNotificationOperationsController(AppDbContext context) : ControllerBase
